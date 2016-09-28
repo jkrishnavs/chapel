@@ -45,6 +45,7 @@ void copyPropagation();
 void createTaskFunctions();
 void cullOverReferences();
 void deadCodeElimination();
+void denormalize();
 void docs();
 void expandExternArrayCalls();
 void flattenClasses();
@@ -68,6 +69,7 @@ void refPropagation();
 void removeEmptyRecords();
 void removeUnnecessaryAutoCopyCalls();
 void removeWrapRecords();
+void replaceArrayAccessesWithRefTemps();
 void resolve();
 void resolveIntents();
 void returnStarTuplesByRefArgs();
@@ -84,6 +86,7 @@ void checkPostResolution();
 void checkNoUnresolveds();
 // These checks can be applied after any pass.
 void checkForDuplicateUses();
+void checkArgsAndLocals();
 void checkReturnTypesHaveRefTypes();
 
 //

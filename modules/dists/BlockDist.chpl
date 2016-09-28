@@ -213,7 +213,8 @@ The ``Block`` class constructor is defined as follows:
       dataParIgnoreRunningTasks = // value of  dataParIgnoreRunningTasks  config const,
       dataParMinGranularity     = // value of  dataParMinGranularity      config const,
       param rank                = boundingBox.rank,
-      type  idxType             = boundingBox.idxType)
+      type  idxType             = boundingBox.idxType,
+      type  sparseLayoutType    = DefaultDist)
 
 The arguments ``boundingBox`` (a domain) and ``targetLocales`` (an array)
 define the mapping of any index of ``idxType`` type to a locale
@@ -238,6 +239,9 @@ domains "dmapped" using that Block instance. If the ``boundingBox`` argument is
 a stridable domain, the stride information will be ignored and the
 ``boundingBox`` will only use the lo..hi bounds.
 
+When a ``sparse subdomain`` is created for a ``Block`` distributed domain, the
+``sparseLayoutType`` will be the layout of these sparse domains. The default is
+currently coordinate, but :class:`LayoutCSR.CSR` is an interesting alternative.
 
 **Data-Parallel Iteration**
 
@@ -250,6 +254,52 @@ Parallelism within each locale is guided by the values of
 ``dataParMinGranularity`` of the respective Block instance.
 Updates to these values, if any, take effect only on the locale
 where the updates are made.
+
+**Sparse Subdomains**
+
+When a ``sparse subdomain`` is declared as a subdomain to a Block-distributed
+domain, the resulting sparse domain will also be Block-distributed. The
+sparse layout used in this sparse subdomain can be controlled with the
+``sparseLayoutType`` constructor argument to Block.
+
+This example demonstrates a Block-distributed sparse domain and array:
+
+  .. code-block:: chapel
+
+   use BlockDist;
+
+    const Space = {1..8, 1..8};
+
+    // Declare a dense, Block-distributed domain.
+    const DenseDom: domain(2) dmapped Block(boundingBox=Space) = Space;
+
+    // Declare a sparse subdomain.
+    // Since DenseDom is Block-distributed, SparseDom will be as well.
+    var SparseDom: sparse subdomain(DenseDom);
+
+    // Add some elements to the sparse subdomain.
+    // SparseDom.bulkAdd is another way to do this that allows more control.
+    SparseDom += [ (1,2), (3,6), (5,4), (7,8) ];
+
+    // Declare a sparse array.
+    // This array is also Block-distributed.
+    var A: [SparseDom] int;
+
+    A = 1;
+
+    writeln( "A[(1, 1)] = ", A[1,1]);
+    for (ij,x) in zip(SparseDom, A) {
+      writeln( "A[", ij, "] = ", x, " on locale ", x.locale);
+    }
+
+   // Results in this output when run on 4 locales:
+   // A[(1, 1)] = 0
+   // A[(1, 2)] = 1 on locale LOCALE0
+   // A[(3, 6)] = 1 on locale LOCALE1
+   // A[(5, 4)] = 1 on locale LOCALE2
+   // A[(7, 8)] = 1 on locale LOCALE3
+
+
 */
 class Block : BaseDist {
   param rank: int;
@@ -357,7 +407,7 @@ class LocBlockArr {
   const locDom: LocBlockDom(rank, idxType, stridable);
   var locRAD: LocRADCache(eltType, rank, idxType); // non-nil if doRADOpt=true
   var myElems: [locDom.myBlock] eltType;
-  var locRADLock: atomicflag; // This will only be accessed locally
+  var locRADLock: atomicbool; // This will only be accessed locally
                               // force the use of processor atomics
 
   // These function will always be called on this.locale, and so we do
@@ -454,7 +504,10 @@ proc Block.dsiEqualDMaps(that) param {
 proc Block.dsiClone() {
   return new Block(boundingBox, targetLocales,
                    dataParTasksPerLocale, dataParIgnoreRunningTasks,
-                   dataParMinGranularity);
+                   dataParMinGranularity,
+                   rank,
+                   idxType,
+                   sparseLayoutType);
 }
 
 proc Block.dsiDestroyDistClass() {
@@ -493,9 +546,9 @@ proc Block.dsiNewRectangularDom(param rank: int, type idxType,
 }
 
 proc Block.dsiNewSparseDom(param rank: int, type idxType, dom: domain) {
-  return new SparseBlockDom(rank=rank, idxType=idxType, 
-      sparseLayoutType=sparseLayoutType, dist=this, parentDom=dom, 
-      whole=dom._value.whole);
+  return new SparseBlockDom(rank=rank, idxType=idxType,
+      sparseLayoutType=sparseLayoutType, dist=this, whole=dom._value.whole, 
+      parentDom=dom);
 }
 
 //
@@ -789,8 +842,13 @@ iter BlockDom.these(param tag: iterKind) where tag == iterKind.leader {
     type strType = chpl__signedType(idxType);
     const tmpBlock = locDom.myBlock.chpl__unTranslate(wholeLow);
     var locOffset: rank*idxType;
-    for param i in 1..tmpBlock.rank do
-      locOffset(i) = tmpBlock.dim(i).first/tmpBlock.dim(i).stride:strType;
+    for param i in 1..tmpBlock.rank {
+      const stride = tmpBlock.dim(i).stride;
+      if stride < 0 && strType != idxType then
+        halt("negative stride not supported with unsigned idxType");
+        // (since locOffset is unsigned in that case)
+      locOffset(i) = tmpBlock.dim(i).first / stride:idxType;
+    }
     // Forward to defaultRectangular
     for followThis in tmpBlock._value.these(iterKind.leader, maxTasks,
                                             myIgnoreRunning, minSize,
@@ -817,7 +875,7 @@ iter BlockDom.these(param tag: iterKind, followThis) where tag == iterKind.follo
              else rangeTuple(i).stridable || anyStridable(rangeTuple, i+1);
 
   if chpl__testParFlag then
-    chpl__testPar("Block domain follower invoked on ", followThis);
+    chpl__testParWriteln("Block domain follower invoked on ", followThis);
 
   var t: rank*range(idxType, stridable=stridable||anyStridable(followThis));
   type strType = chpl__signedType(idxType);
@@ -854,6 +912,9 @@ proc BlockDom.dsiNumIndices return whole.numIndices;
 proc BlockDom.dsiLow return whole.low;
 proc BlockDom.dsiHigh return whole.high;
 proc BlockDom.dsiStride return whole.stride;
+proc BlockDom.dsiAlignedLow return whole.alignedLow;
+proc BlockDom.dsiAlignedHigh return whole.alignedHigh;
+proc BlockDom.dsiAlignment return whole.alignment;
 
 //
 // INTERFACE NOTES: Could we make dsiSetIndices() for a rectangular
@@ -1102,9 +1163,9 @@ iter BlockArr.these(param tag: iterKind, followThis, param fast: bool = false) r
 
   if chpl__testParFlag {
     if fast then
-      chpl__testPar("Block array fast follower invoked on ", followThis);
+      chpl__testParWriteln("Block array fast follower invoked on ", followThis);
     else
-      chpl__testPar("Block array non-fast follower invoked on ", followThis);
+      chpl__testParWriteln("Block array non-fast follower invoked on ", followThis);
   }
 
   if testFastFollowerOptimization then
@@ -1191,6 +1252,7 @@ proc BlockArr.dsiSerialWrite(f) {
 }
 
 proc BlockArr.dsiSlice(d: BlockDom) {
+  // MPF: should this use sparseLayoutType = d.sparseLayoutType ?
   var alias = new BlockArr(eltType=eltType, rank=rank, idxType=idxType,
       stridable=d.stridable, dom=d, sparseLayoutType=DefaultDist);
   var thisid = this.locale.id;
@@ -1210,8 +1272,7 @@ proc BlockArr.dsiLocalSlice(ranges) {
   for param i in 1..rank {
     low(i) = ranges(i).low;
   }
-  var A => locArr(dom.dist.targetLocsIdx(low)).myElems((...ranges));
-  return A;
+  return locArr(dom.dist.targetLocsIdx(low)).myElems((...ranges));
 }
 
 proc _extendTuple(type t, idx: _tuple, args) {
@@ -1456,8 +1517,18 @@ proc BlockArr.dsiPrivatize(privatizeData) {
   return c;
 }
 
-proc BlockArr.dsiSupportsBulkTransfer() param return true;
-proc BlockArr.dsiSupportsBulkTransferInterface() param return true;
+proc BlockArr.dsiSupportsBulkTransfer() param {
+  if sparseLayoutType != DefaultDist then
+    return false;
+  else
+    return true;
+}
+proc BlockArr.dsiSupportsBulkTransferInterface() param {
+   if sparseLayoutType != DefaultDist then
+    return false;
+  else
+    return true;
+}
 
 proc BlockArr.doiCanBulkTransfer() {
   if debugBlockDistBulkTransfer then
@@ -1478,9 +1549,7 @@ proc BlockArr.doiCanBulkTransferStride() param {
   if debugBlockDistBulkTransfer then
     writeln("In BlockArr.doiCanBulkTransferStride");
 
-  // A BlockArr is a bunch of DefaultRectangular arrays,
-  // so strided bulk transfer gotta be always possible.
-  return true;
+  return useBulkTransferDist;
 }
 
 proc BlockArr.doiBulkTransfer(B) {
@@ -1607,7 +1676,7 @@ iter ConsecutiveChunks(d1,d2,lid,lo) {
   var rlo=lo+offset;
   var rid  = d2.dist.targetLocsIdx(rlo);
   while (elemsToGet>0) {
-    const size = min(d2.numRemoteElems(rlo,rid),elemsToGet):int;
+    const size = min(d2.numRemoteElems(rlo,rid),elemsToGet);
     yield (rid,rlo,size);
     rid +=1;
     rlo += size;
@@ -1699,6 +1768,8 @@ proc BlockArr.doiBulkTransferTo(Barg)
 
 //For assignments of the form: "Block = any" 
 //where "any" means any array that implements the bulk transfer interface
+// TODO: avoid spawning so many coforall-ons
+//   - clean up some of this range creation logic
 proc BlockArr.doiBulkTransferFrom(Barg)
 {
   if debugBlockDistBulkTransfer then
