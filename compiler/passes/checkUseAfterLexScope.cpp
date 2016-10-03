@@ -1122,12 +1122,11 @@ static SyncGraph* handleBlockStmt(BlockStmt* stmt, SyncGraph *cur) {
     DefExpr* def = toDefExpr(stmt->body.first());
     if(isVarSymbol(def->sym)) {
       VarSymbol* var = toVarSymbol(def->sym);
-      if(strcmp(var->name,"_endCountSave") == 0) {
-        //start of sync statement
-        BlockStmt* syncblock = getSyncBlockStmt(stmt,cur);
-        if(syncblock !=  NULL){
+      if(strcmp(var->name, "_endCountSave") == 0) {
+        BlockStmt* syncBlock = getSyncBlockStmt(stmt, cur);
+        if(syncBlock !=  NULL) {
           handled = true;
-          cur = handleSyncStatement(stmt,cur);
+          cur = handleSyncStatement(syncBlock, cur);
         }
       }
     }
