@@ -1066,14 +1066,15 @@ static SyncGraph* handleCondStmt(CondStmt* cond, SyncGraph* cur) {
   BlockStmt* thenBlock = cond->thenStmt;
   BlockStmt* elseBlock = cond->elseStmt;
   cur = handleBlockStmt(thenBlock,cur);
-  if( ASTContainsBeginFunction(elseBlock) ||
-      refersExternalSymbols(elseBlock, cur) ){
-    SyncGraph* elseNode = addElseChildNode(cur,elseBlock->getFunction());
-    elseNode = handleBlockStmt(elseBlock,elseNode);
-    cur = addChildNode(cur,cond->getFunction());
-    elseNode->child = cur;
+  if(elseBlock != NULL) {
+    if( ASTContainsBeginFunction(elseBlock) ||
+	refersExternalSymbols(elseBlock, cur) ){
+      SyncGraph* elseNode = addElseChildNode(cur,elseBlock->getFunction());
+      elseNode = handleBlockStmt(elseBlock,elseNode);
+      cur = addChildNode(cur,cond->getFunction());
+      elseNode->child = cur;
+    }
   }
-
   return cur;
 }
 
