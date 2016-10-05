@@ -1,4 +1,4 @@
-#!/bin/csh -f
+#!/bin/bash -f
 
 unsetenv CHPL_UNOPTIMIZED
 

@@ -779,7 +779,9 @@ static void checkOrphanStackVar(SyncGraph *root) {
   // Do the test for each external Var
   forv_Vec (ExternVarDetails, cur, externVarDetails) {
     filledSinglePoints.clear();
-    SyncGraph *defFunction = funcGraphMap.get(cur->scope->getFunction());
+    INT_ASSERT (cur->scope != NULL);
+    SyncGraph * defFunction = funcGraphMap.get(cur->scope->getFunction());
+    INT_ASSERT (defFunction != NULL);
     SyncGraphVec endPoints; // should not go searching beyond this
     SyncGraphVec destSyncPoints; // destination snc point vertex
     SyncGraph* sourceSyncPoint = nextSyncPoint(defFunction);
@@ -855,6 +857,8 @@ static bool isOuterVar(Symbol* sym, FnSymbol* fn) {
 
 
 static ArgSymbol*  getTheArgSymbol(std::string sym,FnSymbol* parent) {
+  if(parent == NULL)
+    return NULL;
   for_formals(formal,parent) {
     if(sym.compare(formal->name) == 0) {
       return formal;
@@ -866,34 +870,38 @@ static ArgSymbol*  getTheArgSymbol(std::string sym,FnSymbol* parent) {
 
 /**
    Get the scope of the symbol.
-   If its an external Varaible to the base function we return NULL.
+   If its an external Variable to the base function we return NULL.
 **/
 static Scope* getOriginalScope(Symbol* sym) {
+  ArgSymbol* argSym;
+  ArgSymbol* parentArgSymbol;
+  Symbol* symParent;
+  FnSymbol* symParentFunction;
+  Symbol* parent;
+  FnSymbol* parentFunction;
   if(isArgSymbol(sym)) {
     while (isArgSymbol(sym)) {
-      ArgSymbol* argSym = toArgSymbol(sym);
-      Symbol* symParent  = sym->defPoint->parentSymbol;
-      Symbol* parent = symParent->defPoint->parentSymbol;
-      FnSymbol* parentFunction = toFnSymbol(parent);
-      ArgSymbol* parentArgSymbol = NULL;
+      argSym = toArgSymbol(sym);
+      symParent  = sym->defPoint->parentSymbol;
+      parent = symParent->defPoint->parentSymbol;
+      parentFunction = toFnSymbol(parent);
+      symParentFunction = toFnSymbol(symParent);
       if(parentFunction != NULL)
         parentArgSymbol = getTheArgSymbol(sym->name,parentFunction);
       if (argSym->intent == INTENT_REF) {
         if(isFnSymbol(parent)) {
           if(parentArgSymbol != NULL) {
-            // Go one level up.
+            // Go one level up. Parent of symParent is a function and
+	    // also the symbol was founs in parent argument list.
             sym = parentArgSymbol;
           } else {
             // We reached the defining point.
             break;
           }
-        } else if (parentArgSymbol != NULL) {
-          /* We are at the uppermost level of heirarchy */
-          return NULL;
         } else {
-          return parentFunction->body;
+	  return symParentFunction->body;
         }
-      } else {
+      }  else {
         return sym->defPoint->getScopeBlock();
       }
     }
@@ -936,6 +944,7 @@ static void addExternVarDetails(Scope* s, std::string v,SymExpr* use, SyncGraph*
     theOne = new ExternVarDetails();
     theOne->varName = v;
     theOne->scope = s;
+    externVarDetails.add(theOne);
   }
   theOne->addUseInfo(use,node);
 }
@@ -1037,7 +1046,7 @@ static bool shouldSync(Scope* block, SyncGraph *cur) {
   // a sync statement then we need not worry  about
   // syncing it.
 
-  if(block == NULL &&  allCallsSynced == true){
+  if(block == NULL &&  allCallsSynced == true) {
     return false;
   }
   if(cur->syncedScopes.length() > 0) {

@@ -1,4 +1,4 @@
-#!/bin/csh -f
+#!/bin/bash -f
 
 setenv CHPL_MODULE_PATH subdir3:subdir4/subdir
 
