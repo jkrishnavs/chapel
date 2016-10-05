@@ -896,7 +896,7 @@ static Scope* getOriginalScope(Symbol* sym) {
             sym = parentArgSymbol;
           } else {
             // We reached the defining point.
-            return symParentFunction->body;
+            return parentFunction->body;
           }
         } else {
 	  return symParentFunction->body;
