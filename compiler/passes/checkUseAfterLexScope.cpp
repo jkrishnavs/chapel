@@ -8,7 +8,7 @@
 #include "vec.h"
 #include "view.h"
 #include <set>
-#define CHPL_DOTGRAPH
+//#define CHPL_DOTGRAPH
 #ifdef CHPL_DOTGRAPH
 #include <fstream>
 #endif
@@ -37,17 +37,21 @@ typedef Vec<Scope*> ScopeVec;
      Which stores data of sync Points and
      use of External variables.
 **/
+
+struct UseInfo;
+typedef Vec<UseInfo*> UseInfoVec;
+
 struct SyncGraph {
-  FnSymbol* fnSymbol;
-  SyncGraph* parent;
   Vec<SymExpr*>  contents;
   Vec<BlockStmt*> syncScope;
   Vec<CallExpr*> intFuncCalls;
-  Vec<SyncGraph*> syncPoints;
   ScopeVec syncedScopes;    // These are the already defined sync points
                             // created due to sync statments, Cobegin, Coforall
                             // and Forall statments.
+  UseInfoVec infoVec;
   std::string syncVar;
+  FnSymbol* fnSymbol;
+  SyncGraph* parent;
   SyncGraph* child; // same function next BB
   SyncGraph* fChild; // internal Functions including Begin
   SyncGraph* cChild; // conditionalNode child
@@ -57,10 +61,21 @@ struct SyncGraph {
   bool loopNode;
   bool conditionalNode;
   bool isjoinNode;
-  //  bool flag;
+  /*  bool visited;
+
+
+  void visit(){
+    visited = true;
+  }
+
+  void unvisit(){
+    visited = false;
+  }
+  */
   SyncGraph(SyncGraph* i, FnSymbol *f) {
-    fnSymbol = f;
+    fnSymbol = i->fnSymbol;
     contents.copy(i->contents);
+    infoVec.copy(i->infoVec);
     syncedScopes.append(i->syncedScopes);
     loopNode = i->loopNode;
     conditionalNode = i->conditionalNode;
@@ -68,6 +83,7 @@ struct SyncGraph {
     syncVar = i->syncVar;
     joinNode = i->joinNode;
     isjoinNode = i->isjoinNode;
+    //visited = false;
   }
 
   SyncGraph(FnSymbol *f) {
@@ -78,9 +94,9 @@ struct SyncGraph {
     syncType = NODE_UNKNOWN;
     loopNode = false;
     conditionalNode = false;
-    // insideSyncStmt = false;
     isjoinNode = false;
     joinNode = NULL;
+    //visited = false;
   }
   ~SyncGraph() {}
 };
@@ -88,37 +104,57 @@ struct SyncGraph {
 struct UseInfo {
   SymExpr* usePoint;
   SyncGraph* useNode;
-};
-
-struct ExternVarDetails {
+  FnSymbol* fnSymbol;
+  SyncGraph* lastSyncPoint;
+  SyncGraph* nextSyncPoint;
   std::string varName;
-  Scope* scope;
-  Vec<UseInfo*> usePoints;
-  void addUseInfo(SymExpr* point, SyncGraph* node) {
-    UseInfo* useInfo = new UseInfo();
-    useInfo->usePoint = point;
-    useInfo->useNode = node;
-    usePoints.add(useInfo);
+  bool checked;
+
+  UseInfo(SyncGraph *node, FnSymbol* fn, SymExpr* expr, std::string name) {
+    usePoint = expr;
+    useNode = node;
+    varName = name;
+    lastSyncPoint = NULL;
+    nextSyncPoint =  NULL;
+    checked = false;
   }
-  ExternVarDetails() {}
-  ~ExternVarDetails() {
-    while(usePoints.length() != 0) {
-      delete(usePoints.pop());
+
+  void setChecked(){
+    checked = true;
+  }
+
+  bool  isChecked(){
+    return checked;
+  }
+
+  void setNextSyncNode(SyncGraph* node) {
+    nextSyncPoint = node;
+  }
+
+  void setLastSyncNode(SyncGraph *node) {
+    lastSyncPoint = node;
+  }
+
+  bool inherentlyUnSafe() {
+    if(checked)
+      return false;
+    if(lastSyncPoint == NULL || nextSyncPoint == NULL){
+      setChecked();
+      return true;
     }
-  }
+    return false;
+  }  
 };
 
 typedef Vec<SyncGraph*> SyncGraphVec;
 typedef Map<FnSymbol*, SyncGraph*> FnSyncGraphMap;
 typedef Map<FnSymbol*, Vec<SyncGraph*>* > FnSyncGraphVecMap;
-typedef MapElem<FnSymbol*, Vec<SyncGraph*>* > FnSyncGraphVecMapElem;
 typedef Vec<FnSymbol*> FnSymbolVec;
 static SyncGraphVec analysisRoots; // We will be creating multiple root for
                                    //  analyzing recursion and loops more
-                                   // efficiently.
-static SyncGraphVec taskStartPoint; // start of all beginStatements
+                                   // efficiently
+UseInfoVec useInfos;
 static SyncGraphVec filledSinglePoints; // filled Single variables.
-static Vec<ExternVarDetails*> externVarDetails;
 static FnSyncGraphMap funcGraphMap; // start point of each function in Sync Graph
 static bool allCallsSynced;
 static void deleteSyncGraphNode(SyncGraph *node);
@@ -138,7 +174,6 @@ static bool isOuterVar(Symbol* sym, FnSymbol* fn);
 static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur);
 static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur);
 static bool containsBeginFunction(FnSymbol* fn);
-static void addExternVarDetails(Scope* s, std::string v,SymExpr* use, SyncGraph* node);
 static Scope* getOriginalScope(Symbol* sym);
 static ArgSymbol*  getTheArgSymbol(std::string sym, FnSymbol* parent);
 static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraph *cur);
@@ -146,26 +181,25 @@ static bool isInsideSyncStmt(Expr* expr);
 static bool shouldSync(Scope* scope, SyncGraph* cur);
 static void checkSyncedCalls(FnSymbol* fn);
 static int compareScopes(Scope* a, Scope * b);
-static SyncGraph* nextSyncPoint(SyncGraph* start);
 static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn);
 static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
 static bool  ASTContainsBeginFunction(BaseAST* ast);
 static void expandAllInternalFunctions(SyncGraph* root,Vec<FnSymbol*> &fnSymbols, SyncGraph* endPoint = NULL);
 static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch);
+static void addExternVarDetails(FnSymbol* fn, std::string v,SymExpr* use, SyncGraph* node) ;
 static SyncGraphVec getCopyofGraph(SyncGraph* start, FnSymbol* f);
-static void provideWarning(SymExpr* expr, ExternVarDetails* var);
+static void provideWarning(UseInfo* var);
 static bool sync(SyncGraph* source, SyncGraph* dest);
 static void getSyncPoints(SyncGraph* source, SyncGraphVec& potentialDest, SyncGraphVec& syncPoints);
-static bool threadedMahjong(SyncGraph* sourceSyncPoint, SyncGraphVec& destSyncPoints);
-static void removeNewBegins(SyncGraphVec& nextSourceBegins, SyncGraphVec&  destSyncPoints);
-static SyncGraph* pullUpNextSyncNode(SyncGraph* curNode, SyncGraphVec& destSyncPoints);
-static void pullDownSyncNode(SyncGraph* curNode, SyncGraph * prevNode, SyncGraphVec& destSyncPoints);
-static bool isStartPointAfterLastSync(SyncGraph* defFunction,SyncGraph* useNode);
-static bool handleSingleSyncing(SyncGraph * toSyncNode, SyncGraphVec& destSyncPoints, SyncGraphVec& syncPoints);
-static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraphVec& endPoints, SyncGraphVec& taskPoints);
-static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraph* endPoint, SyncGraphVec& taskPoints);
-static bool findtheSourceNode(SyncGraph* targetNode, SyncGraphVec& destSyncPoints);
-static bool syncDestinations(SyncGraph* sourceSyncPoint, SyncGraphVec& destSyncPoints);
+static bool threadedMahjong(SyncGraphVec& destSyncPoints, SyncGraphVec& visited, int startPoint);
+static bool handleSingleSyncing(SyncGraphVec& destSyncPoints, SyncGraphVec& syncPoints, SyncGraphVec& visited);
+static SyncGraph* nextSyncPoint(SyncGraph* start, SyncGraphVec& visited);
+static void nextSyncPoints(SyncGraph*start, SyncGraphVec& nextPointst, SyncGraphVec& visited);
+//static SyncGraph* getStartPoint(FnSymbol* fn);
+static void setNextSyncNode();
+static void setLastSyncNode();
+static void checkUseInfoSafety(SyncGraph* node, SyncGraphVec& visited);
+static void checkUseInfoSafety(SyncGraphVec& newlyVisited, SyncGraphVec& visited);
 #ifdef CHPL_DOTGRAPH
 static void dotGraph(SyncGraph* root);
 //static void digraph(std::ofstream& outfile, SyncGraph* cur, std::string level);
@@ -183,7 +217,7 @@ static void digraph(SyncGraph* cur, std::string level) {
   if(cur->child != NULL) {
     std::string nextSyncVar = level + "O" +cur->child->syncVar;
     // outfile << curSyncVar << " -> " << nextSyncVar << "[label=ch]\n";
-    std::cout << curSyncVar << " -> " << nextSyncVar << "[label=ch]\n";
+    std::cout << curSyncVar << " -> " << nextSyncVar << "[label=ch] \n";
     //    digraph(outfile, cur->child, level+ "O");
     digraph(cur->child, level+ "O");
   }
@@ -193,7 +227,7 @@ static void digraph(SyncGraph* cur, std::string level) {
     // outfile << curSyncVar << " -> " << nextSyncVar << "[label=cc]\n";
     std::cout << curSyncVar << " -> " << nextSyncVar << "[label=cc]\n";
     //digraph(outfile, cur->cChild, level+ "C");
-     digraph(cur->cChild, level+ "C");
+    digraph(cur->cChild, level+ "C");
   }
 
   if(cur->fChild != NULL) {
@@ -236,13 +270,12 @@ static void deleteSyncGraphNode(SyncGraph *node) {
    Clean up the Data-Control Graph.
 **/
 static void cleanUpSyncGraph(SyncGraph *node) {
-  deleteSyncGraphNode(node);
-  forv_Vec (ExternVarDetails, cur, externVarDetails) {
-    delete cur;
+  forv_Vec(UseInfo, cur, useInfos) {
+    delete(cur);
   }
-  externVarDetails.clear();
-  funcGraphMap.clear();
+  deleteSyncGraphNode(node);
   analysisRoots.clear();
+  useInfos.clear();
 }
 
 /*
@@ -462,10 +495,29 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 }
 
 
+
+
+static void checkUseInfoSafety(SyncGraph* node, SyncGraphVec& visited) {
+  if(node != NULL){
+    forv_Vec(UseInfo, cur, node->infoVec) {
+      if(!cur->isChecked() && visited.in(cur->lastSyncPoint) != NULL) {
+	cur->setChecked();
+	provideWarning(cur);
+      }
+    }
+  }
+}
+
+static void checkUseInfoSafety(SyncGraphVec& newlyVisited, SyncGraphVec& visited) {
+  forv_Vec(SyncGraph, node, newlyVisited) {
+    checkUseInfoSafety(node, visited);
+  }
+}
+ 
 /*
   Return the next SyncPoint of the current task from the 'start'.
 */
-static SyncGraph* nextSyncPoint(SyncGraph* start) {
+static SyncGraph* nextSyncPoint(SyncGraph* start, SyncGraphVec& visited) {
   SyncGraph * cur =  start;
   while(cur != NULL) {
     if(cur->syncType == NODE_SINGLE_WAIT_FULL ||
@@ -483,11 +535,14 @@ static SyncGraph* nextSyncPoint(SyncGraph* start) {
        cur->syncType == NODE_SYNC_SIGNAL_EMPTY) {
       return cur;
     }
-    if(cur->cChild == NULL)
+
+    visited.add(cur);
+
+    // TODO : select join Node.
+    
+    if(cur->cChild == NULL) {
       cur = cur->child;
-    else {
-      // TODO : how to choose between
-      // else part and if part
+    } else {
       cur = cur->child;
     }
   }
@@ -495,16 +550,15 @@ static SyncGraph* nextSyncPoint(SyncGraph* start) {
 }
 
 
-/**
-   A wrapper for collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraphVec& endPoints,
-   SyncGraphVec& taskPoints).
-**/
-static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraph* endPoint, SyncGraphVec& taskPoints) {
-  SyncGraphVec endPoints;
-  if(endPoint != NULL)
-    endPoints.add(endPoint);
-  collectAllAvailableBeginGraphs(root, endPoints, taskPoints);
+
+/*
+  Return the next SyncPoint of the current task from the 'start'.
+*/
+static void nextSyncPoints(SyncGraph* start, SyncGraphVec& nextSyncPoints, SyncGraphVec& visited) {
+  // TODO take all branches and return the sync points.
+  // remember to add exclusively
 }
+
 
 
 /**
@@ -513,23 +567,24 @@ static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraph* endPoint,
    not add them to the 'taskPoints' but any begin statement originating from this begin which has a 'syncPoint'
    will be added.
 **/
-static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraphVec& endPoints, SyncGraphVec& taskPoints) {
+static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraphVec& endPoints, SyncGraphVec& taskPoints, SyncGraphVec& visited) {
   SyncGraph* cur  = root;
   while (cur != NULL && endPoints.in(cur) == NULL) {
     if (cur->fChild != NULL && cur->fChild->fnSymbol->hasFlag(FLAG_BEGIN)){
       SyncGraph* newBegin = cur->fChild;
-      SyncGraph* syncPoint= nextSyncPoint(newBegin);
-      if(nextSyncPoint != NULL) {
-        taskPoints.add(syncPoint);
-        endPoints.add(syncPoint);
+      SyncGraph* syncPoint= nextSyncPoint(newBegin, visited);
+      if(endPoints.in(syncPoint) == NULL) {
+	if(syncPoint != NULL) {
+	  
+	  taskPoints.add(syncPoint);
+	  endPoints.add(syncPoint);
+	}
       }
-      collectAllAvailableBeginGraphs(newBegin, endPoints,taskPoints);
-      if(syncPoint != NULL)
-        endPoints.remove(endPoints.index(syncPoint));
+      collectAllAvailableBeginGraphs(newBegin, endPoints, taskPoints, visited);	
     }
     if(cur->cChild!= NULL) {
       endPoints.add(cur->cChild->joinNode);
-      collectAllAvailableBeginGraphs(cur->cChild,endPoints,taskPoints);
+      collectAllAvailableBeginGraphs(cur->cChild,endPoints,taskPoints, visited);
       endPoints.remove(endPoints.index(cur->cChild->joinNode));
     }
     cur = cur->child;
@@ -537,49 +592,19 @@ static void collectAllAvailableBeginGraphs(SyncGraph* root, SyncGraphVec& endPoi
   return;
 }
 
+
 /**
    This Function is called to report the error on 'expr' where the 'var' is not synced.
 **/
-static void provideWarning(SymExpr* expr, ExternVarDetails* var) {
-  USR_WARN(expr,
-           "Potential unsafe (use after free) use of variable %s here. Please make sure the variable use is properly synced.",
-           var->varName.c_str());
+static void provideWarning(UseInfo* var) {
+  
+  //USR_WARN(var->useNode,
+  //       "Potential unsafe (use after free) use of variable %s here. Please make sure the variable use is properly synced.",
+           //var->varName.c_str());
+  //	   var->varName);
 }
 
 
-
-
-
-/**
-   Remove SynGraph* in nextSourceBegins from destSyncPoints.
-   This function is used to roll back a syncPair.
-**/
-static void removeNewBegins(SyncGraphVec& nextSourceBegins, SyncGraphVec&  destSyncPoints) {
-  forv_Vec(SyncGraph, beginNode, nextSourceBegins) {
-    destSyncPoints.remove(destSyncPoints.index(beginNode));
-  }
-}
-
-/**
-   This function is to update the thread currently at syncPoint 'curNode' on the 'destSyncPoints'
-   to the 'nextSyncPoint' on finding a matching sync.
-**/
-static SyncGraph* pullUpNextSyncNode(SyncGraph* curNode, SyncGraphVec& destSyncPoints) {
-  SyncGraph* nextNode = nextSyncPoint(curNode);
-  destSyncPoints.remove(destSyncPoints.index(curNode));
-  if(nextNode != NULL) destSyncPoints.add(nextNode);
-  return nextNode;
-}
-
-/**
-   Reverse of pullUpSyncNode: removes 'curNode' from destSyncPoints and re-adds 'prevNode'
-   (previous syncPoint) in 'destSyncPoints'.
-**/
-static void pullDownSyncNode(SyncGraph* curNode, SyncGraph* prevNode, SyncGraphVec& destSyncPoints) {
-  if(curNode != NULL)
-    destSyncPoints.remove(destSyncPoints.index(curNode));
-  destSyncPoints.add(prevNode);
-}
 
 
 /**
@@ -614,28 +639,11 @@ static bool sync(SyncGraph* source, SyncGraph* dest) {
 }
 
 
-/**
-   The function checks if the def point of the variable is after the last sync Node.
-   If yes, we return true and invokes the error message, since the use cannot be synced to
-   any point.
-**/
-static bool isStartPointAfterLastSync(SyncGraph* defFunction, SyncGraph* useNode) {
-  SyncGraph* syncPoint;
-  SyncGraph* fnNode = funcGraphMap.get(useNode->fnSymbol);
-  INT_ASSERT(fnNode != NULL);
-  INT_ASSERT(defFunction != fnNode);
-  while(defFunction != fnNode) {
-    syncPoint = fnNode->parent;
-    if(syncPoint != NULL)
-      fnNode = funcGraphMap.get(syncPoint->fnSymbol);
-    else
-      return true;
-    INT_ASSERT(fnNode != NULL);
-  }
-  if(nextSyncPoint(syncPoint) == NULL)
-    return true;
-  return false;
-}
+
+
+
+
+
 
 
 /**
@@ -656,209 +664,101 @@ static void getSyncPoints(SyncGraph* source, SyncGraphVec& potentialDest, SyncGr
    Here once, we find a matching syncNode we bypass all syncPoints involving that single variable
    using the 'filledSinglePoints' list.
 **/
-static bool handleSingleSyncing(SyncGraph * toSyncNode, SyncGraphVec& destSyncPoints, SyncGraphVec& syncPoints) {
+static bool handleSingleSyncing(SyncGraphVec& destSyncPoints, SyncGraphVec& syncPoints, SyncGraphVec& visited) {
   // Single Nodes need not be pulled back as
   // once they are filled they remain filled and
   // we don't have any advantage for pulling it back.
   getSyncPoints(syncPoints.head(), destSyncPoints, syncPoints);
   forv_Vec(SyncGraph, syncPoint, syncPoints) {
     int index = destSyncPoints.index(syncPoint);
-    if(index != -1) {
-      destSyncPoints.remove(index);
-      SyncGraph* nextPoint = nextSyncPoint(syncPoint);
-      if(nextPoint != NULL)
-        destSyncPoints.add(nextPoint);
-      collectAllAvailableBeginGraphs(syncPoint, nextPoint, destSyncPoints);
-    }
+    INT_ASSERT(index != -1);
+    destSyncPoints.remove(index);
+    SyncGraph* nextPoint = nextSyncPoint(syncPoint, visited);
+    if(nextPoint != NULL)
+      destSyncPoints.add(nextPoint);
+    //TODO collect
+    //    collectAllAvailableBeginGraphs(syncPoint, nextPoint, destSyncPoints, visited);
   }
-  filledSinglePoints.add(toSyncNode);
+  filledSinglePoints.add(syncPoints.head());
   return true;
 }
 
 
-/*
-  syncPoints before the source node is available.
-*/
-static bool findtheSourceNode(SyncGraph* sourceNode, SyncGraphVec& destSyncPoints) {
-  SyncGraphVec syncPoints, newSourceBegins, newDestBegins;
-  forv_Vec(SyncGraph, destSyncNode, destSyncPoints) {
-    syncPoints.clear();
-    newSourceBegins.clear();
-    getSyncPoints(destSyncNode, destSyncPoints, syncPoints);
-    SyncGraph* nextDestSyncNode = NULL;
-    if(syncPoints.count() > 0) {
-      nextDestSyncNode = pullUpNextSyncNode(destSyncNode, destSyncPoints);
-      collectAllAvailableBeginGraphs(destSyncNode, nextDestSyncNode, newSourceBegins);
-      destSyncPoints.append(newSourceBegins);
-      if(destSyncNode->syncType == NODE_SINGLE_WAIT_FULL ||
-         syncPoints.head()->syncType == NODE_SINGLE_WAIT_FULL) {
-        handleSingleSyncing(destSyncNode, destSyncPoints, syncPoints);
-        if (destSyncPoints.in(sourceNode)) {
-          int index = destSyncPoints.index(sourceNode);
-          destSyncPoints.remove(index);
-          bool sucess =  threadedMahjong(sourceNode, destSyncPoints);
-          if(sucess)
-            return sucess;
-        } else {
+static bool threadedMahjong(SyncGraphVec& destSyncPoints, SyncGraphVec& visited, int startPoint) {
+  SyncGraphVec newBegins, syncPoints, childDestPoints;
+  SyncGraphVec subSyncDest, subVisited;
 
-          bool sucess =  findtheSourceNode(sourceNode, destSyncPoints);
-          if(sucess)
-            return sucess;
-        }
-
-      } else {
-        forv_Vec(SyncGraph, toSyncNode, syncPoints) {
-          SyncGraph* nextToSyncNode = pullUpNextSyncNode(toSyncNode,  destSyncPoints);
-          newDestBegins.clear();
-          collectAllAvailableBeginGraphs(toSyncNode, nextToSyncNode, newDestBegins);
-          destSyncPoints.append(newDestBegins);
-          if (destSyncPoints.in(sourceNode)) {
-            int index = destSyncPoints.index(sourceNode);
-            destSyncPoints.remove(index);
-            bool sucess =  threadedMahjong(sourceNode, destSyncPoints);
-            if(sucess)
-              return sucess;
-          } else {
-            bool sucess = findtheSourceNode(sourceNode, destSyncPoints);
-            if(sucess)
-              return sucess;
-          }
-          removeNewBegins(newDestBegins, destSyncPoints);
-          pullDownSyncNode(nextToSyncNode, toSyncNode, destSyncPoints);
-        }
-        removeNewBegins(newSourceBegins, destSyncPoints);
-        pullDownSyncNode(nextDestSyncNode, destSyncNode, destSyncPoints);
-      }
-    }
-  }
-
-  return false;
-}
-
-static bool syncDestinations(SyncGraph* sourceSyncPoint, SyncGraphVec& destSyncPoints) {
-  bool sucess;
-  SyncGraphVec newDestBegins, newSourceBegins, syncPoints;
-  forv_Vec(SyncGraph, destSyncNode, destSyncPoints) {
-    syncPoints.clear();
-    newSourceBegins.clear();
-    getSyncPoints(destSyncNode, destSyncPoints, syncPoints);
-    SyncGraph* nextDestSyncNode = NULL;
-    if(syncPoints.count() > 0) {
-      nextDestSyncNode = pullUpNextSyncNode(destSyncNode, destSyncPoints);
-      collectAllAvailableBeginGraphs(destSyncNode, nextDestSyncNode, newSourceBegins);
-      destSyncPoints.append(newSourceBegins);
-      if(destSyncNode->syncType == NODE_SINGLE_WAIT_FULL ||
-	 syncPoints.head()->syncType == NODE_SINGLE_WAIT_FULL) {
-        handleSingleSyncing(destSyncNode, destSyncPoints, syncPoints);
-        sucess = threadedMahjong (sourceSyncPoint, destSyncPoints);
-        if(sucess) return sucess;
-      } else {
-        forv_Vec(SyncGraph, toSyncNode, syncPoints) {
-          SyncGraph* nextToSyncNode = pullUpNextSyncNode(toSyncNode,  destSyncPoints);
-          newDestBegins.clear();
-          collectAllAvailableBeginGraphs(toSyncNode, nextToSyncNode, newDestBegins);
-          destSyncPoints.append(newDestBegins);
-          sucess = threadedMahjong (sourceSyncPoint, destSyncPoints);
-          if(sucess) return sucess;
-          removeNewBegins(newDestBegins, destSyncPoints);
-          pullDownSyncNode(nextToSyncNode, toSyncNode, destSyncPoints);
-        }
-        removeNewBegins(newSourceBegins, destSyncPoints);
-        pullDownSyncNode(nextDestSyncNode, destSyncNode, destSyncPoints);
-      }
-    }
-  }
-  return false;
-}
-
-
-/**
-   Recursive algorithm that tries to find a synced Graph that does not involve the useNode, but will
-   sync all points in the definition function. If sucessfull the function return yes, which denotes a
-   potential dangerous runtime behaviour where the use is unsafe.
-**/
-static bool threadedMahjong(SyncGraph* sourceSyncPoint, SyncGraphVec& destSyncPoints) {
-  SyncGraphVec syncPoints;
-  SyncGraphVec newSourceBegins;
-  SyncGraphVec newDestBegins;
-  bool sucess= false;
-  // if( isFilledSingle() )
-  if(sourceSyncPoint == NULL)   // end of recursion
-    return true;
   if(destSyncPoints.count() == 0)
-    return false;
-
-  getSyncPoints(sourceSyncPoint, destSyncPoints, syncPoints);
-  if(syncPoints.count() > 0) {
-    SyncGraph* nextSourceNode = nextSyncPoint(sourceSyncPoint);
-    collectAllAvailableBeginGraphs(sourceSyncPoint, nextSourceNode, newSourceBegins);
-    destSyncPoints.append(newSourceBegins);
-    if(sourceSyncPoint->syncType == NODE_SINGLE_WAIT_FULL ||
-       syncPoints.head()->syncType == NODE_SINGLE_WAIT_FULL) {
-      handleSingleSyncing(sourceSyncPoint, destSyncPoints, syncPoints);
-      sucess = threadedMahjong (nextSourceNode, destSyncPoints);
-      if(sucess) return sucess;
-    } else {
-      forv_Vec(SyncGraph, toSyncNode, syncPoints) {
-        SyncGraph* next = pullUpNextSyncNode(toSyncNode, destSyncPoints);
-
-        collectAllAvailableBeginGraphs(toSyncNode, next, newDestBegins);
-        destSyncPoints.append(newDestBegins);
-        sucess = threadedMahjong (nextSourceNode, destSyncPoints);
-        if(sucess) return sucess;
-        removeNewBegins(newDestBegins, destSyncPoints);
-        pullDownSyncNode(next, toSyncNode, destSyncPoints);
-      }
-      removeNewBegins(newSourceBegins, destSyncPoints);
-    }
+    return true;
+  // TODO iterate only parital list
+  forv_Vec(SyncGraph, syncNode, destSyncPoints) {
+    syncPoints.clear();
+    newBegins.clear();
+    getSyncPoints(syncNode, destSyncPoints, syncPoints);
+    //TODO
+    /*
+    collectAllAvailableBeginGraphs(syncPoint, nextPoint, destSyncPoints);
+    childDestPoints.clear();
+    childDestPoints.add(destSyncPoints);
+    SyncGraph* nextPoint = 
+    */
+    if(syncPoints.count() > 0) {
+      // TODO
+      
+    } 
   }
-
-  // unable to sync the source node directly
-  // try syncing a destination node to proceed.
-  return syncDestinations(sourceSyncPoint, destSyncPoints);
-
   return false;
 }
 
 
-/**
-   For each Variable check if every use is safe.
-**/
-static void checkOrphanStackVar(SyncGraph *root) {
-  // Do the test for each external Var
-  forv_Vec (ExternVarDetails, cur, externVarDetails) {
-    filledSinglePoints.clear();
-    INT_ASSERT (cur->scope != NULL);
-    SyncGraph * defFunction = funcGraphMap.get(cur->scope->getFunction());
-    INT_ASSERT (defFunction != NULL);
-    SyncGraphVec endPoints; // should not go searching beyond this
-    SyncGraphVec destSyncPoints; // destination snc point vertex
-    SyncGraph* sourceSyncPoint = nextSyncPoint(defFunction);
-    forv_Vec(UseInfo, curUseInfo, cur->usePoints){
-      // provide warning for obvious cases.
-      if( nextSyncPoint(curUseInfo->useNode) == NULL || sourceSyncPoint == NULL
-          || isStartPointAfterLastSync(defFunction, curUseInfo->useNode)) {
-        provideWarning(curUseInfo->usePoint, cur);
-      } else {
-        //        endPoints.add(sourceSyncPoint);
-        endPoints.add(curUseInfo->useNode);
-        collectAllAvailableBeginGraphs(root, endPoints, destSyncPoints);
-        int index  = destSyncPoints.index(sourceSyncPoint);
-        bool sucess;
-        if(index != -1) {
-          destSyncPoints.remove(index);
-          sucess = threadedMahjong(sourceSyncPoint, destSyncPoints);
-        } else {
-          sucess = findtheSourceNode(sourceSyncPoint, destSyncPoints);
-        }
-        if(sucess) {
-          provideWarning(curUseInfo->usePoint,cur);
-        }
-      }
-      endPoints.clear();
-      destSyncPoints.clear();
+
+static void setNextSyncNode(){
+   SyncGraphVec visited;// dummy
+  forv_Vec(UseInfo, cur, useInfos) {
+    cur->setNextSyncNode(nextSyncPoint(cur->useNode, visited));
+  }
+}
+
+static void setLastSyncNode() {
+  SyncGraphVec visited;// dummy
+  forv_Vec(UseInfo, info, useInfos) {
+    SyncGraph* curNode = info->useNode;
+    INT_ASSERT(curNode->fnSymbol  != info->fnSymbol);
+    while (curNode != NULL && curNode->fnSymbol  != info->fnSymbol) {
+      curNode = curNode->parent;
+    }
+    INT_ASSERT(curNode != NULL);
+    SyncGraph* nextSyncNode = nextSyncPoint(curNode, visited);
+    SyncGraph* syncNode = NULL;
+    while(nextSyncNode != NULL) {
+      syncNode = nextSyncNode;
+      nextSyncNode = nextSyncPoint(curNode, visited);
+    }
+    info->setLastSyncNode(syncNode);
+  }
+}
+
+
+static void checkOrphanStackVar(SyncGraph* root) {
+  bool checkedAll = true;
+  setNextSyncNode();
+  setLastSyncNode();
+  forv_Vec(UseInfo, cur , useInfos) {
+    if(cur->inherentlyUnSafe()) {
+      provideWarning(cur);
+    } else {
+      checkedAll = false;
     }
   }
+
+  if(checkedAll)
+    return;
+  SyncGraphVec endPoints;
+  SyncGraphVec destSyncPoints;
+  SyncGraphVec visited;
+  collectAllAvailableBeginGraphs(root, endPoints, destSyncPoints, visited);
+  threadedMahjong(destSyncPoints, visited, 0);
+  return;
 }
 
 
@@ -981,21 +881,9 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
 /**
    Add use of external variable details to 'node'.
 **/
-static void addExternVarDetails(Scope* s, std::string v,SymExpr* use, SyncGraph* node) {
-  ExternVarDetails * theOne = NULL;
-  forv_Vec (ExternVarDetails, cur, externVarDetails) {
-    if (cur->varName.compare(v)  == 0 &&  cur->scope == s) {
-      theOne  = cur;
-      break;
-    }
-  }
-  if (theOne == NULL) {
-    theOne = new ExternVarDetails();
-    theOne->varName = v;
-    theOne->scope = s;
-    externVarDetails.add(theOne);
-  }
-  theOne->addUseInfo(use,node);
+static void addExternVarDetails(FnSymbol* fn, std::string v,SymExpr* use, SyncGraph* node) {
+  UseInfo * newUseInfo = new UseInfo(node, fn, use, v);
+  useInfos.add(newUseInfo);
 }
 
 
@@ -1013,7 +901,7 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
 	isOuterVar(sym, expr->getFunction())) {
       BlockStmt* block = getOriginalScope(sym);
       if(shouldSync(block, cur)) {
-        addExternVarDetails(block, sym->name, se, cur);
+        addExternVarDetails(block->getFunction(), sym->name, se, cur);
         cur->contents.add_exclusive(se);
         cur->syncScope.add(block);
       }
