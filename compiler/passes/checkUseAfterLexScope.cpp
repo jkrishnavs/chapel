@@ -99,6 +99,7 @@ struct UseInfo {
 
   UseInfo(SyncGraph *node, FnSymbol* fn, SymExpr* expr, std::string name) {
     usePoint = expr;
+    fnSymbol = fn;
     useNode = node;
     varName = name;
     lastSyncPoint = NULL;
@@ -207,9 +208,9 @@ static bool alreadyVisited(SyncGraphSet& dest) {
 
 
 UseInfoVec gUseInfos;
-
-static FnSyncGraphMap funcGraphMap; // start point of each function in Sync Graph
-static bool allCallsSynced;
+FnSymbol* gFnSymbolRoot;
+static FnSyncGraphMap gFuncGraphMap; // start point of each function in Sync Graph
+static bool gAllCallsSynced;
 static void deleteSyncGraphNode(SyncGraph *node);
 static void cleanUpSyncGraph(SyncGraph *root);
 static void checkOrphanStackVar(SyncGraph *root);
@@ -237,10 +238,10 @@ static int compareScopes(Scope* a, Scope * b);
 static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn);
 static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
 static bool  ASTContainsBeginFunction(BaseAST* ast);
-static void expandAllInternalFunctions(SyncGraph* root,FnSymbolsVec &fnSymbols, SyncGraph* endPoint = NULL);
-static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch);
+static void expandAllInternalFunctions(SyncGraph* root,FnSymbolsVec &fnSymbols, SyncGraph* endPoin);
+//static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch);
+//static SyncGraphVec getCopyofGraph(SyncGraph* start, FnSymbol* f);
 static void addExternVarDetails(FnSymbol* fn, std::string v,SymExpr* use, SyncGraph* node) ;
-static SyncGraphVec getCopyofGraph(SyncGraph* start, FnSymbol* f);
 static void provideWarning(UseInfo* var);
 static bool sync(SyncGraph* source, SyncGraph* dest);
 static void getSyncPoints(SyncGraph* source, SyncGraphVec& potentialDest, SyncGraphVec& syncPoints);
@@ -361,12 +362,10 @@ static void cleanUpSyncGraph(SyncGraph *node) {
 /*
   This function is used for creating a copy of function to inline
   the internal functions that are called from begins.
+  
 */
-static SyncGraphVec getCopyofGraph(SyncGraph* start, FnSymbol* f) {
-  /**
-     TODO decide what to de when we have a fChild here
-  **/
-  SyncGraphVec copy;
+/*
+static SyncGraph* getCopyofGraph(SyncGraph* start, FnSymbol* f) {
   SyncGraph* node = start;
   while (node != NULL) {
     SyncGraph * newnode = new SyncGraph(node, f);
@@ -378,33 +377,42 @@ static SyncGraphVec getCopyofGraph(SyncGraph* start, FnSymbol* f) {
   }
   return copy;
 }
-
+*/
 
 /**
    Inline the internal function with a copy generated using 'getCopyofGraph(...)'.
    // TODO :verify
 **/
-static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch) {
+/*
+static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch, SyncGraph *parent, bool childNode = true) {
+
+
+ 
   if (inlineNode) {
     SyncGraph *oldChild = inlineNode->child;
-    SyncGraphVec copy = getCopyofGraph(branch, inlineNode->fnSymbol);
+     SyncGraphVec copy = getCopyofGraph(branch, inlineNode->fnSymbol);
     if (copy.size() > 0) {
       inlineNode->child = copy.front();
       copy.front()->parent = inlineNode;
       (copy.back())->child = oldChild;
       oldChild->parent = copy.back();
     }
+
+    
     return copy.back();
   }
+
   return NULL;
 }
 
-
+*/
 /**
    Expand all internal Function calls. A check has been introduced to avoid infinite loop
    due to recursion.
 **/
-static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols, SyncGraph* endPoint) {
+static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols, SyncGraph* endPoint = NULL) {
+  
+  /*
   SyncGraph* cur = root;
   SyncGraphVec endPoints;
   while(cur != NULL) {
@@ -414,10 +422,16 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
       forv_Vec(CallExpr, fnCall, cur->intFuncCalls) {
         FnSymbol* curFun = fnCall->theFnSymbol();
         SyncGraph* intFuncNode = funcGraphMap.get(curFun);
-        if(intFuncNode != NULL && fnSymbols.in(curFun) == NULL
-           && fnSymbols.add_exclusive(curFun) == 1 ) {
-          SyncGraph* endPoint = inlineCFG(cur, intFuncNode);
-          endPoints.push_back(endPoint);
+        if(intFuncNode != NULL &&
+	   fnSymbols.in(curFun) == NULL &&
+	   fnSymbols.add_exclusive(curFun) == 1 ) {
+	  SyncGraph* parentNode = cur->parent; 
+	  if(parentNode->child == cur) {
+	    endPoint = inlineCFG(cur, intFuncNode);
+	  }
+	  endPoint->child = cur;
+	  if( endPoint != NULL)
+	    endPoints.push_back(endPoint);
         }
       }
     }
@@ -430,13 +444,14 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
       expandAllInternalFunctions(cur->fChild, fnSymbols);
     }
 
-    if(endPoints.back() == cur) {
+    if(cur != NULL && endPoints.back() == cur) {
       fnSymbols.pop();
       endPoints.pop_back();
     }
     cur = cur->child;
   }
   return;
+  */
 }
 
 
@@ -446,11 +461,19 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
    Return 1  : The Scope A is embedded in Scope B. (includes A == B)
    Return -1 : The Scope B is strictly
    embedded in Scope A. (does not include B == A ).
+   Assumes NULL emedded everything
 **/
 static int compareScopes(Scope* a, Scope* b) {
   if(a == b) {
     return 1;
   }
+
+  if(a == NULL)
+    return -1;
+
+  if(b == NULL)
+    return 1;
+  
   Expr* parent = a->parentExpr;
   if(a->parentSymbol == b->parentSymbol) {
     while(parent) {
@@ -893,7 +916,7 @@ static void setLastSyncNode() {
     SyncGraph* syncNode = NULL;
     while(nextSyncNode != NULL) {
       syncNode = nextSyncNode;
-      nextSyncNode = nextSyncPoint(curNode, dummySet);
+      nextSyncNode = nextSyncPoint(nextSyncNode, dummySet);
     }
     if(syncNode == NULL) {
       provideWarning(info);
@@ -1048,6 +1071,8 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
    Add use of external variable details to 'node'.
 **/
 static void addExternVarDetails(FnSymbol* fn, std::string v,SymExpr* use, SyncGraph* node) {
+  if(compareScopes(fn->body,gFnSymbolRoot->body) != 1)
+    fn = gFnSymbolRoot;
   UseInfo * newUseInfo = new UseInfo(node, fn, use, v);
   gUseInfos.add(newUseInfo);
 }
@@ -1114,11 +1139,10 @@ static bool isInsideSyncStmt(Expr* expr) {
    not worry about use of variable that are defined outside the sync statment.
 **/
 static void checkSyncedCalls(FnSymbol* fn) {
-  allCallsSynced = true;
+  gAllCallsSynced = true;
   forv_Vec(CallExpr,call,*fn->calledBy) {
-    //for_vector(CallExpr, call, fn->calledBy) {
     if(isInsideSyncStmt(call)) {
-      allCallsSynced = false;
+      gAllCallsSynced = false;
       break;
     }
   }
@@ -1153,12 +1177,11 @@ static bool shouldSync(Scope* block, SyncGraph *cur) {
   // a sync statement then we need not worry  about
   // syncing it.
 
-  if(block == NULL &&  allCallsSynced == true) {
+  if(block == NULL &&  gAllCallsSynced == true) {
     return false;
   }
   if(cur->syncedScopes.size() > 0) {
     forv_Vec(Scope, syncedScope, cur->syncedScopes) {
-      //for_vector(Scope, syncedScope, cur->syncedScopes) {
       if(compareScopes(block,syncedScope) == 1)
         return false;
     }
@@ -1290,7 +1313,7 @@ static SyncGraph* handleExpr(Expr* expr, SyncGraph *cur){
 
 static SyncGraph* handleBegin(FnSymbol* fn, SyncGraph* cur) {
   SyncGraph* childNode = addChildNode(cur, fn);
-  funcGraphMap.put(fn,childNode);
+  gFuncGraphMap.put(fn,childNode);
   handleBlockStmt(fn->body, childNode);
   return cur;
 }
@@ -1304,7 +1327,7 @@ static SyncGraph* handleFunction(FnSymbol* fn, SyncGraph *cur=NULL) {
     // Internal Function node.
     newNode = addChildNode(cur, fn);
   }
-  funcGraphMap.put(fn,newNode);
+  gFuncGraphMap.put(fn,newNode);
   handleBlockStmt(fn->body, newNode);
   return cur;
 }
@@ -1371,9 +1394,10 @@ void checkUseAfterLexScope() {
     }
   }
 
-  isInsideSyncStmt(NULL);
+  //  isInsideSyncStmt(NULL);
   forv_Vec (FnSymbol, fn, aFnSymbols) {
-     //for_vector(FnSymbol, fn, aFnSymbols) { 
+     //for_vector(FnSymbol, fn, aFnSymbols) {
+    gFnSymbolRoot = fn;
     checkSyncedCalls(fn);
     SyncGraph* syncGraphRoot = handleFunction(fn);
     #ifdef CHPL_DOTGRAPH
