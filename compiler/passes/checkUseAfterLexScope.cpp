@@ -189,10 +189,11 @@ static SyncGraphVector gAnalysisRoots; // We will be creating multiple root for
                                    // efficiently
 
 typedef std::set<SyncGraph*> SyncGraphSet;
+static SyncGraphSet gFinalNodeSet;
 
 struct VisitedMap {
   SyncGraphSet destPoints;
-  SyncGraphSet visited;
+  SyncGraphSet lvisited;
   SyncGraphSet vSingles;
   VisitedMap() {}
 
@@ -202,9 +203,12 @@ struct VisitedMap {
     destPoints.insert(newDestPoints.begin(), newDestPoints.end());
     vSingles.insert(singles.begin(), singles.end());
     if(prev != NULL) {
-      visited.insert(prev->visited.begin(), prev->visited.end());
+      lvisited.insert(prev->lvisited.begin(), prev->lvisited.end());
     }
-    visited.insert(newlyVisited.begin(), newlyVisited.end());    
+    for_vector(SyncGraph, newVisit, newlyVisited) {
+      if(gFinalNodeSet.find(newVisit) != gFinalNodeSet.end())
+	lvisited.insert(newVisit);    
+    }
   }
   
 
@@ -243,8 +247,8 @@ static bool alreadyVisited(SyncGraphSet& dest) {
 
 
 
-UseInfoVec gUseInfos;
-FnSymbol* gFnSymbolRoot;
+static UseInfoVec gUseInfos;
+static FnSymbol* gFnSymbolRoot;
 static FnSyncGraphMap gFuncGraphMap; // start point of each function in Sync Graph
 static bool gAllCallsSynced;
 static void deleteSyncGraphNode(SyncGraph *node);
@@ -402,6 +406,7 @@ static void cleanUpSyncGraph(SyncGraph *node) {
   gAnalysisRoots.clear();
   gUseInfos.clear();
   gListVisited.clear();
+  gFinalNodeSet.clear();
 }
 
 /*
@@ -767,7 +772,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
     return;
   if(curVisited != NULL) {
     vSingles.insert(curVisited->vSingles.begin(),curVisited->vSingles.end());
-    visited.insert(curVisited->visited.begin(), curVisited->visited.end()); 
+    visited.insert(curVisited->lvisited.begin(), curVisited->lvisited.end()); 
   }
 
   if(newlyVisited.size() > 0) {
@@ -921,16 +926,16 @@ static bool threadedMahjong(void) {
 	if(sourceSyncPoint->syncType == NODE_SINGLE_WAIT_FULL ||
 	   syncPoints.front()->syncType == NODE_SINGLE_WAIT_FULL) {
 	  handleSingleSyncing(syncPoints, destSyncPoints, curVisited); 
-	  checkUseInfoSafety(syncPoints, curVisited->visited);
+	  checkUseInfoSafety(syncPoints, curVisited->lvisited);
 	} else {
-	  checkUseInfoSafety(sourceSyncPoint, curVisited->visited);
+	  checkUseInfoSafety(sourceSyncPoint, curVisited->lvisited);
 	  SyncGraphSet partialSet(curVisited->destPoints.begin(), 
 				  curVisited->destPoints.end());
 	  partialSet.erase(sourceSyncPoint);
 	  SyncGraphVector newlyMatched;
 	  newlyMatched.push_back(sourceSyncPoint);
 	  for_vector(SyncGraph, destSyncPoint, syncPoints) {
-	    checkUseInfoSafety(destSyncPoint, curVisited->visited);
+	    checkUseInfoSafety(destSyncPoint, curVisited->lvisited);
 	    partialSet.erase(destSyncPoint);
 	    newlyMatched.push_back(destSyncPoint);
 	    SyncGraphVector newlyVisited(newlyMatched.begin(), newlyMatched.end());
@@ -987,6 +992,7 @@ static void setLastSyncNode() {
       provideWarning(info);
     } else {
       info->setLastSyncNode(syncNode);
+      gFinalNodeSet.insert(syncNode);
     }
    }
 }
