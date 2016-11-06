@@ -1265,7 +1265,7 @@ static bool shouldSync(Scope* block, SyncGraph *cur) {
   }
   if(cur->syncedScopes.size() > 0) {
     forv_Vec(Scope, syncedScope, cur->syncedScopes) {
-      if(compareScopes(block,syncedScope) == 1)
+      if(compareScopes(syncedScope,block) == 1)
         return false;
     }
   }
