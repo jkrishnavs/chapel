@@ -1223,8 +1223,8 @@ static bool isInsideSyncStmt(Expr* expr) {
 **/
 static void checkSyncedCalls(FnSymbol* fn) {
   gAllCallsSynced = true;
-  forv_Vec(CallExpr,call,*fn->calledBy) {
-    if(isInsideSyncStmt(call)) {
+  forv_Vec(CallExpr, call, *fn->calledBy) {
+    if(!isInsideSyncStmt(call)) {
       gAllCallsSynced = false;
       break;
     }
@@ -1467,6 +1467,7 @@ static bool containsBeginFunction(FnSymbol* fn) {
 **/
 void checkUseAfterLexScope() {
   // collect all functions that needs to be analyzed
+  // TODO change it to maps.
   Vec<FnSymbol*> aFnSymbols;
   forv_Vec (FnSymbol, fn, gFnSymbols) {
     if (containsBeginFunction(fn) == true) {
