@@ -474,14 +474,15 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
       FnSymbol* curFun = cur->intFuncCall->theFnSymbol();
       SyncGraph* intFuncNode = gFuncGraphMap.get(curFun);
       if(intFuncNode != NULL && fnSymbols.in(curFun) == NULL) {
-	SyncGraph* parentNode = cur->parent;
-	fnSymbols.add_exclusive(curFn);
+	//SyncGraph* parentNode = cur->parent;
+	fnSymbols.add_exclusive(curFun);
 	// expand all internal Functions recursively
-	expandAllInternalFunctions(curFn, fnSymbols,NULL);
-	fnSymbols.remove(curFn);
+	expandAllInternalFunctions(intFuncNode, fnSymbols, NULL);
+	FnSymbol* popped = fnSymbols.pop();
+	INT_ASSERT(popped == curFun);
 	INT_ASSERT(cur->cChild == NULL && cur->fChild == NULL);
 	SyncGraph *oldChild = cur->child;
-	SyncGraph endPoint = copyCFG(cur, intFuncNode);
+	SyncGraph* copy = copyCFG(cur, intFuncNode);
 	/* update Pointers */
 	copy->parent = cur;
 	cur->child = copy;
@@ -489,7 +490,7 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
 	INT_ASSERT(endPoint != NULL);
 	endPoint->child = oldChild;
 	oldChild->parent = endPoint;
-	curPoint->expandedFn  = true;
+	cur->expandedFn  = true;
 	INT_ASSERT(endPoint != NULL);
 	cur = endPoint;
       }
