@@ -89,17 +89,19 @@ struct SyncGraph {
   bool loopNode;
   bool conditionalNode;
   bool isjoinNode;
+  bool expandedFn; // if the functioncall in intFuncCall is already expanded
   Vec<SymExpr*>  contents;
   Vec<BlockStmt*> syncScope;
-  Vec<CallExpr*> intFuncCalls;
+  // Vec<CallExpr*> intFuncCalls;
+  CallExpr* intFuncCall; // Internal Function Call
   ScopeVec syncedScopes;    // These are the already defined sync points
                             // created due to sync statments, Cobegin, Coforall
                             // and Forall statments.
   UseInfoVec infoVec;
   std::string syncVar;
-  SyncGraph(SyncGraph* i, FnSymbol *f) {
+  SyncGraph(SyncGraph* i, FnSymbol *f, bool copyInternalFunctionCall = false) {
     __ID = counter ++;
-    fnSymbol = i->fnSymbol;
+    fnSymbol = f;
     contents.copy(i->contents);
     infoVec.copy(i->infoVec);
     syncedScopes.append(i->syncedScopes);
@@ -109,6 +111,9 @@ struct SyncGraph {
     syncVar = i->syncVar;
     joinNode = i->joinNode;
     isjoinNode = i->isjoinNode;
+    if(copyInternalFunctionCall)
+      intFuncCall = i->intFuncCall;
+    expandedFn = i->expandedFn;
   }
 
   SyncGraph(FnSymbol *f) {
@@ -122,6 +127,8 @@ struct SyncGraph {
     conditionalNode = false;
     isjoinNode = false;
     joinNode = NULL;
+    intFuncCall = NULL;
+    expandedFn = false;
   }
   ~SyncGraph() {}
 };
@@ -278,8 +285,8 @@ static int compareScopes(Scope* a, Scope * b);
 static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn);
 static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
 static bool  ASTContainsBeginFunction(BaseAST* ast);
-static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec &fnSymbols, SyncGraph* endPoin);
-//static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch);
+static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec &fnSymbols, SyncGraph* stopPoint= NULL);
+static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch);
 //static SyncGraphVector getCopyofGraph(SyncGraph* start, FnSymbol* f);
 static void addExternVarDetails(FnSymbol* fn, std::string v, SymExpr* use, SyncGraph* node) ;
 static void provideWarning(UseInfo* var);
@@ -298,7 +305,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 static void checkUseInfoSafety(SyncGraph* node, SyncGraphSet& visited);
 static void checkUseInfoSafety(SyncGraphVector& newlyVisited, SyncGraphSet& visited);
 
-
+static SyncGraph* getLastNode(SyncGraph* start);
 
 static void setNextSyncNode();
 static void setLastSyncNode();
@@ -407,101 +414,95 @@ static void cleanUpSyncGraph(SyncGraph *node) {
   gUseInfos.clear();
   gListVisited.clear();
   gFinalNodeSet.clear();
+  gFuncGraphMap.clear();
 }
-
-/*
-  This function is used for creating a copy of function to inline
-  the internal functions that are called from begins.
-  
-*/
-/*
-static SyncGraph* getCopyofGraph(SyncGraph* start, FnSymbol* f) {
-  SyncGraph* node = start;
-  while (node != NULL) {
-    SyncGraph * newnode = new SyncGraph(node, f);
-    if (copy.size() > 0) {
-      newnode->parent = copy.back();
-      copy.back()->child = newnode;
-    }
-    copy.push_back(node);
-  }
-  return copy;
-}
-*/
 
 /**
-   Inline the internal function with a copy generated using 'getCopyofGraph(...)'.
-   // TODO :verify
-**/
-/*
-static SyncGraph* inlineCFG(SyncGraph* inlineNode, SyncGraph* branch, SyncGraph *parent, bool childNode = true) {
-
-
- 
-  if (inlineNode) {
-    SyncGraph *oldChild = inlineNode->child;
-     SyncGraphVector copy = getCopyofGraph(branch, inlineNode->fnSymbol);
-    if (copy.size() > 0) {
-      inlineNode->child = copy.front();
-      copy.front()->parent = inlineNode;
-      (copy.back())->child = oldChild;
-      oldChild->parent = copy.back();
-    }
-
-    
-    return copy.back();
+   recursively make a copy of CFG
+ **/
+static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch) {
+  if(branch == NULL)
+    return NULL;
+  SyncGraph* newNode = NULL;
+  if(parent != NULL)
+    newNode = new SyncGraph(branch, parent->fnSymbol, false);
+  else
+    newNode = new SyncGraph(branch, branch->fnSymbol, false);
+  if(branch->child != NULL) {
+    SyncGraph* child = copyCFG(newNode, branch->child);
+    child->parent  = newNode;
+    newNode->child = child;
   }
-
-  return NULL;
+  if(branch->cChild != NULL) {
+    /* TODO: copy until joinNode Only*/
+    SyncGraph* child = copyCFG(newNode, branch->cChild);
+    child->parent  = newNode;
+    newNode->cChild = child;
+  }
+  if(branch->fChild != NULL && branch->fChild->fnSymbol->hasFlag(FLAG_BEGIN)) {
+    SyncGraph* child = copyCFG(NULL, branch->fChild);
+    child->parent  = newNode;
+    parent->fChild = child;
+  }
+ 
+  return newNode;
 }
 
-*/
+inline static SyncGraph* getLastNode(SyncGraph* start) {
+  SyncGraph* cur = start;
+  while(cur ->child != NULL) {
+    cur = cur->child;
+  }
+  return cur;
+}
+
+
 /**
    Expand all internal Function calls. A check has been introduced to avoid infinite loop
    due to recursion.
+   root : start point of internal function expansion :
+   fnSymbols: list of FnSymbols in the Graph
+   stopPoint (optional): We expand the internal Function until we reach this point.
+                       default value is NULL.
 **/
-static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols, SyncGraph* endPoint) {
-  
-  /*
+static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols, SyncGraph* stopPoint) {
   SyncGraph* cur = root;
-  SyncGraphVector endPoints;
   while(cur != NULL) {
-    if(cur == endPoint)
+    if(cur == stopPoint)
       return;
-    if(cur->intFuncCalls.count() != 0) {
-      forv_Vec(CallExpr, fnCall, cur->intFuncCalls) {
-        FnSymbol* curFun = fnCall->theFnSymbol();
-        SyncGraph* intFuncNode = funcGraphMap.get(curFun);
-        if(intFuncNode != NULL &&
-	   fnSymbols.in(curFun) == NULL &&
-	   fnSymbols.add_exclusive(curFun) == 1 ) {
-	  SyncGraph* parentNode = cur->parent; 
-	  if(parentNode->child == cur) {
-	    endPoint = inlineCFG(cur, intFuncNode);
-	  }
-	  endPoint->child = cur;
-	  if( endPoint != NULL)
-	    endPoints.push_back(endPoint);
-        }
+    if(cur->intFuncCall != NULL && cur->expandedFn == false) {
+      FnSymbol* curFun = cur->intFuncCall->theFnSymbol();
+      SyncGraph* intFuncNode = gFuncGraphMap.get(curFun);
+      if(intFuncNode != NULL && fnSymbols.in(curFun) == NULL) {
+	SyncGraph* parentNode = cur->parent;
+	fnSymbols.add_exclusive(curFn);
+	// expand all internal Functions recursively
+	expandAllInternalFunctions(curFn, fnSymbols,NULL);
+	fnSymbols.remove(curFn);
+	INT_ASSERT(cur->cChild == NULL && cur->fChild == NULL);
+	SyncGraph *oldChild = cur->child;
+	SyncGraph endPoint = copyCFG(cur, intFuncNode);
+	/* update Pointers */
+	copy->parent = cur;
+	cur->child = copy;
+	SyncGraph* endPoint = getLastNode(copy);
+	INT_ASSERT(endPoint != NULL);
+	endPoint->child = oldChild;
+	oldChild->parent = endPoint;
+	curPoint->expandedFn  = true;
+	INT_ASSERT(endPoint != NULL);
+	cur = endPoint;
       }
     }
-
     if(cur->cChild != NULL ) {
       expandAllInternalFunctions(cur->cChild, fnSymbols,cur->cChild->joinNode);
     }
-
-    if(cur->fChild != NULL && cur->fChild->fnSymbol->hasFlag(FLAG_BEGIN)) {
-      expandAllInternalFunctions(cur->fChild, fnSymbols);
-    }
-
-    if(cur != NULL && endPoints.back() == cur) {
-      fnSymbols.pop();
-      endPoints.pop_back();
+    if(cur->fChild != NULL ) {
+      expandAllInternalFunctions(cur->fChild, fnSymbols,cur->cChild->joinNode);
     }
     cur = cur->child;
   }
   return;
-  */
 }
 
 
@@ -1189,11 +1190,15 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
     if (caleeFn != NULL && !(caleeFn->hasFlag(FLAG_BEGIN))
         && (caleeFn->getModule()->modTag == MOD_USER)
         && isFnSymbol(caleeFn->defPoint->parentSymbol)) {
-      // Non begin used mod function
-      // that is internal
-      cur->intFuncCalls.add_exclusive(call);
+      // Non begin used mod function could be an internal function
+      // that is internal functions should not be more than 1.
+      INT_ASSERT(cur->intFuncCall == NULL);
+      cur->intFuncCall = call;
     }
   }
+  if(cur->intFuncCall != NULL )
+    cur = addChildNode(cur, cur->fnSymbol);
+  
   cur = addSyncExprs(expr, cur);
   return cur;
 }
