@@ -88,7 +88,7 @@ struct SyncGraph {
   GraphNodeStatus syncType;
   bool loopNode;
   bool conditionalNode;
-  bool isjoinNode;
+  // bool isjoinNode;
   bool expandedFn; // if the functioncall in intFuncCall is already expanded
   Vec<SymExpr*>  contents;
   Vec<BlockStmt*> syncScope;
@@ -110,7 +110,7 @@ struct SyncGraph {
     syncType = i->syncType;
     syncVar = i->syncVar;
     joinNode = i->joinNode;
-    isjoinNode = i->isjoinNode;
+    //isjoinNode = i->isjoinNode;
     if(copyInternalFunctionCall)
       intFuncCall = i->intFuncCall;
     expandedFn = i->expandedFn;
@@ -125,7 +125,7 @@ struct SyncGraph {
     syncType = NODE_UNKNOWN;
     loopNode = false;
     conditionalNode = false;
-    isjoinNode = false;
+    // isjoinNode = false;
     joinNode = NULL;
     intFuncCall = NULL;
     expandedFn = false;
@@ -286,7 +286,7 @@ static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn);
 static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
 static bool  ASTContainsBeginFunction(BaseAST* ast);
 static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec &fnSymbols, SyncGraph* stopPoint= NULL);
-static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch);
+static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph *endPoint);
 //static SyncGraphVector getCopyofGraph(SyncGraph* start, FnSymbol* f);
 static void addExternVarDetails(FnSymbol* fn, std::string v, SymExpr* use, SyncGraph* node) ;
 static void provideWarning(UseInfo* var);
@@ -419,8 +419,9 @@ static void cleanUpSyncGraph(SyncGraph *node) {
 
 /**
    recursively make a copy of CFG
+   if endPoint is not null we make copy until the endPoint.
  **/
-static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch) {
+static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPoint) {
   if(branch == NULL)
     return NULL;
   SyncGraph* newNode = NULL;
@@ -428,19 +429,20 @@ static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch) {
     newNode = new SyncGraph(branch, parent->fnSymbol, false);
   else
     newNode = new SyncGraph(branch, branch->fnSymbol, false);
-  if(branch->child != NULL) {
-    SyncGraph* child = copyCFG(newNode, branch->child);
+  if(branch->child != NULL && branch->child != endPoint) {
+    SyncGraph* child = copyCFG(newNode, branch->child, endPoint);
     child->parent  = newNode;
     newNode->child = child;
   }
   if(branch->cChild != NULL) {
     /* TODO: copy until joinNode Only*/
-    SyncGraph* child = copyCFG(newNode, branch->cChild);
+    endPoint =  branch->joinNode;
+    SyncGraph* child = copyCFG(newNode, branch->cChild, endPoint);
     child->parent  = newNode;
     newNode->cChild = child;
   }
   if(branch->fChild != NULL && branch->fChild->fnSymbol->hasFlag(FLAG_BEGIN)) {
-    SyncGraph* child = copyCFG(NULL, branch->fChild);
+    SyncGraph* child = copyCFG(NULL, branch->fChild, NULL);
     child->parent  = newNode;
     parent->fChild = child;
   }
@@ -482,7 +484,7 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
 	INT_ASSERT(popped == curFun);
 	INT_ASSERT(cur->cChild == NULL && cur->fChild == NULL);
 	SyncGraph *oldChild = cur->child;
-	SyncGraph* copy = copyCFG(cur, intFuncNode);
+	SyncGraph* copy = copyCFG(cur, intFuncNode, NULL);
 	/* update Pointers */
 	copy->parent = cur;
 	cur->child = copy;
@@ -1294,7 +1296,7 @@ static SyncGraph* handleSyncStatement(Scope* block, SyncGraph* cur) {
 static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* ifNode, SyncGraph* elseNode) {
   elseNode->child = end;
   start->joinNode = end;
-  end->isjoinNode = true;
+  // end->isjoinNode = true;
   end->parent = ifNode;
 
   return end;
