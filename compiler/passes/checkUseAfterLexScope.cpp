@@ -110,10 +110,12 @@ struct SyncGraph {
     syncType = i->syncType;
     syncVar = i->syncVar;
     joinNode = i->joinNode;
-    //isjoinNode = i->isjoinNode;
     if(copyInternalFunctionCall)
       intFuncCall = i->intFuncCall;
     expandedFn = i->expandedFn;
+    child = NULL;
+    fChild = NULL;
+    cChild = NULL;
   }
 
   SyncGraph(FnSymbol *f) {
@@ -477,11 +479,13 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
       SyncGraph* intFuncNode = gFuncGraphMap.get(curFun);
       if(intFuncNode != NULL && fnSymbols.in(curFun) == NULL) {
 	//SyncGraph* parentNode = cur->parent;
-	fnSymbols.add_exclusive(curFun);
+	int added = fnSymbols.add_exclusive(curFun);
 	// expand all internal Functions recursively
-	expandAllInternalFunctions(intFuncNode, fnSymbols, NULL);
-	FnSymbol* popped = fnSymbols.pop();
-	INT_ASSERT(popped == curFun);
+	if(added == 1) {
+	  expandAllInternalFunctions(intFuncNode, fnSymbols, NULL);
+	  FnSymbol* popped = fnSymbols.pop();
+	  INT_ASSERT(popped == curFun);
+	}
 	INT_ASSERT(cur->cChild == NULL && cur->fChild == NULL);
 	SyncGraph *oldChild = cur->child;
 	SyncGraph* copy = copyCFG(cur, intFuncNode, NULL);
@@ -501,7 +505,7 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& fnSymbols,
       expandAllInternalFunctions(cur->cChild, fnSymbols,cur->cChild->joinNode);
     }
     if(cur->fChild != NULL ) {
-      expandAllInternalFunctions(cur->fChild, fnSymbols,cur->cChild->joinNode);
+      expandAllInternalFunctions(cur->fChild, fnSymbols,stopPoint);
     }
     cur = cur->child;
   }
@@ -1194,9 +1198,9 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
         && (caleeFn->getModule()->modTag == MOD_USER)
         && isFnSymbol(caleeFn->defPoint->parentSymbol)) {
       // Non begin used mod function could be an internal function
-      // that is internal functions should not be more than 1.
+      // Number of calls to embedded functions should not be more than 1.
       INT_ASSERT(cur->intFuncCall == NULL);
-      cur->intFuncCall = call;
+      cur->intFuncCall = call; // Not assured to be embedded function call.
     }
   }
   if(cur->intFuncCall != NULL )
