@@ -47,7 +47,7 @@ enum GraphNodeStatus {
 enum SymbolStates {
   SYMBOL_STATE_EMPTY =0,
   SYMBOL_STATE_FULL
-}
+};
 
 #ifdef CHPL_DOTGRAPH
 std::string GraphNodeStatusStrings[] = {
@@ -103,7 +103,7 @@ struct SyncGraph {
   ScopeVec syncedScopes;    // These are the already defined sync points
                             // created due to sync statments, Cobegin, Coforall
                             // and Forall statments.
-  UseInfoVec infoVec;
+  UseInfoVec extVarInfoVec;
   //  UseInfoVec frontierVec;
   //  std::string syncVar;
   Symbol* syncVar;
@@ -112,7 +112,7 @@ struct SyncGraph {
     fnSymbol = f;
     //    contents.copy(i->contents);
     infoVec.copy(i->infoVec);
-    frontierVec.copy(i->frontierVec);
+    // frontierVec.copy(i->frontierVec);
     syncedScopes.append(i->syncedScopes);
     loopNode = i->loopNode;
     conditionalNode = i->conditionalNode;
@@ -157,7 +157,7 @@ struct UseInfo {
     fnSymbol = fn;
     useNode = node;
     varName = name;
-    lastSyncPoint = NULL;
+    // lastSyncPoint = NULL;
     //    nextSyncPoint =  NULL;
     checked = false;
   }
@@ -212,9 +212,6 @@ static SymbolSet gSyncVars;
 typedef std::set<SyncGraph*> SyncGraphSet;
 
 typedef Map<Symbol*, SymbolStates> SymbolStatesMap;
-static 
-
-
 
 static SyncGraphSet gFinalNodeSet;
 
@@ -231,21 +228,23 @@ struct VisitedMap {
     return symbolMap.get(syncVar);
   }
   
-  VisitedMap(VisitedMap* prev, SyncGraphVector& newlyVisited, SyncGraphSet& newDestPoints,  SyncGraphSet& singles) {
+  VisitedMap(VisitedMap* prev, SyncGraphVector& newlyVisited, SyncGraphSet& newDestPoints,  SyncGraphSet& singles, UseInfoVec& infos) {
     destPoints.insert(newDestPoints.begin(), newDestPoints.end());
     vSingles.insert(singles.begin(), singles.end());
+    unSyncedUses = infos;
     if(prev != NULL) {
-      unSyncedUses.insert(prev->unSyncedUses.begin(), prev->unSyncedUses.end());
-      symbolMap.insert(prev->symbolMap.begin(), prev->symbolMap.end());
+      symbolMap = prev->symbolMap;
     } else {
       for_set(Symbol, curSymbol, gSyncVars) {
 	symbolMap.put(curSymbol, SYMBOL_STATE_EMPTY);
       }     
     }
+    /*
     for_vector(SyncGraph, newVisit, newlyVisited) {
       if(gFinalNodeSet.find(newVisit) != gFinalNodeSet.end())
 	lvisited.insert(newVisit);    
     }
+    */
   }
   
   
@@ -272,17 +271,16 @@ struct VisitedMap {
 
 struct std::vector<VisitedMap*> gListVisited;
 
-/*
-  static bool alreadyVisited(SyncGraphSet& dest) {
+static bool alreadyVisited(SyncGraphSet& dest);
+
+static bool alreadyVisited(SyncGraphSet& dest) {
   for_vector(VisitedMap, curMap, gListVisited) {
-  if(curMap->destPoints == dest) {
-  return true;
-  }
+    if(curMap->destPoints == dest) {
+      return true;
+    }
   }
   return false;
-  }
-  
-*/
+}
 
 static UseInfoVec gUseInfos;
 static FnSymbol* gFnSymbolRoot;
@@ -306,7 +304,7 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur);
 static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur);
 static bool containsBeginFunction(FnSymbol* fn);
 static Scope* getOriginalScope(Symbol* sym);
-static bool clearUses(UseInfoVec uses, VisitedMap* curState);
+//static bool clearUses(UseInfoVec uses, VisitedMap* curState);
 static ArgSymbol*  getTheArgSymbol(Symbol * sym, FnSymbol* parent);
 static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraph *cur);
 static bool isInsideSyncStmt(Expr* expr);
@@ -327,14 +325,14 @@ static void getSyncPoints(SyncGraph* source, SyncGraphVector& potentialDest, Syn
 static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* ifNode, SyncGraph* elseNode);
 static bool threadedMahjong(void);
 
-static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& destSyncPoints, VisitedMap* curVisited);
+static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& destSyncPoints, VisitedMap* curVisited,  UseInfoVec & useInfos);
 static SyncGraph* nextSyncPoint(SyncGraph* start, bool skipCurrent);
 static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyremoved, SyncGraphSet& partialSet, SyncGraphVector& newlyVisited, UseInfoVec& useInfos);
 // static void collectNextSyncPoints(SyncGraph*start, SyncGraphVector& syncPoints, SyncGraphVector& syncedSingle, bool skipCurrent);
 
 
-static void checkUseInfoSafety(SyncGraph* node, SyncGraphSet& visited);
-static void checkUseInfoSafety(SyncGraphVector& newlyVisited, SyncGraphSet& visited);
+// static void checkUseInfoSafety(SyncGraph* node, SyncGraphSet& visited);
+// static void checkUseInfoSafety(SyncGraphVector& newlyVisited, SyncGraphSet& visited);
 
 static SyncGraph* getLastNode(SyncGraph* start);
 
@@ -342,7 +340,7 @@ static SyncGraph* getLastNode(SyncGraph* start);
 //static void setLastSyncNode();
 static SyncGraph* getNextDominatedNode(SyncGraph* cur);
 static bool isASyncPoint(SyncGraph* cur);
-static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints, SyncGraphSet& visited);
+static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints);
 //static int containsVec(SyncGraphVector& list, SyncGraph* cur);
 #ifdef CHPL_DOTGRAPH
 static void dotGraph(SyncGraph* root);
@@ -403,6 +401,7 @@ static void dotGraph(SyncGraph* root) {
 }
 #endif
 
+/*
 static bool clearUses(UseInfoVec uses, VisitedMap* curState) {
   forv_Vec(UseInfo, cur, uses) {
     if(curState->unSyncedUses.in(cur)){
@@ -410,7 +409,7 @@ static bool clearUses(UseInfoVec uses, VisitedMap* curState) {
     }
   }
 }
-
+*/
 
 /*
 static int containsVec(SyncGraphVector& list, SyncGraph* node) {
@@ -703,7 +702,7 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 }
 
 
-
+/*
 
 static void checkUseInfoSafety(SyncGraph* node, SyncGraphSet& visited) {
   if(node != NULL){
@@ -721,6 +720,8 @@ static void checkUseInfoSafety(SyncGraphVector& newlyVisited, SyncGraphSet& visi
     checkUseInfoSafety(node, visited);
   }
 }
+*/
+
 
 static SyncGraph* getNextDominatedNode(SyncGraph* cur) {
   if(cur->cChild == NULL) {
@@ -733,11 +734,11 @@ static SyncGraph* getNextDominatedNode(SyncGraph* cur) {
 /**
    Checks if the node is a sync point. ALready filled single point needs to be skipped.
  **/
-static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints, SyncGraphSet& visited) {
+static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints) {
   if(isASyncPoint(cur)) {
     for_set(SyncGraph, filledSingle, filledSinglePoints) {
       if(cur->syncVar == filledSingle->syncVar) {
-	checkUseInfoSafety(cur, visited);
+	//	checkUseInfoSafety(cur, visited);
 	/**
 	   IMP: Single special cases. We are asking to skip this single Node
 	   as we have seen it sync already
@@ -815,13 +816,13 @@ static void collectNextSyncPoints(SyncGraph* start, SyncGraphVector& nextSyncPoi
 
 */
 
-static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyRemoved, UseInfoVec useInfos) {
+static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyRemoved, UseInfoVec& useInfos) {
   // TODO currently we are synying by the function later we
   // should sync by the scope.
   //  useInfos.insert(curVisited->useInfos.begin(), curVisited->useInfos.end());
-  UseInfo::iterator it;
+  UseInfoVec::iterator it;
   for_vector(SyncGraph, curRemoved, newlyRemoved) {
-    fnSymbol *parentFn = curRemoved->fnSymbol;
+    FnSymbol *parentFn = curRemoved->fnSymbol;
     bool safeUse  = false;
     for(it=curVisited->useInfos.begin() ; it < curVisited->useInfos.end(); it++ ) {
       if(*it->fnSymbol == parentFn) {
@@ -845,14 +846,16 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyR
 **/
 static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyRemoved, SyncGraphSet& partialSet, SyncGraphVector& newlyVisited, UseInfoVec useInfos) {
   SyncGraphSet vSingles;
-  SyncGraphSet visited;
+  // SyncGraphSet visited;
+
   if(newlyRemoved.size() == 0)
     return;
-  
+  updateUnsafeUseInfos(curVisited, newlyRemoved, useInfos);
+
   if(curVisited != NULL) {
     vSingles.insert(curVisited->vSingles.begin(),curVisited->vSingles.end());
-    visited.insert(curVisited->lvisited.begin(), curVisited->lvisited.end());
-    useInfoss.push_back(curVisited);
+    // visited.insert(curVisited->lVisited.begin(), curVisited->lVisited.end());
+    useInfos.push_back(curVisited);
   }
 
   if(newlyVisited.size() > 0) {
@@ -868,11 +871,11 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
     i++;
     while(cur != NULL) {
       if(cur->fChild != NULL && cur->fChild->fnSymbol->hasFlag(FLAG_BEGIN)) {
-	if(isASyncPointSkippingSingles(cur->fChild, vSingles, visited)) {
+	if(isASyncPointSkippingSingles(cur->fChild, vSingles)) {
 	  partialSet.insert(cur->fChild);	  
 	} else {
 	  newlyRemoved.push_back(cur->fChild);
-	  useInfos.insert(useInfos.end(), cur->fChild->useInfos.begin(), cur->fChild->useInfos.end());
+	  useInfos.insert(useInfos.end(), cur->fChild->extVarInfoVec.begin(), cur->fChild->extVarInfoVec.end());
 	}
       }
       
@@ -880,7 +883,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 	SyncGraphVector partialRemoved(newlyRemoved.begin()+i, newlyRemoved.end());
 	SyncGraphSet newPartialSet(partialSet.begin(), partialSet.end());
 	UseInfoVec newUseInfoVec(useInfos.begin(),useInfos.end());
-	if(isASyncPointSkippingSingles(cur->cChild, vSingles, visited)) {
+	if(isASyncPointSkippingSingles(cur->cChild, vSingles)) {
 	  newPartialSet.insert(cur->cChild);
 	} else {
 	  partialRemoved.push_back(cur->cChild);
@@ -895,19 +898,17 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 	}
       }
       cur = cur->child;
-      useInfos.insert(useInfos.end(), cur->infoVec.begin(), cur->infoVec.end);
+      useInfos.insert(useInfos.end(), cur->extVarInfoVec.begin(), cur->extVarInfoVec.end());
     }
   }
-
-  
   
   if(partialSet.size() >  0 && alreadyVisited(partialSet) == false) {
-    VisitedMap* newVisit = new VisitedMap(curVisited, newlyVisited, partialSet, vSingles);
-    gListVisited.push_back(newVisit);
+      VisitedMap* newVisit = new VisitedMap(curVisited, newlyVisited, partialSet, vSingles, useInfos);
+      gListVisited.push_back(newVisit);
   } else if(partialSet.size() == 0) {
     if(useInfos.size() > 0) {
-      for(it=useInfos.begin() ; it < useInfo.end(); it++) {
-	provideWarnings(*it);
+      for_vector(UseInfo, cur, useInfos) {
+	provideWarnings(cur);
       }
     }
   } 
@@ -986,7 +987,7 @@ static void getSyncPoints(SyncGraph* source, SyncGraphVector& potentialDest, Syn
    Since single variables once filled remians as such, we need to handle them seperately.
    Here once, we find a matching syncNode we bypass all syncPoints involving that single variable
 **/
-static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& destSyncPoints, VisitedMap *curVisited) {
+static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& destSyncPoints, VisitedMap *curVisited, UseInfoVec & useInfos) {
   // Single Nodes need not be pulled back as
   // once they are filled they remain filled and
   // we don't have any advantage for pulling it back.
@@ -1006,7 +1007,9 @@ static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& de
 
 static bool threadedMahjong(void) {
   SyncGraphVector syncPoints;
-  unsigned int i=0;  
+  unsigned int i=0;
+  // TODO update useInfos
+  UseInfoVec useInfos;
   while(i < gListVisited.size()) {
     VisitedMap *curVisited =  gListVisited.at(i);
     SyncGraphSet destPoints = curVisited->destPoints;
@@ -1021,16 +1024,16 @@ static bool threadedMahjong(void) {
 	   syncPoints.front()->syncType == NODE_SINGLE_WAIT_FULL) {
 	  // CASE 1
 	  handleSingleSyncing(syncPoints, destSyncPoints, curVisited); 
-	  checkUseInfoSafety(syncPoints, curVisited->lvisited);
+	  //  checkUseInfoSafety(syncPoints, curVisited->lvisited);
 	} else {
-	  checkUseInfoSafety(sourceSyncPoint, curVisited->lvisited);
+	  //  checkUseInfoSafety(sourceSyncPoint, curVisited->lvisited);
 	  SyncGraphSet partialSet(curVisited->destPoints.begin(), 
 				  curVisited->destPoints.end());
 	  partialSet.erase(sourceSyncPoint);
 	  SyncGraphVector newlyMatched;
 	  newlyMatched.push_back(sourceSyncPoint);
 	  for_vector(SyncGraph, destSyncPoint, syncPoints) {
-	    checkUseInfoSafety(destSyncPoint, curVisited->lvisited);
+	    //  checkUseInfoSafety(destSyncPoint, curVisited->lvisited);
 	    partialSet.erase(destSyncPoint);
 	    newlyMatched.push_back(destSyncPoint);
 	    SyncGraphVector newlyVisited(newlyMatched.begin(), newlyMatched.end());
@@ -1141,6 +1144,7 @@ static void checkOrphanStackVar(SyncGraph* root) {
   //  SyncGraphVectorVec destSyncPoints;
   // destSyncPoints.insert(endPoints);
   SyncGraphVector dummy;
+  // TODOcheck if root's infovec is ever added.
   collectAllAvailableSyncPoints(NULL, startPointVec, destSyncPoints, dummy, useInfos);
   threadedMahjong( );
   return;
