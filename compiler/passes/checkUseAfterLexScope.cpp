@@ -111,7 +111,7 @@ struct SyncGraph {
     __ID = counter ++;
     fnSymbol = f;
     //    contents.copy(i->contents);
-    infoVec.copy(i->infoVec);
+    extVarInfoVec.copy(i->extVarInfoVec);
     // frontierVec.copy(i->frontierVec);
     syncedScopes.append(i->syncedScopes);
     loopNode = i->loopNode;
@@ -224,7 +224,7 @@ struct VisitedMap {
   VisitedMap() {}
   ~VisitedMap() {}
 
-  SymbolStates getSyncState(Symbol* syncVar) {
+  SymbolStates getSymbolState(Symbol* syncVar) {
     return symbolMap.get(syncVar);
   }
   
@@ -326,7 +326,7 @@ static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* 
 static bool threadedMahjong(void);
 
 static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& destSyncPoints, VisitedMap* curVisited,  UseInfoVec & useInfos);
-static SyncGraph* nextSyncPoint(SyncGraph* start, bool skipCurrent);
+//static SyncGraph* nextSyncPoint(SyncGraph* start, bool skipCurrent);
 static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyremoved, SyncGraphSet& partialSet, SyncGraphVector& newlyVisited, UseInfoVec& useInfos);
 // static void collectNextSyncPoints(SyncGraph*start, SyncGraphVector& syncPoints, SyncGraphVector& syncedSingle, bool skipCurrent);
 
@@ -764,6 +764,7 @@ static bool isASyncPoint(SyncGraph * cur) {
 /*
   Return the next SyncPoint of the current task from the 'start'.
 */
+/*
 static SyncGraph* nextSyncPoint(SyncGraph* start, bool skipCurrent) {
   SyncGraph *cur =  start;  
   if(skipCurrent){
@@ -777,7 +778,7 @@ static SyncGraph* nextSyncPoint(SyncGraph* start, bool skipCurrent) {
   return NULL;
 }
 
-
+*/
 
 /*
   Return the next SyncPoint of the current task from the 'start'.
@@ -820,19 +821,18 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyR
   // TODO currently we are synying by the function later we
   // should sync by the scope.
   //  useInfos.insert(curVisited->useInfos.begin(), curVisited->useInfos.end());
-  UseInfoVec::iterator it;
   for_vector(SyncGraph, curRemoved, newlyRemoved) {
     FnSymbol *parentFn = curRemoved->fnSymbol;
     bool safeUse  = false;
-    for(it=curVisited->useInfos.begin() ; it < curVisited->useInfos.end(); it++ ) {
-      if(*it->fnSymbol == parentFn) {
+    for_vector(UseInfos, curUseInfo, curVisited->useInfos) {
+      if(curUseInfo->fnSymbol == parentFn) {
 	// the sync point is same as that of the variable in use
 	// so variable is safe in this pass.
 	safeUse = true;
       }
       if(safeUse == false) {
 	// NOT SAFE... not yet
-	useInfos.push_back(*it);
+	useInfos.push_back(curUseInfox);
       }
     }
   }
@@ -844,7 +844,7 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyR
    not add them to the 'taskPoints' but any begin statement originating from this begin which has a 'syncPoint'
    will be added.
 **/
-static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyRemoved, SyncGraphSet& partialSet, SyncGraphVector& newlyVisited, UseInfoVec useInfos) {
+static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyRemoved, SyncGraphSet& partialSet, SyncGraphVector& newlyVisited, UseInfoVec& useInfos) {
   SyncGraphSet vSingles;
   // SyncGraphSet visited;
 
@@ -855,7 +855,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
   if(curVisited != NULL) {
     vSingles.insert(curVisited->vSingles.begin(),curVisited->vSingles.end());
     // visited.insert(curVisited->lVisited.begin(), curVisited->lVisited.end());
-    useInfos.push_back(curVisited);
+    // useInfos.push_back(curVisited);
   }
 
   if(newlyVisited.size() > 0) {
@@ -882,7 +882,8 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
       if(cur->cChild != NULL) {
 	SyncGraphVector partialRemoved(newlyRemoved.begin()+i, newlyRemoved.end());
 	SyncGraphSet newPartialSet(partialSet.begin(), partialSet.end());
-	UseInfoVec newUseInfoVec(useInfos.begin(),useInfos.end());
+	UseInfoVec newUseInfoVec;
+	newUseInfoVec.copy(useInfos.begin(),useInfos.end());
 	if(isASyncPointSkippingSingles(cur->cChild, vSingles)) {
 	  newPartialSet.insert(cur->cChild);
 	} else {
@@ -892,7 +893,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
       }
 
       if(cur->child != NULL) {
-	if(isASyncPointSkippingSingles(cur->child, vSingles, visited)) {
+	if(isASyncPointSkippingSingles(cur->child, vSingles)) {
 	  partialSet.insert(cur->child);
 	  break;
 	}
@@ -908,7 +909,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
   } else if(partialSet.size() == 0) {
     if(useInfos.size() > 0) {
       for_vector(UseInfo, cur, useInfos) {
-	provideWarnings(cur);
+	provideWarningx(cur);
       }
     }
   } 
@@ -1000,7 +1001,7 @@ static bool handleSingleSyncing(SyncGraphVector& syncPoints, SyncGraphVector& de
     partialSet.erase(curSingle);
   }
   SyncGraphVector newlyVisited(syncPoints.begin(), syncPoints.end());
-  collectAllAvailableSyncPoints(curVisited, syncPoints, partialSet, newlyVisited);
+  collectAllAvailableSyncPoints(curVisited, syncPoints, partialSet, newlyVisited, useInfos);
   return true;
 }
 
@@ -1023,7 +1024,7 @@ static bool threadedMahjong(void) {
 	if(sourceSyncPoint->syncType == NODE_SINGLE_WAIT_FULL ||
 	   syncPoints.front()->syncType == NODE_SINGLE_WAIT_FULL) {
 	  // CASE 1
-	  handleSingleSyncing(syncPoints, destSyncPoints, curVisited); 
+	  handleSingleSyncing(syncPoints, destSyncPoints, curVisited, useInfos); 
 	  //  checkUseInfoSafety(syncPoints, curVisited->lvisited);
 	} else {
 	  //  checkUseInfoSafety(sourceSyncPoint, curVisited->lvisited);
@@ -1037,7 +1038,7 @@ static bool threadedMahjong(void) {
 	    partialSet.erase(destSyncPoint);
 	    newlyMatched.push_back(destSyncPoint);
 	    SyncGraphVector newlyVisited(newlyMatched.begin(), newlyMatched.end());
-	    collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited);
+	    collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited, useInfos);
 	    newlyMatched.pop_back();
 	    partialSet.insert(destSyncPoint);
 	  }
@@ -1054,10 +1055,10 @@ static bool threadedMahjong(void) {
 	if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_EMPTY
 	    && sourceSyncPoint->syncType == NODE_SYNC_SIGNAL_FULL) {
 	  
-	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited);
+	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited, useInfos);
 	}
 	if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_EMPTY
-	    && sourceSyncPoint->syncType == NODE_SYNC_SINGLE_FULL) {
+	    && sourceSyncPoint->syncType == NODE_SINGLE_WAIT_FULL) {
 	collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited);
 	}
 	// case 3 if sync node is full
