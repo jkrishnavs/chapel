@@ -338,7 +338,7 @@ static SyncGraph* getLastNode(SyncGraph* start);
 
 //static void setNextSyncNode();
 //static void setLastSyncNode();
-static SyncGraph* getNextDominatedNode(SyncGraph* cur);
+//static SyncGraph* getNextDominatedNode(SyncGraph* cur);
 static bool isASyncPoint(SyncGraph* cur);
 static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints);
 //static int containsVec(SyncGraphVector& list, SyncGraph* cur);
@@ -445,6 +445,7 @@ static void cleanUpSyncGraph(SyncGraph *node) {
   forv_Vec(UseInfo, cur, gUseInfos) {
     delete(cur);
   }
+  
   for_vector(VisitedMap, curVisited, gListVisited) {
     delete(curVisited);
   }
@@ -475,7 +476,6 @@ static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPo
     newNode->child = child;
   }
   if(branch->cChild != NULL) {
-    /* TODO: copy until joinNode Only*/
     endPoint =  branch->joinNode;
     SyncGraph* child = copyCFG(newNode, branch->cChild, endPoint);
     child->parent  = newNode;
@@ -722,7 +722,7 @@ static void checkUseInfoSafety(SyncGraphVector& newlyVisited, SyncGraphSet& visi
 }
 */
 
-
+/*
 static SyncGraph* getNextDominatedNode(SyncGraph* cur) {
   if(cur->cChild == NULL) {
     return cur->child;
@@ -730,6 +730,10 @@ static SyncGraph* getNextDominatedNode(SyncGraph* cur) {
     return cur->joinNode;
   }
 }
+
+
+*/
+
 
 /**
    Checks if the node is a sync point. ALready filled single point needs to be skipped.
@@ -824,7 +828,8 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyR
   for_vector(SyncGraph, curRemoved, newlyRemoved) {
     FnSymbol *parentFn = curRemoved->fnSymbol;
     bool safeUse  = false;
-    for_vector(UseInfos, curUseInfo, curVisited->useInfos) {
+    
+    forv_Vec(UseInfo, curUseInfo, curVisited->unSyncedUses) {
       if(curUseInfo->fnSymbol == parentFn) {
 	// the sync point is same as that of the variable in use
 	// so variable is safe in this pass.
@@ -832,7 +837,7 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyR
       }
       if(safeUse == false) {
 	// NOT SAFE... not yet
-	useInfos.push_back(curUseInfox);
+	useInfos.push_back(curUseInfo);
       }
     }
   }
@@ -875,31 +880,32 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 	  partialSet.insert(cur->fChild);	  
 	} else {
 	  newlyRemoved.push_back(cur->fChild);
-	  useInfos.insert(useInfos.end(), cur->fChild->extVarInfoVec.begin(), cur->fChild->extVarInfoVec.end());
 	}
+	useInfos.append(cur->fChild->extVarInfoVec);
       }
-      
       if(cur->cChild != NULL) {
 	SyncGraphVector partialRemoved(newlyRemoved.begin()+i, newlyRemoved.end());
 	SyncGraphSet newPartialSet(partialSet.begin(), partialSet.end());
-	UseInfoVec newUseInfoVec;
-	newUseInfoVec.copy(useInfos.begin(),useInfos.end());
+	UseInfoVec newUseInfo;
+	newUseInfo.copy(useInfos);
 	if(isASyncPointSkippingSingles(cur->cChild, vSingles)) {
 	  newPartialSet.insert(cur->cChild);
 	} else {
 	  partialRemoved.push_back(cur->cChild);
 	}
-	collectAllAvailableSyncPoints(curVisited, partialRemoved, newPartialSet, newlyVisited, newUseInfoVec);
+	newUseInfo.append(cur->cChild->extVarInfoVec);
+	collectAllAvailableSyncPoints(curVisited, partialRemoved, newPartialSet, newlyVisited, newUseInfo);
       }
 
       if(cur->child != NULL) {
 	if(isASyncPointSkippingSingles(cur->child, vSingles)) {
 	  partialSet.insert(cur->child);
+	  useInfos.append(cur->extVarInfoVec);
 	  break;
 	}
       }
       cur = cur->child;
-      useInfos.insert(useInfos.end(), cur->extVarInfoVec.begin(), cur->extVarInfoVec.end());
+      useInfos.append(cur->extVarInfoVec);
     }
   }
   
@@ -908,8 +914,8 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
       gListVisited.push_back(newVisit);
   } else if(partialSet.size() == 0) {
     if(useInfos.size() > 0) {
-      for_vector(UseInfo, cur, useInfos) {
-	provideWarningx(cur);
+      forv_Vec(UseInfo, cur, useInfos) {
+	provideWarning(cur);
       }
     }
   } 
@@ -1056,15 +1062,14 @@ static bool threadedMahjong(void) {
 	    && sourceSyncPoint->syncType == NODE_SYNC_SIGNAL_FULL) {
 	  
 	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited, useInfos);
-	}
-	if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_EMPTY
+	} else if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_EMPTY
 	    && sourceSyncPoint->syncType == NODE_SINGLE_WAIT_FULL) {
-	collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited);
+	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited, useInfos);
 	}
 	// case 3 if sync node is full
-	if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_FULL &&
+	else if (curVisited->getSymbolState(sourceSyncPoint->syncVar) == SYMBOL_STATE_FULL &&
 	    sourceSyncPoint->syncType == NODE_SYNC_SIGNAL_EMPTY) {
-	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited);
+	  collectAllAvailableSyncPoints(curVisited, newlyMatched, partialSet, newlyVisited,  useInfos);
 	}
       }
     }
@@ -1137,7 +1142,7 @@ static void checkOrphanStackVar(SyncGraph* root) {
   SyncGraphVector startPointVec;
   SyncGraphSet destSyncPoints;
   SyncGraph* startPoint = root;
-  UseInfoVec useinfos;
+  UseInfoVec useInfos;
   while(isASyncPoint(startPoint) == true) {
     startPoint = startPoint->child;
   } 
