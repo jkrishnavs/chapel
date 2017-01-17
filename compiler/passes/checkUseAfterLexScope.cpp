@@ -909,18 +909,6 @@ static bool threadedMahjong(void) {
 
 
 static void checkOrphanStackVar(SyncGraph* root) {
-  //bool checkedAll = true;
-  //  setNextSyncNode();
-  // setLastSyncNode();
-  // forv_Vec(UseInfo, cur , gUseInfos) {
-  //  if(! cur->isChecked()) {
-  //   checkedAll = false;
-  //  break;
-  //  }
-  //}
-
-  //  if(checkedAll)
-  //  return;
   SyncGraphVector startPointVec;
   SyncGraphSet destSyncPoints;
   SyncGraph* startPoint = root;
@@ -929,8 +917,6 @@ static void checkOrphanStackVar(SyncGraph* root) {
     startPoint = startPoint->child;
   } 
   startPointVec.push_back(startPoint);
-  //  SyncGraphVectorVec destSyncPoints;
-  // destSyncPoints.insert(endPoints);
   SyncGraphVector dummy;
   // TODOcheck if root's infovec is ever added.
   collectAllAvailableSyncPoints(NULL, startPointVec, destSyncPoints, dummy, useInfos);
