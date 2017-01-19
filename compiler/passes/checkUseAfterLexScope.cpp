@@ -264,7 +264,8 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 
 
 static SyncGraph* getLastNode(SyncGraph* start);
-
+static void checkNextSyncNode();
+static bool hasNextSyncPoint(SyncGraph * curNode);
 static bool isASyncPoint(SyncGraph* cur);
 static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints);
 #ifdef CHPL_DOTGRAPH
@@ -419,6 +420,28 @@ inline static SyncGraph* getLastNode(SyncGraph* start) {
   }
   return cur;
 }
+
+static bool hasNextSyncPoint(SyncGraph * curNode) {
+  if(curNode == NULL)
+    return false;
+  if(isASyncPoint(curNode) == true)
+    return true;
+  bool val = hasNextSyncPoint(curNode->child);
+  if(curNode->cChild != NULL) {
+    val &= hasNextSyncPoint(curNode->cChild);
+  }
+  return val;
+}
+
+static void checkNextSyncNode() {
+  forv_Vec(UseInfo, cur, gUseInfos) {
+    SyncGraph *curNode = cur->useNode; 
+    if( hasNextSyncPoint(curNode) == false) {
+      provideWarning(cur);
+    } 
+  }
+}
+
 
 
 /**
@@ -868,6 +891,7 @@ static void checkOrphanStackVar(SyncGraph* root) {
   SyncGraph* startPoint = root;
   UseInfoVec useInfos;
   useInfos.append(startPoint->extVarInfoVec);
+  checkNextSyncNode();
   if(isASyncPoint(startPoint) == true) {
     SyncGraphSet singles;
     SyncGraphSet destSyncPoints;
