@@ -647,15 +647,20 @@ static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn) {
 
 
 static void updateSafeInfos(VisitedMap* prev, SyncGraphVector& visitedNodes, UseInfoSet& safeInfoset, UseInfoSet& visitedUseInfo) {
-  for_vector(SyncGraph, curNode, visitedNodes) {
-    FnSymbol *parentFn = curNode->fnSymbol;
-    for_set(UseInfo, curUseInfo, prev->visitedInfoSet) {
+  bool flag = false;
+  for_set(UseInfo, curUseInfo, prev->visitedInfoSet) {
+    flag = false;
+    for_vector(SyncGraph, curNode, visitedNodes) {
+      FnSymbol *parentFn = curNode->fnSymbol;
       if(curUseInfo->fnSymbol == parentFn) {
-	safeInfoset.insert(curUseInfo);
-      } else {
-	visitedUseInfo.insert(curUseInfo);
-      }
+	flag = true;
+	break;
+      } 
     }
+    if(flag ==true)
+      safeInfoset.insert(curUseInfo);
+    else
+      visitedUseInfo.insert(curUseInfo);
   }
 }
 
