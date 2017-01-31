@@ -304,7 +304,7 @@ static bool canVisitNext(SymbolStateMap& stateMap, SyncGraph* sourceSyncPoint);
 static bool handleSingleSyncing(VisitedMap * curVisited);
 static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyVisited, SyncGraphVector& partialVisited, SyncGraphSet& partialSet, SymbolState newState);
 static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisited, UseInfoSet& useInfos);
-
+static Symbol* findBaseSymbol(Symbol* curSymbol);
 static SyncGraph* getLastNode(SyncGraph* start);
 static void checkNextSyncNode();
 static bool hasNextSyncPoint(SyncGraph * curNode);
@@ -360,7 +360,7 @@ static void digraph(SyncGraph* cur, std::string level) {
 
   if(cur->fChild != NULL) {
     std::string nextSyncVar;
-    if(cur->child->syncVar != NULL) {
+    if(cur->fChild->syncVar != NULL) {
       nextSyncVar =  "node" + stringpatch::to_string(cur->fChild->__ID) +
 	std::string(cur->fChild->syncVar->name, sizeof(cur->fChild->syncVar->name) - 1);
     }  else {
@@ -400,6 +400,34 @@ static void deleteSyncGraphNode(SyncGraph *node) {
     deleteSyncGraphNode(node->cChild);
     delete node;
   }
+}
+
+
+
+static Symbol* findBaseSymbol(Symbol* curSymbol) {
+  Symbol* baseSymbol = curSymbol;
+  Symbol* parentSymbol = baseSymbol->defPoint->parentSymbol;
+  
+  
+  while (parentSymbol->hasFlag(FLAG_BEGIN)) { // IS a BEGIN task.
+    CallExpr* beginCallExpr = toCallExpr(parentSymbol->defPoint->prev);
+    Symbol* argSymbol = NULL;
+    for_formals_actuals(formal, actual, beginCallExpr) {
+      if (formal == curSymbol) {
+	SymExpr *se = toSymExpr(actual);
+	argSymbol = se->var;
+	break;
+      }
+    }
+    if(argSymbol == NULL) {
+      break; // we have found the base symbol.
+    } else {
+      baseSymbol = argSymbol;
+      parentSymbol = baseSymbol->defPoint->parentSymbol;
+    }
+  }
+  
+  return baseSymbol;
 }
 
 
@@ -484,7 +512,10 @@ static bool hasNextSyncPoint(SyncGraph * curNode) {
 
 static void checkNextSyncNode() {
   for_vector(UseInfo, cur, gUseInfos) {
-    SyncGraph *curNode = cur->useNode; 
+    SyncGraph *curNode = cur->useNode;
+#ifdef CHPL_DOTGRAPH
+    std::cout<<"The use is in node id "<<cur->useNode->__ID<<std::endl;
+#endif
     if( hasNextSyncPoint(curNode) == false) {
       provideWarning(cur);
     } 
@@ -656,16 +687,20 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
       if (!strcmp(call->theFnSymbol()->name, "=")) {
         SymExpr* symExpr = toSymExpr(call->getNextExpr(call->getFirstExpr()));
         std::string symName;
-	Symbol* symPtr;
+	Symbol* symPtr  = NULL;
         if (symExpr != NULL) {
           symName = symExpr->var->name;
-	  symPtr = symExpr->var;
+	  symPtr = findBaseSymbol(symExpr->var);
         }
         std::vector<CallExpr*> intCalls;
         collectCallExprs(call->theFnSymbol(), intCalls);
         for_vector (CallExpr, intCall, intCalls) {
           if (intCall->theFnSymbol() != NULL) {
             if (!strcmp(intCall->theFnSymbol()->name, "writeEF")) {
+#ifdef CHPL_DOTGRAPH
+	      std::cout<< "The symbol ptr full is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+#endif
+	      INT_ASSERT(symPtr != NULL);
 	      cur->syncVar = symPtr;
 	      gSyncVars.insert(symPtr);
 	      cur->syncType = NODE_SYNC_SIGNAL_FULL;
@@ -680,13 +715,17 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 	Symbol* symPtr;
         if (symExpr != NULL) {
           symName = symExpr->var->name;
-	  symPtr = symExpr->var;
+	  symPtr = findBaseSymbol(symExpr->var);
         }
         std::vector<CallExpr*> intCalls;
         collectCallExprs(call->theFnSymbol(), intCalls);
         for_vector (CallExpr, intCall, intCalls) {
           if (intCall->theFnSymbol() != NULL) {
             if (!strcmp(intCall->theFnSymbol()->name, "readFF")) {
+#ifdef CHPL_DOTGRAPH
+	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+#endif
+	      INT_ASSERT(symPtr != NULL);
 	      cur->syncVar = symPtr;
 	      gSyncVars.insert(symPtr);
 	      gSingleSet.insert(symPtr);
@@ -694,6 +733,9 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 	      cur->syncExpr = call;
 	      cur = addChildNode(cur, curFun);
 	    } else if (!strcmp(intCall->theFnSymbol()->name, "readFE")) {
+#ifdef CHPL_DOTGRAPH
+	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+#endif
 	      cur->syncVar = symPtr;
 	      gSyncVars.insert(symPtr);
 	      cur->syncType = NODE_SYNC_SIGNAL_EMPTY;
@@ -781,6 +823,10 @@ static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisite
   for_vector(SyncGraph, visited, newlyVisited) {
     if(visited->extVarInfoVec.size() > 0)
       useInfos.insert(visited->extVarInfoVec.begin(), visited->extVarInfoVec.end());
+
+#ifdef CHPL_DOTGRAPH
+	std::cout<<"The collecting for node id "<<visited->__ID<<std::endl;
+#endif
   
     SyncGraph* parent = visited->parent;
     while(parent != NULL) {
@@ -808,6 +854,10 @@ static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisite
 **/
 static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyVisited, SyncGraphVector& partialVisited, SyncGraphSet& partialSet,  SymbolState newState) {
   SyncGraphSet vSingles;
+
+#ifdef CHPL_DOTGRAPH
+  std::cout<<"front node  "<<newlyVisited.front()->__ID<<std::endl;
+#endif
 
   if(newlyVisited.size() == 0)
     return;
@@ -854,20 +904,30 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
   UseInfoSet useInfos;
   collectUseInfos(curVisited, newlyVisited, useInfos);
 
- 
   if(partialSet.size() > 0) {
-    // clear the safe accesses.
-    // TODO move into constructor
-    SymbolStateMap stateMap = curVisited->symbolMap;
-    SymbolStateMap::iterator it = stateMap.find(newlyVisited.front()->syncVar);
-    INT_ASSERT(it != stateMap.end());
-    it->second = newState;
-    VisitedMap* prev = alreadyVisited(partialSet, stateMap);
-    
+    //TODO if curVisited == NULL;
+    VisitedMap* prev = NULL;
+    if(curVisited != NULL) {
+      SymbolStateMap stateMap = curVisited->symbolMap;
+      SymbolStateMap::iterator it = stateMap.find(newlyVisited.front()->syncVar);
+      INT_ASSERT(it != stateMap.end());
+      it->second = newState;
+      prev = alreadyVisited(partialSet, stateMap);
+#ifdef CHPL_DOTGRAPH
+      std::cout<<"Check visited map "<<std::endl;
+#endif
+    }
     if(prev == NULL) {
+#ifdef CHPL_DOTGRAPH
+      std::cout<<"New visited map "<<std::endl;
+#endif
+      
       VisitedMap* newVisit = new VisitedMap(curVisited, partialSet, useInfos, newlyVisited, newState);
       gListVisited.push_back(newVisit);
     } else {
+#ifdef CHPL_DOTGRAPH
+      std::cout<<"add to map "<<std::endl;
+#endif
       prev->appendData(useInfos, newlyVisited);
     }
   } else  {
@@ -877,6 +937,9 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
     }
     if(useInfos.size() > 0) {
       for_set(UseInfo, cur, useInfos) {
+#ifdef CHPL_DOTGRAPH
+	std::cout<<"The error is in node id "<<cur->useNode->__ID<<std::endl;
+#endif
 	provideWarning(cur);
       }
     }
@@ -945,7 +1008,13 @@ static bool threadedMahjong(void) {
     if(!sucess) {
       SyncGraphSet destPoints = curVisited->destPoints;
       for_set(SyncGraph, sourceSyncPoint, destPoints) {
+#ifdef CHPL_DOTGRAPH
+	std::cout<<"Node ID to visit "<<sourceSyncPoint->__ID<<std::endl;
+#endif
 	if(canVisitNext(curVisited->symbolMap, sourceSyncPoint) == true) {
+#ifdef CHPL_DOTGRAPH
+	std::cout<<"Node ID  visited "<<sourceSyncPoint->__ID<<std::endl;
+#endif	 
 	  SyncGraphVector newlyMatched;
 	  newlyMatched.push_back(sourceSyncPoint);
 	  SyncGraphSet partialSet(curVisited->destPoints.begin(), 
@@ -1449,20 +1518,23 @@ void checkUseAfterLexScope() {
     }
   }
 
-  //  isInsideSyncStmt(NULL);
+
   forv_Vec (FnSymbol, fn, aFnSymbols) {
+#ifdef CHPL_DOTGRAPH
+    print_view(fn);
+#endif
     gFnSymbolRoot = fn;
     checkSyncedCalls(fn);
     SyncGraph* syncGraphRoot = handleFunction(fn, NULL);
-    #ifdef CHPL_DOTGRAPH
+#ifdef CHPL_DOTGRAPH
     dotGraph(syncGraphRoot);
-    #endif
+#endif
     FnSymbolsVec fnSymbols;
     fnSymbols.add(fn);
     expandAllInternalFunctions(syncGraphRoot, fnSymbols, NULL);
     checkOrphanStackVar(syncGraphRoot);
     cleanUpSyncGraph(syncGraphRoot);
   }
-
+  
   exit_pass();
 }
