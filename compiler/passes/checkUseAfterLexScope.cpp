@@ -1211,7 +1211,8 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
 	isOuterVar(sym, expr->getFunction())) {
       BlockStmt* block = getOriginalScope(sym);
       if(shouldSync(block, cur)) {
-        addExternVarDetails(block->getFunction(), sym->name, se, cur);
+	FnSymbol* fnsymbol = block->getFunction();
+        addExternVarDetails(fnsymbol, sym->name, se, cur);
 	// cur->contents.add_exclusive(se);
 	// cur->syncScope.add(block);
       }
@@ -1295,7 +1296,7 @@ static BlockStmt* getSyncBlockStmt(BlockStmt* block, SyncGraph *cur) {
    False means use of the external variable is safe.
 **/
 static bool shouldSync(Scope* block, SyncGraph *cur) {
-  if(block == NULL &&  gAllCallsSynced == true) {
+  if(block == NULL ||  gAllCallsSynced == true) {
     return false;
   }
   if(cur->syncedScopes.size() > 0) {
