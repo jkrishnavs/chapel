@@ -415,7 +415,7 @@ static Symbol* findBaseSymbol(Symbol* curSymbol) {
     for_formals_actuals(formal, actual, beginCallExpr) {
       if (formal == curSymbol) {
 	SymExpr *se = toSymExpr(actual);
-	argSymbol = se->var;
+	argSymbol = se->symbol();
 	break;
       }
     }
@@ -694,8 +694,8 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
         std::string symName;
 	Symbol* symPtr  = NULL;
         if (symExpr != NULL) {
-          symName = symExpr->var->name;
-	  symPtr = findBaseSymbol(symExpr->var);
+          symName = symExpr->symbol()->name;
+	  symPtr = findBaseSymbol(symExpr->symbol());
         }
         std::vector<CallExpr*> intCalls;
         collectCallExprs(call->theFnSymbol(), intCalls);
@@ -703,7 +703,7 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
           if (intCall->theFnSymbol() != NULL) {
             if (!strcmp(intCall->theFnSymbol()->name, "writeEF")) {
 #ifdef CHPL_DOTGRAPH
-	      std::cout<< "The symbol ptr full is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+	      std::cout<< "The symbol ptr full is "<<symPtr<<" with name "<<symExpr->symbol()->name<<std::endl;
 #endif
 	      INT_ASSERT(symPtr != NULL);
 	      cur->syncVar = symPtr;
@@ -719,8 +719,8 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
         std::string symName;
 	Symbol* symPtr;
         if (symExpr != NULL) {
-          symName = symExpr->var->name;
-	  symPtr = findBaseSymbol(symExpr->var);
+          symName = symExpr->symbol()->name;
+	  symPtr = findBaseSymbol(symExpr->symbol());
         }
         std::vector<CallExpr*> intCalls;
         collectCallExprs(call->theFnSymbol(), intCalls);
@@ -728,7 +728,7 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
           if (intCall->theFnSymbol() != NULL) {
             if (!strcmp(intCall->theFnSymbol()->name, "readFF")) {
 #ifdef CHPL_DOTGRAPH
-	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->symbol()->name<<std::endl;
 #endif
 	      INT_ASSERT(symPtr != NULL);
 	      cur->syncVar = symPtr;
@@ -739,7 +739,7 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 	      cur = addChildNode(cur, curFun);
 	    } else if (!strcmp(intCall->theFnSymbol()->name, "readFE")) {
 #ifdef CHPL_DOTGRAPH
-	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->var->name<<std::endl;
+	      std::cout<< "The symbol ptr read is "<<symPtr<<" with name "<<symExpr->symbol()->name<<std::endl;
 #endif
 	      cur->syncVar = symPtr;
 	      gSyncVars.insert(symPtr);
@@ -1167,7 +1167,7 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
-    Symbol* sym = se->var;
+    Symbol* sym = se->symbol();
     if (isOuterVar(sym, expr->getFunction())) {
       Scope* block = getOriginalScope(sym);
       if(shouldSync(block, cur)) {
@@ -1205,7 +1205,7 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
-    Symbol* sym = se->var;
+    Symbol* sym = se->symbol();
     if (!(isSyncType(sym->type)) &&
 	!(isSingleType(sym->type)) &&
 	isOuterVar(sym, expr->getFunction())) {
