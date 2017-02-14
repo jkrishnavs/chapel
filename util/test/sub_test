@@ -48,6 +48,9 @@
 # CHPL_SYSTEM_PREDIFF: If set, run that script on each test output
 # CHPL_COMM: Chapel communication layer
 # CHPL_COMPONLY: Only build the test (same as -noexec flag)
+# CHPL_TEST_NUM_LOCALES_AVAILABLE: same as CHPL_TEST_MAX_LOCALES (for backwards compatibility)
+# CHPL_TEST_MAX_LOCALES: Maximum number of locales to use (overrides above)
+# CHPL_TEST_MULTILOCALE_ONLY: Only run tests that use numlocales > 1
 # CHPL_NO_STDIN_REDIRECT: do not redirect stdin when running tests
 #                         also, skip tests with .stdin files
 # CHPL_LAUNCHER_TIMEOUT: if defined, pass an option/options to the executable
@@ -736,7 +739,9 @@ else:
     globalNumlocales=int(os.getenv('NUMLOCALES', '0'))
 # sys.stdout.write('globalNumlocales=%s\n'%(globalNumlocales))
 
-maxLocalesAvailable = os.getenv('CHPL_TEST_NUM_LOCALES_AVAILABLE')
+maxLocalesAvailable = os.getenv('CHPL_TEST_MAX_LOCALES')
+if maxLocalesAvailable == None:
+    maxLocalesAvailable = os.getenv('CHPL_TEST_NUM_LOCALES_AVAILABLE')
 if maxLocalesAvailable is not None:
     maxLocalesAvailable = int(maxLocalesAvailable)
 
@@ -1192,11 +1197,16 @@ for testname in testsrc:
     else:
         if maxLocalesAvailable is not None:
             if numlocales > maxLocalesAvailable:
-                sys.stdout.write('[Warning: skipping {0} because it requires '
+                sys.stdout.write('[Skipping test {0} because it requires '
                                  '{1} locales but only {2} are available]\n'
                                  .format(os.path.join(localdir, test_filename),
                                          numlocales, maxLocalesAvailable))
                 continue
+        if os.getenv('CHPL_TEST_MULTILOCALE_ONLY') and (numlocales <= 1):
+            sys.stdout.write('[Warning: skipping {0} because it does not '
+                             'use more than one locale]\n'
+                             .format(os.path.join(localdir, test_filename)))
+            continue
         numlocexecopts = ' -nl '+str(numlocales)
 
     # if any performance test has a timeout longer than the default we only
@@ -1846,6 +1856,10 @@ for testname in testsrc:
                             launcher_error = 'Jira 17 -- Missing output file for'
                         elif re.search('aprun: Unexpected close of the apsys control connection', output, re.IGNORECASE) != None:
                             launcher_error = 'Jira 193 -- Unexpected close of apsys for'
+                        elif re.search('Transient MPP reservation error on create', output, re.IGNORECASE) != None:
+                            launcher_error = 'Jira 203 -- Transient MPP reservation error for'
+                        elif re.search('Failed to recv data from background qsub', output, re.IGNORECASE) != None:
+                            launcher_error = 'Jira 260 -- Failed to recv data from background qsub for'
                         elif (re.search('PBS: job killed: walltime', output, re.IGNORECASE) != None or
                               re.search('slurm.* CANCELLED .* DUE TO TIME LIMIT', output, re.IGNORECASE) != None):
                             exectimeout = True

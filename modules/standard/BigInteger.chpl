@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2016 Cray Inc.
+ * Copyright 2004-2017 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -186,7 +186,7 @@ module BigInteger {
     // copy.  The localeId points back the correct locale but the mpz field
     // is meaningless.
     pragma "no doc"
-    proc ~bigint() {
+    proc deinit() {
       if _local || this.localeId == chpl_nodeID {
         mpz_clear(this.mpz);
       }

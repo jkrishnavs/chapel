@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2016 Cray Inc.
+ * Copyright 2004-2017 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -213,7 +213,7 @@ module MPI {
     var freeChplComm : bool = false;
 
     pragma "no doc"
-    proc ~_initMPI() {
+    proc deinit() {
       if freeChplComm {
         if numLocales > 1 {
           coforall loc in Locales do on loc {

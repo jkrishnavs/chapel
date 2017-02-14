@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2016 Cray Inc.
+ * Copyright 2004-2017 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -293,7 +293,7 @@ class CSRDom: BaseSparseDomImpl {
     nnz += actualAddCnt;
 
     //grow nnzDom if necessary
-    _bulkGrow(nnz);
+    _bulkGrow();
 
     //linearly fill the new colIdx from backwards
     var newIndIdx = indsDom.high; //index into new indices

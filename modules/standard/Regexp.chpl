@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2016 Cray Inc.
+ * Copyright 2004-2017 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -593,7 +593,7 @@ record regexp {
 
   // note - more = overloads are below.
   pragma "no doc"
-  proc ref ~regexp() {
+  proc ref deinit() {
     qio_regexp_release(_regexp);
     _regexp = qio_regexp_null();
   }
