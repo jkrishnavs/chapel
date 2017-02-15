@@ -1206,6 +1206,8 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
     Symbol* sym = se->symbol();
+    if(sym->type == NULL)
+      continue;
     if (!(isSyncType(sym->type)) &&
 	!(isSingleType(sym->type)) &&
 	isOuterVar(sym, expr->getFunction())) {
