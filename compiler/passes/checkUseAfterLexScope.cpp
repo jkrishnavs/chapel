@@ -84,7 +84,6 @@ typedef std::set<UseInfo*> UseInfoSet;
 
 static int counter = 0;
 
-static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig);
 
 struct SyncGraph {
   int __ID;
@@ -125,7 +124,6 @@ struct SyncGraph {
     fChild = NULL;
     cChild = NULL;
     parent = NULL;
-    copyUseInfoVec(this, i);
   }
 
   SyncGraph(FnSymbol *f) {
@@ -153,14 +151,14 @@ struct UseInfo {
   SymExpr* usePoint;
   SyncGraph* useNode;
   FnSymbol* fnSymbol;
-  std::string varName;
+  Symbol* symbol;
   bool checked;
 
-  UseInfo(SyncGraph *node, FnSymbol* fn, SymExpr* expr, std::string name) {
+  UseInfo(SyncGraph *node, FnSymbol* fn, SymExpr* expr, Symbol* s) {
     usePoint = expr;
     fnSymbol = fn;
     useNode = node;
-    varName = name;
+    symbol = s;
     checked = false;
   }
 
@@ -270,6 +268,7 @@ static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
   return NULL;
 }
 
+static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent);
 static void deleteSyncGraphNode(SyncGraph *node);
 static void cleanUpSyncGraph(SyncGraph *root);
 static void checkOrphanStackVar(SyncGraph *root);
@@ -299,7 +298,7 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
 static bool  ASTContainsBeginFunction(BaseAST* ast);
 static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec &callStack, SyncGraph* stopPoint= NULL);
 static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph *endPoint);
-static void addExternVarDetails(FnSymbol* fn, std::string v, SymExpr* use, SyncGraph* node) ;
+static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph* node) ;
 static void provideWarning(UseInfo* var);
 //static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMap, SyncGraphSet& partialSet, UseInfoVec& useInfos);
 static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* ifNode, SyncGraph* elseNode);
@@ -467,13 +466,14 @@ static void  exit_pass() {
   // delete gUseInfos;
 }
 
-static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig) { 
+static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent) { 
   for_vector(UseInfo, curInfo, orig->extVarInfoVec) {
-    //    BlockStmt* block = getOriginalScope(sym);
-    // if(shouldSync(block, parent)) {
-    UseInfo* newUseInfo = new UseInfo(copy, copy->fnSymbol, curInfo->usePoint, curInfo->varName);
-    gUseInfos.push_back(newUseInfo);
-    copy->extVarInfoVec.push_back(newUseInfo);
+    if(isOuterVar (curInfo->symbol, parent)) {
+      UseInfo* newUseInfo = new UseInfo(copy, copy->fnSymbol, curInfo->usePoint, curInfo->symbol);
+      gUseInfos.push_back(newUseInfo);
+      copy->extVarInfoVec.push_back(newUseInfo);
+    }
+    
   }
 }
 
@@ -481,15 +481,23 @@ static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig) {
 /**
    recursively make a copy of CFG
    if endPoint is not null we make copy until the endPoint.
+   parent: parent node of newly generated Copy Node
+   branch: node which is to be copied.
+   endPoint : stop Copying once we reach this node. 
  **/
 static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPoint) {
   if(branch == NULL)
     return NULL;
   SyncGraph* newNode = NULL;
-  if(parent != NULL)
+  if(parent != NULL) {
     newNode = new SyncGraph(branch, parent->fnSymbol, false);
-  else
+  } else {
     newNode = new SyncGraph(branch, branch->fnSymbol, false);
+  }
+ 
+  copyUseInfoVec(newNode, branch, parent->fnSymbol);
+
+  
   if(branch->child != NULL && branch->child != endPoint) {
     SyncGraph* child = copyCFG(newNode, branch->child, endPoint);
     child->parent  = newNode;
@@ -506,10 +514,13 @@ static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPo
     child->parent  = newNode;
     parent->fChild = child;
   }
- 
   return newNode;
 }
 
+/*
+  returns The last node in the current strand of Graph
+  start: repreosnts the start point
+*/
 inline static SyncGraph* getLastNode(SyncGraph* start) {
   SyncGraph* cur = start;
   while(cur ->child != NULL) {
@@ -518,7 +529,10 @@ inline static SyncGraph* getLastNode(SyncGraph* start) {
   return cur;
 }
 
-
+/**
+   curNode: Start point of search
+   
+ **/
 static bool hasNextSyncPoint(SyncGraph * curNode) {
   if(curNode == NULL)
     return false;
@@ -997,7 +1011,7 @@ static void provideWarning(UseInfo* var) {
     var->setChecked();
     USR_WARN(var->usePoint,
 	     "Potential unsafe (use after free) use of variable %s here. Please make sure the variable use is properly synced.",
-	     var->varName.c_str());
+	     var->symbol->name);
   }
 }
 
@@ -1218,7 +1232,7 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
 /**
    Add use of external variable details to 'node'.
 **/
-static void addExternVarDetails(FnSymbol* fn, std::string v, SymExpr* use, SyncGraph* node) {
+static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph* node) {
   if(compareScopes(fn->body,gFnSymbolRoot->body) != 1)
     fn = gFnSymbolRoot;
   /*
@@ -1252,7 +1266,7 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
 	BlockStmt* block = getOriginalScope(sym);
 	if(shouldSync(block, cur)) {
 	  FnSymbol* fnsymbol = block->getFunction();
-	  addExternVarDetails(fnsymbol, sym->name, se, cur);
+	  addExternVarDetails(fnsymbol, sym, se, cur);
 	  // cur->contents.add_exclusive(se);
 	  // cur->syncScope.add(block);
 	}
