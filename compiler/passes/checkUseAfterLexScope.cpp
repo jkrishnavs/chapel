@@ -352,7 +352,7 @@ static void digraph(SyncGraph* cur, std::string level) {
 
   if(cur->cChild != NULL) {
     std::string nextSyncVar;
-    if(cur->child->syncVar != NULL) {
+    if(cur->cChild->syncVar != NULL) {
       nextSyncVar = "node" + stringpatch::to_string(cur->cChild->__ID) +
 	std::string(cur->cChild->syncVar->name, sizeof(cur->cChild->syncVar->name) - 1);
     } else {
@@ -546,7 +546,7 @@ static bool hasNextSyncPoint(SyncGraph * curNode) {
 }
 
 static bool isPartofBeginBranch(SyncGraph* curNode) {
-  SyncGraph* parentNode = curNode->parent;
+  SyncGraph* parentNode = curNode;
   while(parentNode != NULL) {
     if(parentNode->fnSymbol->hasFlag(FLAG_BEGIN))
       return true;
