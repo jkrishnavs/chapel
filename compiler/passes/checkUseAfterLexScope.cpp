@@ -486,18 +486,23 @@ static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent) {
    endPoint : stop Copying once we reach this node. 
  **/
 static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPoint) {
+  
   if(branch == NULL)
     return NULL;
   SyncGraph* newNode = NULL;
   if(parent != NULL) {
+    // copy info vec where our scope is determined by the parent
+    // node
     newNode = new SyncGraph(branch, parent->fnSymbol, false);
+    copyUseInfoVec(newNode, branch, parent->fnSymbol);
   } else {
+    // parent is NULL. means the first node of a
+    // begin baranch. scope should be equivalent to the
+    // node
     newNode = new SyncGraph(branch, branch->fnSymbol, false);
+    copyUseInfoVec(newNode, branch, branch->fnSymbol);
   }
  
-  copyUseInfoVec(newNode, branch, parent->fnSymbol);
-
-  
   if(branch->child != NULL && branch->child != endPoint) {
     SyncGraph* child = copyCFG(newNode, branch->child, endPoint);
     child->parent  = newNode;
