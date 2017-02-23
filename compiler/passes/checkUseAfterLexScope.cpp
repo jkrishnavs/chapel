@@ -1303,7 +1303,13 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
       // Non begin used mod function could be an internal function
       // Number of calls to embedded functions should not be more than 1.
       INT_ASSERT(cur->intFuncCall == NULL);
-      cur->intFuncCall = call; // Not assured to be embedded function call.
+      /**
+	 Fix There can be call expressions without function Symbol
+	 in that case we are not going to store it
+       **/  
+      SymExpr* baseCallExpr = toSymExpr(call);
+      if(baseCallExpr != NULL)
+	cur->intFuncCall = call; // Not assured to be embedded function call.
     }
   }
   if(cur->intFuncCall != NULL )
