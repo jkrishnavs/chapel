@@ -67,6 +67,7 @@ const int INTENT_FLAG_REF   = 0x08;
 const int INTENT_FLAG_PARAM = 0x10;
 const int INTENT_FLAG_TYPE  = 0x20;
 const int INTENT_FLAG_BLANK = 0x40;
+const int INTENT_FLAG_MAYBE_CONST = 0x80;
 
 // If this enum is modified, ArgSymbol::intentDescrString()
 // and intentDescrString(IntentTag) should also be updated to match
@@ -78,6 +79,7 @@ enum IntentTag {
   INTENT_CONST_IN  = INTENT_FLAG_CONST | INTENT_FLAG_IN,
   INTENT_REF       = INTENT_FLAG_REF,
   INTENT_CONST_REF = INTENT_FLAG_CONST | INTENT_FLAG_REF,
+  INTENT_REF_MAYBE_CONST = INTENT_FLAG_MAYBE_CONST | INTENT_FLAG_REF,
   INTENT_PARAM     = INTENT_FLAG_PARAM,
   INTENT_TYPE      = INTENT_FLAG_TYPE,
   INTENT_BLANK     = INTENT_FLAG_BLANK
@@ -116,8 +118,6 @@ public:
   virtual void       replaceChild(BaseAST* oldAst,
                                   BaseAST* newAst)               = 0;
 
-  virtual FnSymbol*  getFnSymbol();
-
   virtual bool       isConstant()                              const;
   virtual bool       isConstValWillNotChange()                 const;
   virtual bool       isImmediate()                             const;
@@ -147,6 +147,10 @@ public:
   Qualifier          qual;
   Type*              type;
   FlagSet            flags;
+  // Tuples can contain ref fields. In that event, a VarSymbol/ArgSymbol
+  // needs to be able to track whether the ref field is ref or
+  // const ref. It can depend on the variable for ref to arrays.
+  Qualifier*         fieldQualifiers;
 
   const char*        name;
   const char*        cname;    // Name of symbol for C code
@@ -383,6 +387,10 @@ class TypeSymbol : public Symbol {
   virtual void    accept(AstVisitor* visitor);
   DECLARE_SYMBOL_COPY(TypeSymbol);
   void replaceChild(BaseAST* old_ast, BaseAST* new_ast);
+
+  void renameInstantiatedMulti(SymbolMap& subs, FnSymbol* fn);
+  void renameInstantiatedSingle(Symbol* sym);
+
   GenRet codegen();
   void codegenDef();
   void codegenPrototype();
@@ -391,9 +399,15 @@ class TypeSymbol : public Symbol {
   void codegenMetadata();
 
   const char* doc;
+
+ private:
+  void renameInstantiatedStart();
+  void renameInstantiatedIndividual(Symbol* sym);
+  void renameInstantiatedEnd();
 };
 
 /************************************* | **************************************
+*                                                                             *
 *                                                                             *
 *                                                                             *
 ************************************** | *************************************/
@@ -455,7 +469,6 @@ public:
   DECLARE_SYMBOL_COPY(FnSymbol);
 
   FnSymbol*                  copyInnerCore(SymbolMap* map);
-  FnSymbol*                  getFnSymbol();
   void                       replaceChild(BaseAST* oldAst, BaseAST* newAst);
 
   FnSymbol*                  partialCopy(SymbolMap* map);
@@ -483,7 +496,8 @@ public:
 
   void                       insertBeforeEpilogue(Expr* ast);
 
-  // insertIntoEpilogue adds an Expr before the final return, but after the epilogue label
+  // insertIntoEpilogue adds an Expr before the final return,
+  // but after the epilogue label
   void                       insertIntoEpilogue(Expr* ast);
 
   LabelSymbol*               getEpilogueLabel();
@@ -515,6 +529,8 @@ public:
   void                       throwsErrorInit();
   bool                       throwsError()                               const;
 
+  bool                       retExprDefinesNonVoid()                     const;
+
 private:
   virtual std::string        docsDirective();
 
@@ -523,10 +539,11 @@ private:
   bool                       _throwsError;
 };
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class EnumSymbol : public Symbol {
  public:
@@ -585,6 +602,7 @@ public:
 
   BlockStmt*           block;
   FnSymbol*            initFn;
+  FnSymbol*            deinitFn;
 
   Vec<ModuleSymbol*>   modUseList;
 
@@ -757,17 +775,20 @@ extern VarSymbol *gFalse;
 extern VarSymbol *gTryToken; // try token for conditional function resolution
 extern VarSymbol *gBoundsChecking;
 extern VarSymbol *gCastChecking;
+extern VarSymbol *gDivZeroChecking;
 extern VarSymbol *gPrivatization;
 extern VarSymbol *gLocal;
 extern VarSymbol *gNodeID;
 extern VarSymbol *gModuleInitIndentLevel;
 extern FnSymbol *gPrintModuleInitFn;
+extern FnSymbol *gAddModuleFn;
 extern FnSymbol *gChplHereAlloc;
 extern FnSymbol *gChplHereFree;
 extern FnSymbol *gChplDoDirectExecuteOn;
 extern FnSymbol *gGenericTupleTypeCtor;
 extern FnSymbol *gGenericTupleInit;
 extern FnSymbol *gGenericTupleDestroy;
+extern FnSymbol *gChplDeleteError;
 
 // These global symbols point to generic functions that
 // will be instantiated.

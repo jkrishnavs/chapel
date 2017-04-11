@@ -416,6 +416,7 @@ static bool isUse(SymExpr* se)
       if (se == call->get(1))
         return false;
       return true;
+     case PRIM_ARRAY_ALLOC:
      case PRIM_ADDR_OF:
       return false; // See Note #2.
      case PRIM_PRIVATE_BROADCAST:
@@ -625,7 +626,7 @@ static void propagateCopies(std::vector<SymExpr*>& symExprs,
     // If we encounter an ADDR_OF with a symbol, do not allow further
     // replacements in case the reference is used to modify the symbol's data.
     if (CallExpr* parent = toCallExpr(se->parentExpr)) {
-      if (parent->isPrimitive(PRIM_ADDR_OF)) {
+      if (parent->isPrimitive(PRIM_ADDR_OF) || parent->isPrimitive(PRIM_ARRAY_ALLOC)) {
         AvailableMap::iterator ami = available.find(se->symbol());
         if (ami != available.end()) {
           available.erase(ami);
@@ -763,6 +764,9 @@ static bool maybeVolatile(SymExpr* se)
   // Where the variable is defined.
   Symbol* defScope = se->symbol()->defPoint->parentSymbol;
   if (defScope != fn)
+    return true;
+
+  if (se->symbol()->type->symbol->hasFlag(FLAG_COPY_MUTATES))
     return true;
 
   return false;
@@ -1439,7 +1443,7 @@ size_t singleAssignmentRefPropagation(FnSymbol* fn) {
   }
 
   forv_Vec(Symbol, var, refVec) { // ack! note: order matters
-    if (var) {
+    if (var && !var->type->symbol->hasFlag(FLAG_COPY_MUTATES)) {
       eliminateSingleAssignmentReference(defMap, useMap, var);
     }
   }

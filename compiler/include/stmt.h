@@ -22,6 +22,7 @@
 
 #include <cstdio>
 #include <map>
+#include <set>
 
 #include "expr.h"
 #include "foralls.h"
@@ -114,14 +115,16 @@ class UseStmt : public Stmt {
 ************************************* | ************************************/
 
 enum BlockTag {
-// Bits:
+  // Bits:
   BLOCK_NORMAL      = 0,
   BLOCK_SCOPELESS   = 1<<0, ///< does not introduce a new scope
   BLOCK_TYPE_ONLY   = 1<<1, ///< deleted after type resolution
   BLOCK_EXTERN      = 1<<2, ///< init block for an extern var
   BLOCK_C_FOR_LOOP  = 1<<3, ///< init/test/incr block for a CForLoop
-// Bit masks:
+
+  // Bit masks:
   BLOCK_TYPE        = BLOCK_SCOPELESS | BLOCK_TYPE_ONLY,
+  BLOCK_EXTERN_TYPE = BLOCK_EXTERN    | BLOCK_TYPE
 };
 
 class BlockStmt : public Stmt {
@@ -297,6 +300,50 @@ public:
 
   // Local interface
   const char*         c_code;
+};
+
+
+/************************************ | *************************************
+*                                                                           *
+*                                                                           *
+************************************* | ************************************/
+
+class ForwardingStmt : public Stmt {
+public:
+                      ForwardingStmt(DefExpr* toFnDef);
+                      ForwardingStmt(DefExpr* toFnDef,
+                                   std::set<const char*>* args,
+                                   bool exclude,
+                                   std::map<const char*, const char*>* renames);
+
+  // Interface to BaseAST
+  virtual GenRet      codegen();
+  virtual void        verify();
+  virtual void        accept(AstVisitor* visitor);
+
+  DECLARE_COPY(ForwardingStmt);
+
+  // Interface to Expr
+  virtual void        replaceChild(Expr* oldAst, Expr* newAst);
+
+  virtual Expr*       getFirstChild();
+  virtual Expr*       getFirstExpr();
+
+  // forwarding function - contains forwarding expression; used during parsing
+  DefExpr*            toFnDef;
+  // name of forwarding function; used before, during resolution
+  const char*         fnReturningForwarding;
+  // stores the type returned by the forwarding function
+  // (i.e. the type of the expression to forward to).
+  // Used during resolution to avoid repeated work.
+  Type*               type;
+
+  // The names of symbols from an 'except' or 'only' list
+  std::set<const char *> named;
+  // Map of newName: oldName
+  std::map<const char*, const char*> renamed;
+  // Is 'named' an 'except' list? (vs. 'only' list)
+  bool except;
 };
 
 

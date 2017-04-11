@@ -103,6 +103,16 @@ module ChapelBase {
     __primitive("=", a, nil);
   }
 
+  inline proc =(ref a: void, b: ?t) where t != void {
+    compilerError("a void variable cannot be assigned");
+  }
+
+  inline proc =(ref a: ?t, b: void) where t != void {
+    compilerError("cannot assign void to a variable of non-void type");
+  }
+
+  // This needs to be param so calls to it are removed after they are resolved
+  inline proc =(ref a: void, b: void) param { }
 
   //
   // equality comparison on primitive types
@@ -252,8 +262,18 @@ module ChapelBase {
   inline proc *(a: imag(?w), b: complex(w*2)) return (-_i2r(a)*b.im, _i2r(a)*b.re):complex(w*2);
   inline proc *(a: complex(?w), b: imag(w/2)) return (-a.im*_i2r(b), a.re*_i2r(b)):complex(w);
 
-  inline proc /(a: int(?w), b: int(w)) return __primitive("/", a, b);
-  inline proc /(a: uint(?w), b: uint(w)) return __primitive("/", a, b);
+  inline proc /(a: int(?w), b: int(w)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to divide by zero");
+    return __primitive("/", a, b);
+  }
+  inline proc /(a: uint(?w), b: uint(w)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to divide by zero");
+    return __primitive("/", a, b);
+  }
   inline proc /(a: real(?w), b: real(w)) return __primitive("/", a, b);
   inline proc /(a: imag(?w), b: imag(w)) return _i2r(__primitive("/", a, b));
   inline proc /(a: complex(?w), b: complex(w)) return __primitive("/", a, b);
@@ -276,11 +296,11 @@ module ChapelBase {
   inline proc *(param a: uint(?w), param b: uint(w)) param return __primitive("*", a, b);
 
   inline proc /(param a: int(?w), param b: int(w)) param {
-    if b == 0 then compilerError("param divide by zero");
+    if b == 0 then compilerError("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
   inline proc /(param a: uint(?w), param b: uint(w)) param {
-    if b == 0 then compilerError("param divide by zero");
+    if b == 0 then compilerError("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
 
@@ -468,9 +488,9 @@ module ChapelBase {
   // a sync to read it or a sync returned from a function but not
   // explicitly captured.
   //
-  inline proc _statementLevelSymbol(a) { return a; }
-  inline proc _statementLevelSymbol(a: sync)  { return a.readFE(); }
-  inline proc _statementLevelSymbol(a: single) { return a.readFF(); }
+  inline proc _statementLevelSymbol(a) { }
+  inline proc _statementLevelSymbol(a: sync)  { a.readFE(); }
+  inline proc _statementLevelSymbol(a: single) { a.readFF(); }
   inline proc _statementLevelSymbol(param a) param { return a; }
   inline proc _statementLevelSymbol(type a) type { return a; }
 
@@ -740,9 +760,14 @@ module ChapelBase {
     return ret;
   }
 
-  inline proc _ddata_allocate(type eltType, size: integral) {
+  enum localizationStyle_t { locNone, locWhole, locSubchunks };
+
+  inline proc _ddata_allocate(type eltType, size: integral,
+                              locStyle = localizationStyle_t.locNone,
+                              subloc = c_sublocid_none) {
     var ret:_ddata(eltType);
-    __primitive("array_alloc", ret, eltType, size);
+    __primitive("array_alloc", ret, eltType, size,
+                locStyle == localizationStyle_t.locSubchunks, subloc);
     init_elts(ret, size, eltType);
     return ret;
   }
@@ -1032,6 +1057,7 @@ module ChapelBase {
     return if x != 0i then true else false;
 
   pragma "dont disable remote value forwarding"
+  pragma "no copy return"
   inline proc _createFieldDefault(type t, init) {
     pragma "no auto destroy" var x: t;
     x = init;
@@ -1039,6 +1065,7 @@ module ChapelBase {
   }
 
   pragma "dont disable remote value forwarding"
+  pragma "no copy return"
   inline proc _createFieldDefault(type t, param init) {
     pragma "no auto destroy" var x: t;
     x = init;
@@ -1046,6 +1073,7 @@ module ChapelBase {
   }
 
   pragma "dont disable remote value forwarding"
+  pragma "no copy return"
   inline proc _createFieldDefault(type t, init: _nilType) {
     pragma "no auto destroy" var x: t;
     return x;
@@ -1065,7 +1093,7 @@ module ChapelBase {
   // Catch-all initCopy implementation:
   pragma "compiler generated"
   pragma "init copy fn"
-  inline proc chpl__initCopy(x) {
+  inline proc chpl__initCopy(const x) {
     // body adjusted during generic instantiation
     return x;
   }
@@ -1095,16 +1123,28 @@ module ChapelBase {
   pragma "compiler generated"
   pragma "donor fn"
   pragma "auto copy fn"
-  inline proc chpl__autoCopy(x) return chpl__initCopy(x);
+  inline proc chpl__autoCopy(const x) return chpl__initCopy(x);
 
   pragma "compiler generated"
   pragma "unalias fn"
-  inline proc chpl__unalias(ref x) { }
+  inline proc chpl__unalias(x) {
+    pragma "no copy" var ret = x;
+    return ret;
+  }
 
+  // Returns an array storing the result of the iterator
   pragma "unalias fn"
-  inline proc chpl__unalias(x:_iteratorClass) { }
+  inline proc chpl__unalias(x:_iteratorClass) {
+    pragma "no copy" var ret = x;
+    return ret;
+  }
+
+  // Returns an array storing the result of the iterator
   pragma "unalias fn"
-  inline proc chpl__unalias(const ref x:_iteratorRecord) { }
+  inline proc chpl__unalias(const ref x:_iteratorRecord) {
+    pragma "no copy" var ret = x;
+    return ret;
+  }
 
   inline proc chpl__maybeAutoDestroyed(x: numeric) param return false;
   inline proc chpl__maybeAutoDestroyed(x: enumerated) param return false;
@@ -1234,9 +1274,15 @@ module ChapelBase {
   }
 
   inline proc /=(ref lhs:int(?w), rhs:int(w)) {
+    if (chpl_checkDivByZero) then
+      if rhs == 0 then
+        halt("Attempt to divide by zero");
     __primitive("/=", lhs, rhs);
   }
   inline proc /=(ref lhs:uint(?w), rhs:uint(w)) {
+    if (chpl_checkDivByZero) then
+      if rhs == 0 then
+        halt("Attempt to divide by zero");
     __primitive("/=", lhs, rhs);
   }
   inline proc /=(ref lhs:real(?w), rhs:real(w)) {
@@ -1405,14 +1451,17 @@ module ChapelBase {
   // The int version is only defined so we can catch the divide by zero error
   // at compile time
   inline proc /(a: int(64), param b: int(64)) {
-    if b == 0 then compilerError("param divide by zero");
+    if b == 0 then compilerError("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
   inline proc /(a: uint(64), param b: uint(64)) {
-    if b == 0 then compilerError("param divide by zero");
+    if b == 0 then compilerError("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
   inline proc /(param a: uint(64), b: uint(64)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
 
@@ -1597,6 +1646,15 @@ module ChapelBase {
   extern const QIO_TUPLE_FORMAT_CHPL:int;
   extern const QIO_TUPLE_FORMAT_SPACE:int;
   extern const QIO_TUPLE_FORMAT_JSON:int;
+
+  // Support for module deinit functions.
+  class chpl_ModuleDeinit {
+    const moduleName: c_string;          // for debugging; non-null, not owned
+    const deinitFun:  c_fn_ptr;          // module deinit function
+    const prevModule: chpl_ModuleDeinit; // singly-linked list / LIFO queue
+    proc writeThis(ch) {ch.writef("chpl_ModuleDeinit(%s)",moduleName:string);}
+  }
+  var chpl_moduleDeinitFuns = nil: chpl_ModuleDeinit;
 
   // What follows are the type _defaultOf methods, used to initialize types
   // Booleans

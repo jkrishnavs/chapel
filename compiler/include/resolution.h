@@ -75,7 +75,7 @@ void cleanupRedRefs(Expr*& redRef1, Expr*& redRef2);
 void setupRedRefs(FnSymbol* fn, bool nested, Expr*& redRef1, Expr*& redRef2);
 bool isReduceOp(Type* type);
 
-FnSymbol* instantiate(FnSymbol* fn, SymbolMap& subs, CallExpr* call);
+FnSymbol* instantiate(FnSymbol* fn, SymbolMap& subs);
 FnSymbol* instantiateSignature(FnSymbol* fn, SymbolMap& subs, CallExpr* call);
 void      instantiateBody(FnSymbol* fn);
 
@@ -91,21 +91,8 @@ FnSymbol* instantiateFunction(FnSymbol* fn, FnSymbol* root, SymbolMap& all_subs,
 void explainAndCheckInstantiation(FnSymbol* newFn, FnSymbol* fn);
 
 // visible functions
-class VisibleFunctionBlock {
- public:
-  Map<const char*,Vec<FnSymbol*>*> visibleFunctions;
-  VisibleFunctionBlock() { }
-};
-
-extern Map<BlockStmt*,VisibleFunctionBlock*> visibleFunctionMap;
-extern int nVisibleFunctions; // for incremental build
-void buildVisibleFunctionMap();
-BlockStmt*
-getVisibleFunctions(BlockStmt* block,
-                    const char* name,
-                    Vec<FnSymbol*>& visibleFns,
-                    Vec<BlockStmt*>& visited,
-                    CallExpr* callOrigin);
+void fillVisibleFuncVec(CallExpr* call, CallInfo &info,
+                        Vec<FnSymbol*> &visibleFns);
 
 // disambiguation
 /** A wrapper for candidates for function call resolution.
@@ -146,15 +133,21 @@ public:
   bool computeAlignment(CallInfo& info);
 
   /// Compute substitutions for wrapped function that is generic.
-  void computeSubstitutions();
+  void computeSubstitutions(bool inInitRes = false);
 };
 
 bool checkResolveFormalsWhereClauses(ResolutionCandidate* currCandidate);
+bool checkGenericFormals(ResolutionCandidate* currCandidate);
+void explainGatherCandidate(Vec<ResolutionCandidate*>& candidates,
+                            CallInfo& info, CallExpr* call);
+void wrapAndCleanUpActuals(ResolutionCandidate* best, CallInfo& info,
+                           bool buildFastFollowerChecks);
 
 typedef enum {
   FIND_EITHER = 0,
   FIND_REF,
-  FIND_NOT_REF
+  FIND_CONST_REF,
+  FIND_NOT_REF_OR_CONST_REF, // !(ref || const_ref)
 } disambiguate_kind_t;
 
 
@@ -218,11 +211,13 @@ FnSymbol* tryResolveCall(CallExpr* call);
 void resolveFns(FnSymbol* fn);
 void resolveDefaultGenericType(CallExpr* call);
 void resolveTypedefedArgTypes(FnSymbol* fn);
+void resolveReturnType(FnSymbol* fn);
 
 // FnSymbol changes
 extern bool tryFailure;
 void insertFormalTemps(FnSymbol* fn);
-void insertCasts(BaseAST* ast, FnSymbol* fn, Vec<CallExpr*>& casts);
+void insertAndResolveCasts(FnSymbol* fn);
+void ensureInMethodList(FnSymbol* fn);
 
 FnSymbol* defaultWrap(FnSymbol* fn, Vec<ArgSymbol*>* actualFormals,  CallInfo* info);
 void reorderActuals(FnSymbol* fn, Vec<ArgSymbol*>* actualFormals,  CallInfo* info);
@@ -242,6 +237,7 @@ void printResolutionErrorUnresolved(Vec<FnSymbol*>& visibleFns, CallInfo* info);
 void resolveNormalCallCompilerWarningStuff(FnSymbol* resolvedFn);
 void lvalueCheck(CallExpr* call);
 void checkForStoringIntoTuple(CallExpr* call, FnSymbol* resolvedFn);
+void printTaskOrForallConstErrorNote(Symbol* aVar);
 
 // tuples
 FnSymbol* createTupleSignature(FnSymbol* fn, SymbolMap& subs, CallExpr* call);

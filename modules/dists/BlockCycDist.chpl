@@ -306,14 +306,14 @@ proc BlockCyclic._locsize {
 // create a new rectangular domain over this distribution
 //
 proc BlockCyclic.dsiNewRectangularDom(param rank: int, type idxType,
-                           param stridable: bool) {
+                                      param stridable: bool, inds) {
   if idxType != this.idxType then
     compilerError("BlockCyclic domain index type does not match distribution's");
   if rank != this.rank then
     compilerError("BlockCyclic domain rank does not match distribution's");
 
   var dom = new BlockCyclicDom(rank=rank, idxType=idxType, dist=this, stridable=stridable);
-  dom.setup();
+  dom.dsiSetIndices(inds);
   return dom;
 }
 
@@ -668,22 +668,6 @@ proc BlockCyclicDom.dsiIndexOrder(i) {
   return whole.indexOrder(i);
 }
 
-proc BlockCyclicDom.dsiBuildRectangularDom(param rank: int, type idxType,
-                                         param stridable: bool,
-                                         ranges: rank*range(idxType,
-                                                            BoundedRangeType.bounded,
-                                                            stridable)) {
-  if idxType != dist.idxType then
-    compilerError("BlockCyclic domain index type does not match distribution's");
-  if rank != dist.rank then
-    compilerError("BlockCyclic domain rank does not match distribution's");
-
-  var dom = new BlockCyclicDom(rank=rank, idxType=idxType,
-                               dist=dist, stridable=stridable);
-  dom.dsiSetIndices(ranges);
-  return dom;
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // BlockCyclic Local Domain Class
@@ -945,22 +929,6 @@ proc BlockCyclicArr.dsiSerialWrite(f) {
       break;
     }
   }
-}
-
-proc BlockCyclicArr.dsiSlice(d: BlockCyclicDom) {
-  var alias = new BlockCyclicArr(eltType=eltType, rank=rank, idxType=idxType, stridable=d.stridable, dom=d);
-  for i in dom.dist.targetLocDom {
-    on dom.dist.targetLocales(i) {
-      var locAlias => locArr[i].myElems;
-      alias.locArr[i] = new LocBlockCyclicArr(eltType=eltType, rank=rank, idxType=idxType, stridable=d.stridable, allocDom=locArr[i].allocDom, indexDom=d.locDoms[i], myElems=>locAlias);
-    }
-  }
-
-  return alias;
-}
-
-proc BlockCyclicArr.dsiReindex(dom) {
-  compilerError("reindexing not yet implemented for Block-Cyclic");
 }
 
 proc BlockCyclicArr.dsiTargetLocales() {

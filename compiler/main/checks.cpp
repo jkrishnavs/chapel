@@ -573,8 +573,10 @@ static void checkAggregateTypes()
   {
     if (! at->defaultInitializer && at->initializerStyle != DEFINES_INITIALIZER)
       INT_FATAL(at, "aggregate type did not define an initializer and has no default constructor");
-    if (! at->defaultTypeConstructor)
-      INT_FATAL(at, "aggregate type has no default type constructor");
+    if (! at->defaultTypeConstructor &&
+        at->initializerStyle != DEFINES_INITIALIZER)
+      INT_FATAL(at, "aggregate type did not define an initializer and "
+                "has no default type constructor");
   }
 }
 
@@ -588,9 +590,13 @@ checkResolveRemovedPrims(void) {
     if (call->primitive) {
       switch(call->primitive->tag) {
         case PRIM_BLOCK_PARAM_LOOP:
+
         case PRIM_INIT:
+        case PRIM_INIT_FIELD:
+        case PRIM_INIT_VAR:
         case PRIM_NO_INIT:
         case PRIM_TYPE_INIT:
+
         case PRIM_LOGICAL_FOLDER:
         case PRIM_TYPEOF:
         case PRIM_TYPE_TO_STRING:

@@ -67,7 +67,6 @@ symbolFlag( FLAG_COERCE_TEMP , npr, "coerce temp" , "a temporary that was stores
 symbolFlag( FLAG_CODEGENNED , npr, "codegenned" , "code has been generated for this type" )
 symbolFlag( FLAG_COFORALL_INDEX_VAR , npr, "coforall index var" , ncm )
 symbolFlag( FLAG_COMMAND_LINE_SETTING , ypr, "command line setting" , ncm )
-symbolFlag( FLAG_MODIFIES_ARRAY_BLK , ypr, "modifies array blk" , "marks functions that modify the array blk field" )
 // The compiler-generated flag is already overloaded in three ways.  We may
 // want to split it if this becomes cumbersome:
 // 1. In resolution, functions marked as compiler-generated are considered only if
@@ -85,10 +84,14 @@ symbolFlag( FLAG_CONST , npr, "const" , "constant" )
 symbolFlag( FLAG_CONST_DUE_TO_TASK_FORALL_INTENT , npr, "const due to task or forall intent", ncm )
 symbolFlag( FLAG_C_PTR_CLASS , ypr, "c_ptr class" , "marks c_ptr class" )
 symbolFlag( FLAG_CONSTRUCTOR , npr, "constructor" , "constructor (but not type constructor); loosely defined to include constructor wrappers" )
+symbolFlag( FLAG_COPY_MUTATES , ypr, "copy mutates" , "the initCopy function / copy initializer takes its argument by ref")
 symbolFlag( FLAG_DATA_CLASS , ypr, "data class" , ncm )
 
 // Enable override for default-intent for types defined in terms of record/class
 symbolFlag( FLAG_DEFAULT_INTENT_IS_REF, ypr, "default intent is ref", "The default intent for this type is ref")
+// Default intent should be determined by function body
+// (ie. it is a ref if it is modified in the function body)
+symbolFlag( FLAG_DEFAULT_INTENT_IS_REF_MAYBE_CONST, ypr, "default intent is ref if modified", "The default intent for this type is ref if modified const ref otherwise")
 
 symbolFlag( FLAG_DEFAULT_CONSTRUCTOR , npr, "default constructor" , ncm )
 symbolFlag( FLAG_DESTRUCTOR , npr, "destructor" , "applied to functions that are destructors" )
@@ -97,7 +100,8 @@ symbolFlag( FLAG_DOMAIN , ypr, "domain" , ncm )
 symbolFlag( FLAG_DONOR_FN, ypr, "donor fn" , "function donates ownership of the returned object to the calling function" )
 symbolFlag( FLAG_DONT_DISABLE_REMOTE_VALUE_FORWARDING , ypr, "dont disable remote value forwarding" , ncm )
 symbolFlag( FLAG_END_COUNT , ypr, "end count" , ncm )
-symbolFlag( FLAG_ERRONEOUS_INITCOPY, npr, "erroneous initcopy", ncm)
+symbolFlag( FLAG_ERRONEOUS_AUTOCOPY, ypr, "erroneous autocopy", ncm)
+symbolFlag( FLAG_ERRONEOUS_INITCOPY, ypr, "erroneous initcopy", ncm)
 symbolFlag( FLAG_EPILOGUE_LABEL , npr, "epilogue label" , "distinguishes the epilogue label from other labels" )
 symbolFlag( FLAG_EXPANDED_VARARGS, npr, "expanded varargs", ncm)
 symbolFlag( FLAG_EXPAND_TUPLES_WITH_VALUES , ypr, "expand tuples with values" , ncm )
@@ -111,6 +115,7 @@ symbolFlag( FLAG_FIELD_ACCESSOR , npr, "field accessor" , "field setter/getter f
 symbolFlag( FLAG_FIRST_CLASS_FUNCTION_INVOCATION, npr, "first class function invocation" , "proxy for first-class function invocation" )
 symbolFlag( FLAG_FN_RETARG, npr, "fn returns via _retArg", ncm )
 symbolFlag( FLAG_FORMAL_TEMP,     npr, "formal temp", "a formal temp to back an in, out, or inout argument" )
+symbolFlag( FLAG_FORWARDING_FN , npr, "forwarding function" , ncm )
 symbolFlag( FLAG_FUNCTION_CLASS , npr, "function class" , "first-class function class representation" )
 // When applied to an argument, this flag means that the arg accepts a value
 // but has unspecified type.
@@ -176,6 +181,7 @@ symbolFlag( FLAG_NO_AUTO_DESTROY , ypr, "no auto destroy" , ncm )
 symbolFlag( FLAG_NO_CAPTURE_FOR_TASKING , npr, "no capture for tasking", "does not need to be captured before spawning tasks" )
 symbolFlag( FLAG_NO_CODEGEN , ypr, "no codegen" , "do not generate e.g. C code defining this symbol" )
 symbolFlag( FLAG_NO_COPY , ypr, "no copy" , "do not apply chpl__initCopy to initialization of a variable" )
+symbolFlag( FLAG_NO_COPY_RETURN, ypr, "no copy return", ncm)
 symbolFlag( FLAG_NO_DEFAULT_FUNCTIONS , ypr, "no default functions" , ncm )
 symbolFlag( FLAG_NO_DOC, ypr, "no doc", "do not generate chpldoc documentation for this symbol" )
 symbolFlag( FLAG_NO_IMPLICIT_COPY , ypr, "no implicit copy" , "function does not require autoCopy/autoDestroy" )
@@ -240,6 +246,9 @@ symbolFlag( FLAG_REDUCESCANOP , ypr, "ReduceScanOp" , "the ReduceScanOp class" )
 symbolFlag( FLAG_REF , ypr, "ref" , ncm )
 symbolFlag( FLAG_REF_FOR_CONST_FIELD_OF_THIS , npr, "reference to a const field of 'this'" , ncm )
 symbolFlag( FLAG_REF_ITERATOR_CLASS , npr, "ref iterator class" , ncm )
+// Does FLAG_REF_TO_CONST means reference to immutable?
+// maybe it is intended to, but that is not true in
+// setFlagsAndCheckForConstAccess
 symbolFlag( FLAG_REF_TO_CONST , npr, "reference to a const" , "a temp or a function that returns a reference to a Chapel const, e.g. an accessor to a const field or its result" )
 symbolFlag( FLAG_REF_TO_CONST_WHEN_CONST_THIS , ypr, "reference to const when const this" , "a function that returns a reference to a Chapel const when 'this' is const" )
 symbolFlag( FLAG_REF_VAR , ypr, "ref var" , "reference variable" )
@@ -271,7 +280,7 @@ symbolFlag( FLAG_TUPLE_WITH_REF , npr, "tuple contains ref" , ncm )
 symbolFlag( FLAG_TYPE_CONSTRUCTOR , npr, "type constructor" , ncm )
 symbolFlag( FLAG_TYPE_VARIABLE , npr, "type variable" , "contains a type instead of a value" )
 symbolFlag( FLAG_UNALIAS_FN,  ypr, "unalias fn" , "function to copy array slices when assigning to a user variable")
-symbolFlag( FLAG_UNREF_FN,  ypr, "unref fn" , "function to remove reference fields from tuples when returning")
+symbolFlag( FLAG_UNREF_FN,  ypr, "unref fn" , "function to remove reference fields from tuples or copy array slices when returning")
 symbolFlag( FLAG_VECTORIZE_YIELDING_LOOPS, ypr, "vectorize yielding loops", "used to explicitly vectorize yielding loops in iterators" )
 symbolFlag( FLAG_VIRTUAL , npr, "virtual" , ncm )
 // Used to mark where a compiler generated flag was removed (but is desired

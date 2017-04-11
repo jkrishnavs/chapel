@@ -90,6 +90,18 @@ module ChapelDistribution {
       return (count==0);
     }
 
+    //
+    // TODO: There may be some opportunities to optimize out the
+    // locking here, as in the add_arr() case.  For example, the
+    // construction of the distribution and domain used for rank change
+    // slicing could use an unlocked version because that operation
+    // creates a new distribution followed immediately by a domain
+    // over the distribution. It's unclear how important this
+    // optimization is, though, because rank change slices are
+    // arguably less common (and already more expensive in most cases
+    // due to the creation of distribution and domain objects) than
+    // rank-preserving slicing.
+    //
     inline proc add_dom(x:BaseDom) {
       on this {
         _lock_doms();
@@ -110,7 +122,7 @@ module ChapelDistribution {
       _domsLock.clear();
     }
   
-    proc dsiNewRectangularDom(param rank: int, type idxType, param stridable: bool) {
+    proc dsiNewRectangularDom(param rank: int, type idxType, param stridable: bool, inds) {
       compilerError("rectangular domains not supported by this distribution");
     }
   
@@ -136,7 +148,7 @@ module ChapelDistribution {
   
     proc dsiDestroyDist() { }
   
-    proc dsiDisplayRepresentation() { }
+    proc dsiDisplayRepresentation() { writeln("<no way to display representation>"); }
 
     // Does the distribution keep a list of domains? Can the domains
     // keep the distribution alive longer? false for DefaultDist.
@@ -307,9 +319,21 @@ module ChapelDistribution {
     proc dsiLinksDistribution() return true;
 
     // Overload to to customize domain destruction
-    proc dsiDestroyDom() { }
+    //
+    // BHARSH 2017-02-05: Making dsiDestroyDom a virtual method 'tricks' the
+    // compiler into thinking there's recursion for dsiDestroyDom when there is
+    // none. This can result in incorrect generated code if recursive iterators
+    // are inlined. See GitHub issue #5311 for more.
+    //
+    //proc dsiDestroyDom() { }
 
-    proc dsiDisplayRepresentation() { }
+    proc dsiDisplayRepresentation() { writeln("<no way to display representation>"); }
+
+    proc isDefaultRectangular() param return false;
+
+    proc isSliceDomainView() param return false; // likely unnecessary?
+    proc isRankChangeDomainView() param return false;
+    proc isReindexDomainView() param return false;
   }
   
   class BaseRectangularDom : BaseDom {
@@ -581,7 +605,19 @@ module ChapelDistribution {
     // atomics are available
     var _arrAlias: BaseArr;    // reference to base array if an alias
     var pid:int = nullPid; // privatized ID, if privatization is supported
+
+    proc isSliceArrayView() param {
+      return false;
+    }
+
+    proc isRankChangeArrayView() param {
+      return false;
+    }
   
+    proc isReindexArrayView() param {
+      return false;
+    }
+
     proc deinit() {
     }
 
@@ -676,14 +712,14 @@ module ChapelDistribution {
   
     proc dsiSupportsBulkTransfer() param return false;
     proc doiCanBulkTransfer() param return false;
-    proc doiBulkTransfer(B){ 
+    proc doiBulkTransfer(B, viewDom) {
       halt("This array type does not support bulk transfer.");
     }
   
-    proc dsiDisplayRepresentation() { }
+    proc dsiDisplayRepresentation() { writeln("<no way to display representation>"); }
     proc isDefaultRectangular() param return false;
     proc dsiSupportsBulkTransferInterface() param return false;
-    proc doiCanBulkTransferStride() param return false;
+    proc doiCanBulkTransferStride(viewDom) param return false;
   }
 
   /*
@@ -785,8 +821,16 @@ module ChapelDistribution {
     delete dist;
   }
 
-  proc _delete_dom(dom:BaseDom, param privatized:bool) {
-    dom.dsiDestroyDom();
+  proc _delete_dom(dom, param privatized:bool) {
+
+    // This is a workaround for the recursive iterator bug discussed in
+    // GitHub issue #5311. Implementing 'dsiDestroyDom' on 'BaseDom' leads
+    // the compiler into thinking there's recursion due to virtual methods,
+    // when in fact there is no recursion at all.
+    use Reflection;
+    if canResolveMethod(dom, "dsiDestroyDom") {
+      dom.dsiDestroyDom();
+    }
 
     if privatized {
       _freePrivatizedClass(dom.pid, dom);
@@ -798,7 +842,7 @@ module ChapelDistribution {
   // that arr.eltType is meaningful.
   proc _delete_arr(arr, param privatized:bool) {
     // decide whether or not the array is an alias
-    var isalias = (arr._arrAlias != nil);
+    var isalias = (arr._arrAlias != nil) || chpl__isArrayView(arr);
 
     // array implementation can destroy data or other members
     arr.dsiDestroyArr(isalias);
@@ -820,4 +864,12 @@ module ChapelDistribution {
     // runs the array destructor
     delete arr;
   }
+
+  // These are used in ChapelLocale.chpl. They are here to
+  // prevent an order-of-resolution issue.
+  pragma "no doc"
+  const chpl_emptyLocaleSpace: domain(1) = {1..0};
+  pragma "no doc"
+  const chpl_emptyLocales: [chpl_emptyLocaleSpace] locale;
+
 }
