@@ -20,9 +20,14 @@
 #ifndef _SCOPE_RESOLVE_H_
 #define _SCOPE_RESOLVE_H_
 
-class AggregateType;
+class BaseAST;
+class FnSymbol;
+class Symbol;
 
-void build_constructors(AggregateType* ct);
-void add_root_type(AggregateType* ct);
+void     addToSymbolTable(FnSymbol* fn);
+
+Symbol*  lookup(BaseAST* scope, const char* name);
+
+BaseAST* getScope(BaseAST* ast);
 
 #endif

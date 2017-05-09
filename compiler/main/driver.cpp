@@ -35,6 +35,7 @@
 #include "log.h"
 #include "misc.h"
 #include "mysystem.h"
+#include "parser.h"
 #include "PhaseTracker.h"
 #include "primitive.h"
 #include "runpasses.h"
@@ -52,6 +53,12 @@
 std::map<std::string, const char*> envMap;
 
 char CHPL_HOME[FILENAME_MAX+1] = "";
+
+// These are more specific that CHPL_HOME, to work in
+// settings where Chapel is installed.
+char CHPL_RUNTIME_LIB[FILENAME_MAX+1] = "";
+char CHPL_RUNTIME_INCL[FILENAME_MAX+1] = "";
+char CHPL_THIRD_PARTY[FILENAME_MAX+1] = "";
 
 const char* CHPL_HOST_PLATFORM = NULL;
 const char* CHPL_HOST_COMPILER = NULL;
@@ -206,6 +213,8 @@ bool preserveInlinedLineNumbers = false;
 const char* compileCommand = NULL;
 char compileVersion[64];
 
+static
+bool fPrintChplSettings = false;
 
 /* Note -- LLVM provides a way to get the path to the executable...
 // This function isn't referenced outside its translation unit, but it
@@ -237,6 +246,11 @@ static bool isMaybeChplHome(const char* path)
 static void setupChplHome(const char* argv0) {
   const char* chpl_home = getenv("CHPL_HOME");
   char*       guess     = NULL;
+  bool        installed = false;
+  char        majMinorVers[64];
+
+  // Get major.minor version string (used below)
+  get_major_minor_version(majMinorVers);
 
   // Get the executable path.
   guess = findProgramPath(argv0);
@@ -289,6 +303,27 @@ static void setupChplHome(const char* argv0) {
       strncpy(CHPL_HOME, chpl_home, FILENAME_MAX);
     }
   } else {
+
+    // Check in a default location too
+    if( guess == NULL ) {
+      char TEST_HOME[FILENAME_MAX+1] = "";
+
+      // Check for Chapel libraries at installed prefix
+      // e.g. /usr/share/chapel/<vers>
+      int rc;
+      rc = snprintf(TEST_HOME, FILENAME_MAX, "%s/%s/%s",
+                  get_configured_prefix(), // e.g. /usr
+                  "/share/chapel",
+                  majMinorVers);
+      if ( rc >= FILENAME_MAX ) USR_FATAL("Installed pathname too long");
+
+      if( isMaybeChplHome(TEST_HOME) ) {
+        guess = strdup(TEST_HOME);
+
+        installed = true;
+      }
+    }
+
     if( guess == NULL ) {
       // Could not find enviro var, and could not
       // guess at exe's path name.
@@ -315,6 +350,70 @@ static void setupChplHome(const char* argv0) {
 
   if( guess )
     free(guess);
+
+
+
+  if( installed ) {
+    int rc;
+    // E.g. /usr/lib/chapel/1.16/runtime/lib
+    rc = snprintf(CHPL_RUNTIME_LIB, FILENAME_MAX, "%s/%s/%s/%s",
+                  get_configured_prefix(), // e.g. /usr
+                  "/lib/chapel",
+                  majMinorVers,
+                  "runtime/lib");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("Installed pathname too long");
+    rc = snprintf(CHPL_RUNTIME_INCL, FILENAME_MAX, "%s/%s/%s/%s",
+                  get_configured_prefix(), // e.g. /usr
+                  "/lib/chapel",
+                  majMinorVers,
+                  "runtime/include");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("Installed pathname too long");
+    rc = snprintf(CHPL_THIRD_PARTY, FILENAME_MAX, "%s/%s/%s/%s",
+                  get_configured_prefix(), // e.g. /usr
+                  "/lib/chapel",
+                  majMinorVers,
+                  "third-party");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("Installed pathname too long");
+
+  } else {
+    int rc;
+    rc = snprintf(CHPL_RUNTIME_LIB, FILENAME_MAX, "%s/%s",
+                  CHPL_HOME, "lib");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("CHPL_HOME pathname too long");
+    rc = snprintf(CHPL_RUNTIME_INCL, FILENAME_MAX, "%s/%s",
+                  CHPL_HOME, "runtime/include");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("CHPL_HOME pathname too long");
+    rc = snprintf(CHPL_THIRD_PARTY, FILENAME_MAX, "%s/%s",
+                  CHPL_HOME, "third-party");
+    if ( rc >= FILENAME_MAX ) USR_FATAL("CHPL_HOME pathname too long");
+
+  }
+
+  // and setenv the derived enviro vars for use by called scripts/Makefiles
+  {
+    int rc;
+    rc = setenv("CHPL_RUNTIME_LIB", CHPL_RUNTIME_LIB, 1);
+    if( rc ) USR_FATAL("Could not setenv CHPL_RUNTIME_LIB");
+    rc = setenv("CHPL_RUNTIME_INCL", CHPL_RUNTIME_INCL, 1);
+    if( rc ) USR_FATAL("Could not setenv CHPL_RUNTIME_INCL");
+    rc = setenv("CHPL_THIRD_PARTY", CHPL_THIRD_PARTY, 1);
+    if( rc ) USR_FATAL("Could not setenv CHPL_THIRD_PARTY");
+
+    if (installed) {
+      char CHPL_CONFIG[FILENAME_MAX+1] = "";
+      // Set an extra default CHPL_CONFIG directory
+      rc = snprintf(CHPL_CONFIG, FILENAME_MAX, "%s/%s/%s",
+                    get_configured_prefix(), // e.g. /usr
+                    "/lib/chapel",
+                    majMinorVers);
+      if ( rc >= FILENAME_MAX ) USR_FATAL("Installed pathname too long");
+
+      // Don't overwrite CHPL_CONFIG so that a user-specified
+      // one would be left alone.
+      rc = setenv("CHPL_CONFIG", CHPL_CONFIG, 0);
+      if( rc ) USR_FATAL("Could not setenv CHPL_CONFIG");
+    }
+  }
 }
 
 // NOTE: We are leaking memory here by dropping astr() results on the ground.
@@ -721,7 +820,7 @@ static ArgumentDescription arg_desc[] = {
  {"print-callgraph", ' ', NULL, "Print a representation of the callgraph for the program", "N", &fPrintCallGraph, "CHPL_PRINT_CALLGRAPH", NULL},
  {"print-callstack-on-error", ' ', NULL, "print the Chapel call stack leading to each error or warning", "N", &fPrintCallStackOnError, "CHPL_PRINT_CALLSTACK_ON_ERROR", NULL},
  {"set", 's', "<name>[=<value>]", "Set config param value", "S", NULL, NULL, readConfig},
- {"strict-errors", ' ', NULL, "Enable strict mode for error handling", "F", &fStrictErrorHandling, NULL, NULL},
+ {"strict-errors", ' ', NULL, "Enable [disable] strict mode for error handling", "N", &fStrictErrorHandling, NULL, NULL},
  {"task-tracking", ' ', NULL, "Enable [disable] runtime task tracking", "N", &fEnableTaskTracking, "CHPL_TASK_TRACKING", NULL},
  {"warn-const-loops", ' ', NULL, "Enable [disable] warnings for some 'while' loops with constant conditions", "N", &fWarnConstLoops, "CHPL_WARN_CONST_LOOPS", NULL},
  {"warn-special", ' ', NULL, "Enable [disable] special warnings", "n", &fNoWarnSpecial, "CHPL_WARN_SPECIAL", setWarnSpecial},
@@ -814,6 +913,7 @@ static ArgumentDescription arg_desc[] = {
  {"replace-array-accesses-with-ref-temps", ' ', NULL, "Enable [disable] replacing array accesses with reference temps (experimental)", "N", &fReplaceArrayAccessesWithRefTemps, NULL, NULL },
  {"incremental", ' ', NULL, "Enable [disable] using incremental compilation", "N", &fIncrementalCompilation, "CHPL_INCREMENTAL_COMP", NULL},
  {"minimal-modules", ' ', NULL, "Enable [disable] using minimal modules",               "N", &fMinimalModules, "CHPL_MINIMAL_MODULES", NULL},
+ {"print-chpl-settings", ' ', NULL, "Print current chapel settings and exit", "F", &fPrintChplSettings, NULL,NULL},
  DRIVER_ARG_PRINT_CHPL_HOME,
  DRIVER_ARG_LAST
 };
@@ -860,10 +960,25 @@ static void printStuff(const char* argv0) {
     char* guess = findProgramPath(argv0);
 
     printf("%s\t%s\n", CHPL_HOME, guess);
+    const char* prefix = get_configured_prefix();
+    if (prefix != NULL && prefix[0] != '\0' )
+      printf("# configured prefix  %s\n", prefix);
 
     free(guess);
 
     printedSomething = true;
+  }
+
+  if( fPrintChplSettings ) {
+    char buf[FILENAME_MAX+1] = "";
+    printf("CHPL_HOME: %s\n", CHPL_HOME);
+    printf("CHPL_RUNTIME_LIB: %s\n", CHPL_RUNTIME_LIB);
+    printf("CHPL_RUNTIME_INCL: %s\n", CHPL_RUNTIME_INCL);
+    printf("CHPL_THIRD_PARTY: %s\n", CHPL_THIRD_PARTY);
+    printf("\n");
+    snprintf(buf, FILENAME_MAX, "%s/util/printchplenv", CHPL_HOME);
+    int status = mysystem(buf, "running printchplenv", false);
+    clean_exit(status);
   }
 
   if (fPrintHelp || (!printedSomething && sArgState.nfile_arguments < 1)) {

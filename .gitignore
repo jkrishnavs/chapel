@@ -12,11 +12,15 @@ gen
 TAGS
 tags
 *.DS_Store
+*.vagrant
 
 
 # Top level ignores.
 /BUILD_VERSION
 /Chapel.xcodeproj
+/chplconfig
+/configured-prefix
+/configured-chpl-home
 /SVNLOG
 /.SVNLOG-revnum
 /bin
@@ -33,6 +37,7 @@ tags
 /compiler/ifa/make_prims/make_prims
 /compiler/ifa/make_prims/cygwin
 /compiler/main/BUILD_VERSION
+/compiler/main/CONFIGURED_PREFIX
 /compiler/main/COPYRIGHT
 /compiler/main/LICENSE
 /compiler/parser/bison-chapel.output
@@ -491,3 +496,5 @@ tags
 /util/tokencount/tokencount.output
 /util/tokencount/tokencount.tab.c
 /util/tokencount/tokencount.tab.h
+
+/util/devel/test/vagrant/log

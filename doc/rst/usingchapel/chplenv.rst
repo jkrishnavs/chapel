@@ -323,8 +323,6 @@ CHPL_TASKS
         qthreads       use Sandia's Qthreads package
         fifo           use POSIX threads
         massivethreads use U Tokyo's MassiveThreads package
-        muxed          use Cray-specific lightweight threading (with Cray
-                       pre-built module only)
         ============== ===================================================
 
    If ``CHPL_TASKS`` is not set it defaults to ``qthreads`` in all cases
@@ -341,8 +339,7 @@ CHPL_TASKS
      behavior described just above.
 
    See :ref:`readme-tasks` for more information about executing using the
-   various ``CHPL_TASKS`` options.  See also :ref:`readme-cray` for more
-   information about Cray-specific runtime layers.
+   various ``CHPL_TASKS`` options.
 
 
 .. _readme-chplenv.CHPL_COMM:
@@ -721,29 +718,34 @@ Below is an example of a Chapel configuration file with comments:
 Generating Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The format of the ``printchplenv --overrides`` and ``printchplenv --simple``
-commands is compatible with Chapel configuration files.
+
+To generate a configuration file, use ``printchplenv`` or
+``./configure``.
+
+When using ``printchplenv``, run it with ``--simple`` or
+``--overrides`` to get a format compatible with Chapel configuration
+files.
 
 The ``printchplenv --overrides`` flag can be used to print the variables
 currently overridden by either environment variables or Chapel
 configuration file.
 
-A user can dump their current overrides into a Chapel configuration file:
+For example, to save the current overrides into a Chapel configuration file:
 
 .. code-block:: sh
 
     printchplenv --overrides > ~/.chplconfig
 
 The ``printchplenv --simple`` flag can be used to print all the variables
-of the current configuration.
-
-A user can dump their current configuration into a Chapel configuration file as
-well:
+of the current configuration. For example:
 
 .. code-block:: sh
 
     printchplenv --simple > ~/.chplconfig
 
+
+Alternatively, the ``./configure`` script will generate a ``chplconfig``
+file. See :ref:`readme-installing`.
 
 
 Search Paths and File Names
