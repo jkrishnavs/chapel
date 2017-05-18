@@ -1134,7 +1134,7 @@ static bool isOuterVar(Symbol* sym, FnSymbol* fn) {
     return false;
   if (isArgSymbol(sym)) {
     ArgSymbol* argSym = toArgSymbol(sym);
-    if (argSym->intent == INTENT_REF) {
+    if (argSym->intent & INTENT_FLAG_REF) {
       return true;
     }
   }
@@ -1193,7 +1193,7 @@ static Scope* getOriginalScope(Symbol* sym) {
       symParentFunction = toFnSymbol(symParent);
       if(parentFunction != NULL)
         parentArgSymbol = getTheArgSymbol(sym, parentFunction);
-      if (argSym->intent == INTENT_REF) {
+      if (argSym->intent & INTENT_FLAG_REF) {
         if(isFnSymbol(parent)) {
           if(parentArgSymbol != NULL) {
             // Go one level up. Parent of symParent is a function and
