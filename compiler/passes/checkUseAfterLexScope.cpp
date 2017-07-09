@@ -78,7 +78,7 @@ typedef std::map<Symbol*, SymbolState> SymbolStateMap;
      We can say The SyncGraph nodes represents
      a striped CCFG(Concurrent Control Flow Graph)
      Which stores data of sync Points and
-     use of External variables.
+     use of outer variables.
 **/
 
 //typedef Vec<UseInfo*> UseInfoVec;
@@ -195,13 +195,13 @@ static std::set<Symbol*> gSingleSet;
 
 //* The parallel program state PPS */
 struct VisitedMap {
-  
-  SyncGraphSet destPoints;
-  SymbolStateMap symbolMap;
-  SyncGraphSet visited;
 
-  UseInfoSet visitedInfoSet;
-  UseInfoSet safeInfoSet;
+  SyncGraphSet destPoints; // Active Sync Node set
+  SymbolStateMap symbolMap;
+  SyncGraphSet visited; // All Visited  Nodes
+
+  UseInfoSet visitedInfoSet; // Visited Info
+  UseInfoSet safeInfoSet; // Safe Set Info.
   SyncGraphSet vSingles;  
   
   ~VisitedMap() {}
@@ -255,7 +255,7 @@ struct std::vector<VisitedMap*> gListVisited;
 /******************************
   Pre check Optimization
 ******************************/
-static bool  ASTContainsBeginFunction(BaseAST* ast);
+static bool containsBeginFunction(FnSymbol* fn);
 
 
 /*****************************
@@ -272,6 +272,12 @@ static SyncGraphNode* handleSyncStatement(BlockStmt* block, SyncGraphNode* cur);
 static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur);
 static SyncGraphNode* handleBranching(SyncGraphNode* start, SyncGraphNode* end,  SyncGraphNode* ifNode, SyncGraphNode* elseNode);
 
+
+/******************************
+Adding Outer variable details, Sync variable 
+ details to Sync Graph Nodes
+ *****************************/
+static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraphNode *cur);
 static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraphNode* node) ;
 static Symbol* findBaseSymbol(Symbol* curSymbol);
 static bool isOuterVar(Symbol* sym, FnSymbol* fn);
@@ -279,6 +285,19 @@ static void checkSyncedCalls(FnSymbol* fn);
 static SyncGraphNode* addSyncExprs(Expr *expr, SyncGraphNode *cur);
 static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur);
 static ArgSymbol*  getTheArgSymbol(Symbol * sym, FnSymbol* parent);
+static Scope* getOriginalScope(Symbol* sym);
+static bool  ASTContainsBeginFunction(BaseAST* ast);
+
+
+/********************************
+Functions to skip synced scopes
+*********************************/
+static bool isInsideSyncStmt(Expr* expr);
+static bool shouldSync(Scope* scope, SyncGraphNode* cur);
+static int compareScopes(Scope* a, Scope * b);
+static bool  refersOuterSymbols(Expr* expr, SyncGraphNode * cur);
+
+
 
 
 /******************************
@@ -304,16 +323,9 @@ static void cleanUpSyncGraph(SyncGraphNode *root);
 static void  exit_pass();
 
 /*********************************
-  Graph Traversal Functions
+  Graph Traversal Functions Generation of PPS 
 **********************************/
 static void checkOrphanStackVar(SyncGraphNode *root);
-static bool containsBeginFunction(FnSymbol* fn);
-static Scope* getOriginalScope(Symbol* sym);
-static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraphNode *cur);
-static bool isInsideSyncStmt(Expr* expr);
-static bool shouldSync(Scope* scope, SyncGraphNode* cur);
-static int compareScopes(Scope* a, Scope * b);
-static bool  refersExternalSymbols(Expr* expr, SyncGraphNode * cur);
 //static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMap, SyncGraphSet& partialSet, UseInfoVec& useInfos);
 static bool threadedMahjong(void);
 static bool canVisitNext(SymbolStateMap& stateMap, SyncGraphNode* sourceSyncPoint);
@@ -323,11 +335,18 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisited, UseInfoSet& useInfos);
 static SyncGraphNode* getLastNode(SyncGraphNode* start);
 static void checkNextSyncNode();
+static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map);
+
+/*************************************
+Helper functions for generating PPS and reporting error.
+ ************************************/
 static bool hasNextSyncPoint(SyncGraphNode * curNode);
 static bool isASyncPoint(SyncGraphNode* cur);
 static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filledSinglePoints);
 static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraphNode* cur);
-static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map);
+static bool isPartofBeginBranch(SyncGraphNode* curNode);
+
+
 
 /**************************************
   Reporting Errors
@@ -468,6 +487,9 @@ static void dotGraph(SyncGraphNode* root) {
 #endif
 
 
+
+ // Check if The PPS is already present in the queue. If already presnt we just megre 
+ // the new PPS to this.
 static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
   for_vector(VisitedMap, curVisited, gListVisited) {
     if(curVisited->destPoints == dest && curVisited->symbolMap == map) {
@@ -479,10 +501,8 @@ static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
 
 
 
-/*
-  This function frees SyncGraphNode Nodes recursively
-*/
-
+  // This function frees SyncGraphNode Nodes recursively.
+  
 static void deleteSyncGraphNode(SyncGraphNode *node) {
   if (node != NULL) {
     if(node->child != NULL && node->child->parent == node)
@@ -495,6 +515,8 @@ static void deleteSyncGraphNode(SyncGraphNode *node) {
 
 
 
+// Function finds the bas Symbol of the current use.
+// Used to identify the outer variable uses.
 static Symbol* findBaseSymbol(Symbol* curSymbol) {
   Symbol* baseSymbol = curSymbol;
   Symbol* parentSymbol = baseSymbol->defPoint->parentSymbol;
@@ -548,6 +570,8 @@ static void  exit_pass() {
   // delete gUseInfos;
 }
 
+
+
 static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* parent) { 
   for_vector(UseInfo, curInfo, orig->extVarInfoVec) {
     if(isOuterVar (curInfo->symbol, parent)) {
@@ -560,13 +584,11 @@ static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* p
 }
 
 
-/**
-   recursively make a copy of CFG
-   if endPoint is not null we make copy until the endPoint.
-   parent: parent node of newly generated Copy Node
-   branch: node which is to be copied.
-   endPoint : stop Copying once we reach this node. 
- **/
+// Recursively make a copy of CFG
+// if endPoint is not null we make copy until the endPoint.
+// parent: parent node of newly generated Copy Node
+// branch: node which is to be copied.
+// endPoint : stop Copying once we reach this node. 
 static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode* endPoint) {
   
   if(branch == NULL)
@@ -616,10 +638,7 @@ inline static SyncGraphNode* getLastNode(SyncGraphNode* start) {
   return cur;
 }
 
-/**
-   curNode: Start point of search
-   
- **/
+// curNode: Start point of search
 static bool hasNextSyncPoint(SyncGraphNode * curNode) {
   if(curNode == NULL)
     return false;
@@ -631,6 +650,8 @@ static bool hasNextSyncPoint(SyncGraphNode * curNode) {
   }
   return val;
 }
+
+
 
 static bool isPartofBeginBranch(SyncGraphNode* curNode) {
   SyncGraphNode* parentNode = curNode;
@@ -1257,7 +1278,7 @@ static ArgSymbol*  getTheArgSymbol(Symbol* sym, FnSymbol* parent) {
 
 /**
    Get the scope of the symbol.
-   If its an external Variable to the base function we return NULL.
+   If its a outer variable to the base function we return NULL.
 **/
 static Scope* getOriginalScope(Symbol* sym) {
   ArgSymbol* argSym;
@@ -1298,10 +1319,10 @@ static Scope* getOriginalScope(Symbol* sym) {
 
 
 /**
-   checks if the expression expr refers any external variables.
+   checks if the expression expr refers any outer variables.
    if Yes add it to current list.
 **/
-static bool  refersExternalSymbols(Expr* expr, SyncGraphNode* cur) {
+static bool  refersOuterSymbols(Expr* expr, SyncGraphNode* cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
@@ -1317,7 +1338,7 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraphNode* cur) {
 }
 
 /**
-   Add use of external variable details to 'node'.
+   Add use of outer variable details to 'node'.
 **/
 static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraphNode* node) {
   if(compareScopes(fn->body,gFnSymbolRoot->body) != 1)
@@ -1325,7 +1346,7 @@ static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph
   /*
     IMP: if the symbol root is beyond the gFnSymbolRoot it means the symbol was an argument 
     to the base function. In that case if the symbol is used in the base function, we need 
-    not consider is as an external variable.
+    not consider is as an outer variable.
    */
   if(node->fnSymbol != fn) {
     UseInfo * newUseInfo = new UseInfo(node, fn, use, v);
@@ -1336,7 +1357,7 @@ static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph
 
 
 /**
-   Add external Variables, begin Nodes, external function calls etc
+   Add outer Variables, begin Nodes, outer function calls etc
    to 'cur'.
 **/
 static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur) {
@@ -1373,7 +1394,7 @@ static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur) {
     3. User defined Function 
     4. Should be Nested Function
     5. Callee should NOT be beyond any of the synced scopes.
-    (If it is beyond a synced scope all external variables 
+    (If it is beyond a synced scope all outer variables 
     accessed by the function will have the scope beyond the synced 
     scope. Hence all accesses are SAFE)
      **/
@@ -1451,11 +1472,11 @@ static BlockStmt* getSyncBlockStmt(BlockStmt* block, SyncGraphNode *cur) {
 }
 
 /**
-   The 'block' represents the scope of external variable. Once the information
+   The 'block' represents the scope of outer variable. Once the information
    about the block is provided the Function returns true if the use of the
-   external variable should considered as potentially unsafe (true).
+   outer variable should considered as potentially unsafe (true).
 
-   False means use of the external variable is safe.
+   False means use of the outer variable is safe.
 **/
 static bool shouldSync(Scope* block, SyncGraphNode *cur) {
   if(block == NULL ||  gAllCallsSynced == true) {
@@ -1486,7 +1507,7 @@ static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraphNode* cur) {
 
 /**
    The handle function are used the build the sync graph network where
-   we collect information about sync points, external variable use and
+   we collect information about sync points, outer variable use and
    begin statements.
 **/
 static SyncGraphNode* handleSyncStatement(Scope* block, SyncGraphNode* cur) {
@@ -1517,7 +1538,7 @@ static SyncGraphNode* handleCondStmt(CondStmt* cond, SyncGraphNode* cur) {
   SyncGraphNode* elseNode = addElseChildNode(startBranch, startBranch->fnSymbol);
   if(elseBlock != NULL) {
     if( ASTContainsBeginFunction(elseBlock) ||
-	refersExternalSymbols(elseBlock, startBranch) ) {
+	refersOuterSymbols(elseBlock, startBranch) ) {
       elseNode = handleBlockStmt(elseBlock,elseNode);
     }
   }
@@ -1527,7 +1548,7 @@ static SyncGraphNode* handleCondStmt(CondStmt* cond, SyncGraphNode* cur) {
 
 static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
   // TODO
-  if(ASTContainsBeginFunction(block) == true || refersExternalSymbols(block, cur)) {
+  if(ASTContainsBeginFunction(block) == true || refersOuterSymbols(block, cur)) {
     for_alist (node, block->body) {
       cur = handleExpr(node, cur);
     }
