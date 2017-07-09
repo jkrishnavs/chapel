@@ -1,3 +1,22 @@
+/**************************************************
+  Author: Jyothi Krishna V S (jkrishnavs@gmail.com)
+
+  The file explains a pass for Chapel compilers
+ to identify use-after-free variables in Chapel.
+  Research papers and presentations related to this file:
+ 
+ 1. Identifying Use-After-Free Variables in Fire-and-Forget Tasks 
+    in CHIUW 17 
+   slides[http://chapel.cray.com/CHIUW/2017/krishna-slides.pdf]
+
+
+The overall flow of the algorithm is as follows.
+a. Generation of CCFG.
+b. Expand Nested Functions.
+b. CCFG graph traversal. PPS generations
+c. Reporting Unsafe uses of outer variables.
+***************************************************/
+
 #include "passes.h"
 #include "astutil.h"
 #include "driver.h"
@@ -9,39 +28,24 @@
 #include "view.h"
 #include <set>
 #include <algorithm>
+
+
 //#define CHPL_DOTGRAPH
-#ifdef CHPL_DOTGRAPH
-#include <fstream>
-#include <string>
-#include <sstream>
 
-namespace stringpatch
-{
-  template < typename T > std::string to_string( const T& n )
-  {
-    std::ostringstream stm ;
-    stm << n ;
-    return stm.str() ;
-  }
-}
-#endif
-
-
-/*********** HEADER *********************/
 enum GraphNodeStatus {
   NODE_UNKNOWN = 0, //NODE STATUS UNKNOWN
   NODE_SINGLE_WAIT_FULL,
   NODE_SYNC_SIGNAL_FULL,
   NODE_SYNC_SIGNAL_EMPTY,
   NODE_BLOCK_BEGIN, //A NEW BEGIN FUNCTION START HERE
-  NODE_BLOCK_INTERNAL_FUNCTION, // A NEW FUNCTION NODE STARTS HERE
+  NODE_BLOCK_NESTED_FUNCTION, // A NEW FUNCTION NODE STARTS HERE
   NODE_START_LOOP,
   NODE_START_DOWHILE,
   NODE_START_WHILE,
   NODE_LOOP_END,
   NODE_START_IFELSE,
   NODE_END_IFELSE,
-  NODE_INTERNAL_FUNCTION_CALL
+  NODE_NESTED_FUNCTION_CALL
 };
 
 enum SymbolState {
@@ -49,26 +53,27 @@ enum SymbolState {
   SYMBOL_STATE_FULL
 };
 
-#ifdef CHPL_DOTGRAPH
-std::string GraphNodeStatusStrings[] = {
-  "UNKNOWN", //NODE STATUS UNKNOWN
-  "SINGLE_WAIT_FULL",
-  "SYNC_SIGNAL_FULL",
-  "SYNC_SIGNAL_EMPTY",
-  "BLOCK_BEGIN", //A NEW BEGIN FUNCTION START HERE
-  "BLOCK_INTERNAL_FUNCTION", // A NEW FUNCTION NODE STARTS HERE
-  "START_LOOP",
-  "START_DOWHILE",
-  "START_WHILE",
-  "LOOP_END",
-  "START_IFELSE",
-  "END_IFELSE",
-  "INTERNAL_FUNCTION_CALL"
-};
-#endif
+
+
+
+struct SyncGraphNode;
+struct UseInfo;
+struct VisitedMap;
 
 typedef BlockStmt Scope;
 typedef Vec<Scope*> ScopeVec;
+typedef std::vector<UseInfo*> UseInfoVector;
+typedef std::set<UseInfo*> UseInfoSet;
+typedef std::vector<SyncGraphNode*> SyncGraphVector;
+typedef std::vector<SyncGraphNode*>::iterator SGI; 
+typedef Map<FnSymbol*, SyncGraphNode*> FnSyncGraphMap;
+typedef Vec<FnSymbol*> FnSymbolsVec;
+typedef std::set<Symbol*> SymbolSet;
+typedef std::set<SyncGraphNode*> SyncGraphSet;
+typedef std::map<Symbol*, SymbolState> SymbolStateMap;
+
+
+
 /****
      We can say The SyncGraph nodes represents
      a striped CCFG(Concurrent Control Flow Graph)
@@ -76,28 +81,29 @@ typedef Vec<Scope*> ScopeVec;
      use of External variables.
 **/
 
-struct SyncGraph;
-struct UseInfo;
 //typedef Vec<UseInfo*> UseInfoVec;
-typedef std::vector<UseInfo*> UseInfoVector;
-typedef std::set<UseInfo*> UseInfoSet;
 
 static int counter = 0;
 
 
-struct SyncGraph {
+
+/*********************************
+Sync Graph Node 
+An object represents 
+ ********************************/
+struct SyncGraphNode {
   int __ID;
   FnSymbol* fnSymbol;
-  CallExpr* intFuncCall; // Internal Function Call
+  CallExpr* intFuncCall; // Nested Function Call
   ScopeVec syncedScopes;    // These are the already defined sync points
                             // created due to sync statments, Cobegin, Coforall
                             // and Forall statments.
   Symbol* syncVar; 
-  SyncGraph* parent;
-  SyncGraph* child; // same function next BB
-  SyncGraph* fChild; // internal Functions including Begin
-  SyncGraph* cChild; // conditionalNode child
-  SyncGraph* joinNode;
+  SyncGraphNode* parent;
+  SyncGraphNode* child; // same function next BB
+  SyncGraphNode* fChild; // nested functions including Begin
+  SyncGraphNode* cChild; // conditionalNode child
+  SyncGraphNode* joinNode;
   
   CallExpr* syncExpr;
   GraphNodeStatus syncType;
@@ -107,7 +113,7 @@ struct SyncGraph {
 
 
   UseInfoVector extVarInfoVec;
-  SyncGraph(SyncGraph* i, FnSymbol *f, bool copyInternalFunctionCall = false) {
+  SyncGraphNode(SyncGraphNode* i, FnSymbol *f, bool copyNestedFunctionCall = false) {
     __ID = counter ++;
     fnSymbol = f;
     extVarInfoVec.clear();
@@ -117,7 +123,7 @@ struct SyncGraph {
     syncType = i->syncType;
     syncVar = i->syncVar;
     joinNode = i->joinNode;
-    if(copyInternalFunctionCall)
+    if(copyNestedFunctionCall)
       intFuncCall = i->intFuncCall;
     expandedFn = i->expandedFn;
     child = NULL;
@@ -126,7 +132,7 @@ struct SyncGraph {
     parent = NULL;
   }
 
-  SyncGraph(FnSymbol *f) {
+  SyncGraphNode(FnSymbol *f) {
     __ID = counter ++;
     fnSymbol = f;
     child = NULL;
@@ -142,19 +148,19 @@ struct SyncGraph {
     syncVar = NULL;
     extVarInfoVec.clear();
   }
-  ~SyncGraph() {}
+  ~SyncGraphNode() {}
 };
 
 
 
 struct UseInfo {
   SymExpr* usePoint;
-  SyncGraph* useNode;
+  SyncGraphNode* useNode;
   FnSymbol* fnSymbol;
   Symbol* symbol;
   bool checked;
 
-  UseInfo(SyncGraph *node, FnSymbol* fn, SymExpr* expr, Symbol* s) {
+  UseInfo(SyncGraphNode *node, FnSymbol* fn, SymExpr* expr, Symbol* s) {
     usePoint = expr;
     fnSymbol = fn;
     useNode = node;
@@ -174,21 +180,10 @@ struct UseInfo {
 
 
 
-typedef std::vector<SyncGraph*> SyncGraphVector;
-typedef std::vector<SyncGraph*>::iterator SGI; 
-typedef Map<FnSymbol*, SyncGraph*> FnSyncGraphMap;
-typedef Vec<FnSymbol*> FnSymbolsVec;
-typedef std::set<Symbol*> SymbolSet;
 static SyncGraphVector gAnalysisRoots; // We will be creating multiple root for
                                    //  analyzing recursion and loops more
                                    // efficiently
-
 static SymbolSet gSyncVars;
-
-typedef std::set<SyncGraph*> SyncGraphSet;
-
-typedef std::map<Symbol*, SymbolState> SymbolStateMap;
-struct VisitedMap;
 static void updateSafeInfos(VisitedMap* prev, SyncGraphVector& visitedNodes, UseInfoSet& safeInfoset, UseInfoSet& visitedtUseInfo);
 static UseInfoVector gUseInfos;
 static FnSymbol* gFnSymbolRoot;
@@ -257,77 +252,152 @@ struct VisitedMap {
 
 struct std::vector<VisitedMap*> gListVisited;
 
-static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map);
+/******************************
+  Pre check Optimization
+******************************/
+static bool  ASTContainsBeginFunction(BaseAST* ast);
 
-static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
-  for_vector(VisitedMap, curVisited, gListVisited) {
-    if(curVisited->destPoints == dest && curVisited->symbolMap == map) {
-      return curVisited;
-    }
-  }
-  return NULL;
-}
 
-static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent);
-static void deleteSyncGraphNode(SyncGraph *node);
-static void cleanUpSyncGraph(SyncGraph *root);
-static void checkOrphanStackVar(SyncGraph *root);
-static SyncGraph* addChildNode(SyncGraph *cur, FnSymbol* fn);
-static SyncGraph* handleBlockStmt(BlockStmt* stmt, SyncGraph *cur);
-static SyncGraph* handleCondStmt(CondStmt* cond,SyncGraph* cur);
-static SyncGraph* handleDefExpr(DefExpr* def, SyncGraph *cur);
-static SyncGraph* handleExpr(Expr* expr, SyncGraph *cur);
-static SyncGraph* handleFunction(FnSymbol* fn, SyncGraph *cur);
-static SyncGraph* handleBegin(FnSymbol* fn, SyncGraph* cur);
-static SyncGraph* handleCallExpr(CallExpr* fn, SyncGraph* cur);
-static SyncGraph* handleSyncStatement(BlockStmt* block, SyncGraph* cur);
-static SyncGraph* handleLoopStmt(BlockStmt* block,SyncGraph* cur);
+/*****************************
+  Graph Generation Functions
+*****************************/
+static SyncGraphNode* handleBlockStmt(BlockStmt* stmt, SyncGraphNode *cur);
+static SyncGraphNode* handleCondStmt(CondStmt* cond,SyncGraphNode* cur);
+static SyncGraphNode* handleDefExpr(DefExpr* def, SyncGraphNode *cur);
+static SyncGraphNode* handleExpr(Expr* expr, SyncGraphNode *cur);
+static SyncGraphNode* handleFunction(FnSymbol* fn, SyncGraphNode *cur);
+static SyncGraphNode* handleBegin(FnSymbol* fn, SyncGraphNode* cur);
+static SyncGraphNode* handleCallExpr(CallExpr* fn, SyncGraphNode* cur);
+static SyncGraphNode* handleSyncStatement(BlockStmt* block, SyncGraphNode* cur);
+static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur);
+static SyncGraphNode* handleBranching(SyncGraphNode* start, SyncGraphNode* end,  SyncGraphNode* ifNode, SyncGraphNode* elseNode);
+
+static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraphNode* node) ;
+static Symbol* findBaseSymbol(Symbol* curSymbol);
 static bool isOuterVar(Symbol* sym, FnSymbol* fn);
-static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur);
-static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur);
+static void checkSyncedCalls(FnSymbol* fn);
+static SyncGraphNode* addSyncExprs(Expr *expr, SyncGraphNode *cur);
+static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur);
+static ArgSymbol*  getTheArgSymbol(Symbol * sym, FnSymbol* parent);
+
+
+/******************************
+  Graph building Functions
+******************************/
+static SyncGraphNode* addChildNode(SyncGraphNode *cur, FnSymbol* fn);
+static SyncGraphNode* addElseChildNode(SyncGraphNode *cur, FnSymbol *fn);
+
+
+/*******************************
+  Nested Function Expansion
+*******************************/
+static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* parent);
+static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode *endPoint);
+static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec &callStack, SyncGraphNode* stopPoint= NULL);
+
+
+/******************************
+  Graph Clean Up Functions
+******************************/
+static void deleteSyncGraphNode(SyncGraphNode *node);
+static void cleanUpSyncGraph(SyncGraphNode *root);
+static void  exit_pass();
+
+/*********************************
+  Graph Traversal Functions
+**********************************/
+static void checkOrphanStackVar(SyncGraphNode *root);
 static bool containsBeginFunction(FnSymbol* fn);
 static Scope* getOriginalScope(Symbol* sym);
-static ArgSymbol*  getTheArgSymbol(Symbol * sym, FnSymbol* parent);
-static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraph *cur);
+static BlockStmt* getSyncBlockStmt(BlockStmt* def, SyncGraphNode *cur);
 static bool isInsideSyncStmt(Expr* expr);
-static bool shouldSync(Scope* scope, SyncGraph* cur);
-static void checkSyncedCalls(FnSymbol* fn);
+static bool shouldSync(Scope* scope, SyncGraphNode* cur);
 static int compareScopes(Scope* a, Scope * b);
-static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn);
-static bool  refersExternalSymbols(Expr* expr, SyncGraph * cur);
-static bool  ASTContainsBeginFunction(BaseAST* ast);
-static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec &callStack, SyncGraph* stopPoint= NULL);
-static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph *endPoint);
-static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph* node) ;
-static void provideWarning(UseInfo* var);
+static bool  refersExternalSymbols(Expr* expr, SyncGraphNode * cur);
 //static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMap, SyncGraphSet& partialSet, UseInfoVec& useInfos);
-static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* ifNode, SyncGraph* elseNode);
 static bool threadedMahjong(void);
-static bool canVisitNext(SymbolStateMap& stateMap, SyncGraph* sourceSyncPoint);
+static bool canVisitNext(SymbolStateMap& stateMap, SyncGraphNode* sourceSyncPoint);
 static bool handleSingleSyncing(VisitedMap * curVisited);
-static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyVisited, SyncGraphVector& partialVisited, SyncGraphSet& partialSet, SymbolState newState);
+static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVector& newlyVisited,
+					  SyncGraphVector& partialVisited, SyncGraphSet& partialSet, SymbolState newState);
 static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisited, UseInfoSet& useInfos);
-static Symbol* findBaseSymbol(Symbol* curSymbol);
-static SyncGraph* getLastNode(SyncGraph* start);
+static SyncGraphNode* getLastNode(SyncGraphNode* start);
 static void checkNextSyncNode();
-static bool hasNextSyncPoint(SyncGraph * curNode);
-static bool isASyncPoint(SyncGraph* cur);
-static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints);
-static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraph* cur);
+static bool hasNextSyncPoint(SyncGraphNode * curNode);
+static bool isASyncPoint(SyncGraphNode* cur);
+static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filledSinglePoints);
+static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraphNode* cur);
+static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map);
+
+/**************************************
+  Reporting Errors
+**************************************/
+static void provideWarning(UseInfo* var);
+
+
+
 #ifdef CHPL_DOTGRAPH
-static void dotGraph(SyncGraph* root);
-static void digraph( SyncGraph* cur, std::string level);
+static void dotGraph(SyncGraphNode* root);
+static void digraph( SyncGraphNode* cur, std::string level);
 #endif
 /************** HEADER ENDS *******************/
 
+/*************** DEBUG HELPER
+The below code is useful for generating 
+DOT graph representations of 
+the CCFG. These are going to be useful 
+for debugging. To enable this we need to 
+uncomment #define CHPL_DOTGRAPH.
+*****************************/
+#ifdef CHPL_DOTGRAPH
+#include <fstream>
+#include <string>
+#include <sstream>
+
+
+/*********** HEADER *********************/
 
 #ifdef CHPL_DOTGRAPH
+std::string GraphNodeStatusStrings[] = {
+  "UNKNOWN", //NODE STATUS UNKNOWN
+  "SINGLE_WAIT_FULL",
+  "SYNC_SIGNAL_FULL",
+  "SYNC_SIGNAL_EMPTY",
+  "BLOCK_BEGIN", //A NEW BEGIN FUNCTION START HERE
+  "BLOCK_NESTED_FUNCTION", // A NEW FUNCTION NODE STARTS HERE
+  "START_LOOP",
+  "START_DOWHILE",
+  "START_WHILE",
+  "LOOP_END",
+  "START_IFELSE",
+  "END_IFELSE",
+  "NESTED_FUNCTION_CALL"
+};
+#endif
+
+
+
+#ifdef CHPL_DOTGRAPH
+
+
+namespace stringpatch
+{
+  template < typename T > std::string to_string( const T& n )
+  {
+    std::ostringstream stm ;
+    stm << n ;
+    return stm.str() ;
+  }
+}
+#endif
+
+
 //static int dotGraphCounter = 0;
 static std::ofstream outfile;
-//static void digraph(std::ofstream& outfile, SyncGraph* cur, std::string level) {
+//static void digraph(std::ofstream& outfile, SyncGraphNode* cur, std::string level) {
 
 
-static void digraph(SyncGraph* cur, std::string level) {
+static void digraph(SyncGraphNode* cur, std::string level) {
   std::string curSyncVar;
   if(cur->syncVar != NULL) {
    curSyncVar =  "node" + stringpatch::to_string(cur->__ID) +
@@ -382,7 +452,7 @@ static void digraph(SyncGraph* cur, std::string level) {
   }
 }
 
-static void dotGraph(SyncGraph* root) {
+static void dotGraph(SyncGraphNode* root) {
   std::ofstream outfile;
   //  outfile.open("dot"+ itoa(dotGraphCounter++)  +".dat");
   outfile.open("dot.dat");
@@ -397,11 +467,23 @@ static void dotGraph(SyncGraph* root) {
 }
 #endif
 
+
+static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
+  for_vector(VisitedMap, curVisited, gListVisited) {
+    if(curVisited->destPoints == dest && curVisited->symbolMap == map) {
+      return curVisited;
+    }
+  }
+  return NULL;
+}
+
+
+
 /*
-  This function frees SyncGraph Nodes recursively
+  This function frees SyncGraphNode Nodes recursively
 */
 
-static void deleteSyncGraphNode(SyncGraph *node) {
+static void deleteSyncGraphNode(SyncGraphNode *node) {
   if (node != NULL) {
     if(node->child != NULL && node->child->parent == node)
       deleteSyncGraphNode(node->child);
@@ -443,7 +525,7 @@ static Symbol* findBaseSymbol(Symbol* curSymbol) {
 /**
    Clean up the Data-Control Graph.
 **/
-static void cleanUpSyncGraph(SyncGraph *node) {
+static void cleanUpSyncGraph(SyncGraphNode *node) {
   for_vector(UseInfo, cur, gUseInfos) {
     delete(cur);
   }
@@ -466,7 +548,7 @@ static void  exit_pass() {
   // delete gUseInfos;
 }
 
-static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent) { 
+static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* parent) { 
   for_vector(UseInfo, curInfo, orig->extVarInfoVec) {
     if(isOuterVar (curInfo->symbol, parent)) {
       UseInfo* newUseInfo = new UseInfo(copy, copy->fnSymbol, curInfo->usePoint, curInfo->symbol);
@@ -485,37 +567,37 @@ static void copyUseInfoVec(SyncGraph *copy, SyncGraph* orig, FnSymbol* parent) {
    branch: node which is to be copied.
    endPoint : stop Copying once we reach this node. 
  **/
-static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPoint) {
+static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode* endPoint) {
   
   if(branch == NULL)
     return NULL;
-  SyncGraph* newNode = NULL;
+  SyncGraphNode* newNode = NULL;
   if(parent != NULL) {
     // copy info vec where our scope is determined by the parent
     // node
-    newNode = new SyncGraph(branch, parent->fnSymbol, false);
+    newNode = new SyncGraphNode(branch, parent->fnSymbol, false);
     copyUseInfoVec(newNode, branch, parent->fnSymbol);
   } else {
     // parent is NULL. means the first node of a
     // begin baranch. scope should be equivalent to the
     // node
-    newNode = new SyncGraph(branch, branch->fnSymbol, false);
+    newNode = new SyncGraphNode(branch, branch->fnSymbol, false);
     copyUseInfoVec(newNode, branch, branch->fnSymbol);
   }
  
   if(branch->child != NULL && branch->child != endPoint) {
-    SyncGraph* child = copyCFG(newNode, branch->child, endPoint);
+    SyncGraphNode* child = copyCFG(newNode, branch->child, endPoint);
     child->parent  = newNode;
     newNode->child = child;
   }
   if(branch->cChild != NULL) {
     endPoint =  branch->joinNode;
-    SyncGraph* child = copyCFG(newNode, branch->cChild, endPoint);
+    SyncGraphNode* child = copyCFG(newNode, branch->cChild, endPoint);
     child->parent  = newNode;
     newNode->cChild = child;
   }
   if(branch->fChild != NULL && branch->fChild->fnSymbol->hasFlag(FLAG_BEGIN)) {
-    SyncGraph* child = copyCFG(NULL, branch->fChild, NULL);
+    SyncGraphNode* child = copyCFG(NULL, branch->fChild, NULL);
     child->parent  = newNode;
     parent->fChild = child;
   }
@@ -526,8 +608,8 @@ static SyncGraph* copyCFG(SyncGraph* parent, SyncGraph* branch, SyncGraph* endPo
   returns The last node in the current strand of Graph
   start: repreosnts the start point
 */
-inline static SyncGraph* getLastNode(SyncGraph* start) {
-  SyncGraph* cur = start;
+inline static SyncGraphNode* getLastNode(SyncGraphNode* start) {
+  SyncGraphNode* cur = start;
   while(cur ->child != NULL) {
     cur = cur->child;
   }
@@ -538,7 +620,7 @@ inline static SyncGraph* getLastNode(SyncGraph* start) {
    curNode: Start point of search
    
  **/
-static bool hasNextSyncPoint(SyncGraph * curNode) {
+static bool hasNextSyncPoint(SyncGraphNode * curNode) {
   if(curNode == NULL)
     return false;
   if(isASyncPoint(curNode) == true)
@@ -550,8 +632,8 @@ static bool hasNextSyncPoint(SyncGraph * curNode) {
   return val;
 }
 
-static bool isPartofBeginBranch(SyncGraph* curNode) {
-  SyncGraph* parentNode = curNode;
+static bool isPartofBeginBranch(SyncGraphNode* curNode) {
+  SyncGraphNode* parentNode = curNode;
   while(parentNode != NULL) {
     if(parentNode->fnSymbol->hasFlag(FLAG_BEGIN))
       return true;
@@ -562,7 +644,7 @@ static bool isPartofBeginBranch(SyncGraph* curNode) {
 
 static void checkNextSyncNode() {
   for_vector(UseInfo, cur, gUseInfos) {
-    SyncGraph *curNode = cur->useNode;
+    SyncGraphNode *curNode = cur->useNode;
 #ifdef CHPL_DOTGRAPH
     std::cout<<"The use is in node id "<<cur->useNode->__ID<<std::endl;
 #endif
@@ -579,37 +661,37 @@ static void checkNextSyncNode() {
 
 
 /**
-   Expand all internal Function calls. A check has been introduced to avoid infinite loop
+   Expand all nested function calls. A check has been introduced to avoid infinite loop
    due to recursion.
-   root : start point of internal function expansion :
+   root : start point of nested function expansion :
    callStack: list of FnSymbols in the Graph
-   stopPoint (optional): We expand the internal Function until we reach this point.
+   stopPoint (optional): We expand the nested function until we reach this point.
                        default value is NULL.
 **/
-static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& callStack, SyncGraph* stopPoint) {
-  SyncGraph* cur = root;
+static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec& callStack, SyncGraphNode* stopPoint) {
+  SyncGraphNode* cur = root;
   while(cur != NULL) {
     if(cur == stopPoint)
       return;
     if(cur->intFuncCall != NULL && cur->expandedFn == false) {
       FnSymbol* curFun = cur->intFuncCall->theFnSymbol();
-      SyncGraph* intFuncNode = gFuncGraphMap.get(curFun);
+      SyncGraphNode* intFuncNode = gFuncGraphMap.get(curFun);
       if(intFuncNode != NULL && callStack.in(curFun) == NULL) {
-	//SyncGraph* parentNode = cur->parent;
+	//SyncGraphNode* parentNode = cur->parent;
 	int added = callStack.add_exclusive(curFun);
-	// expand all internal Functions recursively
+	// expand all nested functions recursively
 	if(added == 1) {
-	  expandAllInternalFunctions(intFuncNode, callStack, NULL);
+	  expandAllNestedFunctions(intFuncNode, callStack, NULL);
 	  FnSymbol* popped = callStack.pop();
 	  INT_ASSERT(popped == curFun);
 	}
 	INT_ASSERT(cur->cChild == NULL && cur->fChild == NULL);
-	SyncGraph *oldChild = cur->child;
-	SyncGraph* copy = copyCFG(cur, intFuncNode, NULL);
+	SyncGraphNode *oldChild = cur->child;
+	SyncGraphNode* copy = copyCFG(cur, intFuncNode, NULL);
 	/* update Pointers */
 	copy->parent = cur;
 	cur->child = copy;
-	SyncGraph* endPoint = getLastNode(copy);
+	SyncGraphNode* endPoint = getLastNode(copy);
 	INT_ASSERT(endPoint != NULL);
 	endPoint->child = oldChild;
 	oldChild->parent = endPoint;
@@ -619,10 +701,10 @@ static void expandAllInternalFunctions(SyncGraph* root, FnSymbolsVec& callStack,
       }
     }
     if(cur->cChild != NULL ) {
-      expandAllInternalFunctions(cur->cChild, callStack,cur->cChild->joinNode);
+      expandAllNestedFunctions(cur->cChild, callStack,cur->cChild->joinNode);
     }
     if(cur->fChild != NULL ) {
-      expandAllInternalFunctions(cur->fChild, callStack,stopPoint);
+      expandAllNestedFunctions(cur->fChild, callStack,stopPoint);
     }
     cur = cur->child;
   }
@@ -674,8 +756,8 @@ static int compareScopes(Scope* a, Scope* b) {
    that are created due to sync points
    and the ones that are created for embedded Functions.
 **/
-static SyncGraph* addChildNode(SyncGraph *cur, FnSymbol* fn) {
-  SyncGraph* childNode = new SyncGraph(fn);
+static SyncGraphNode* addChildNode(SyncGraphNode *cur, FnSymbol* fn) {
+  SyncGraphNode* childNode = new SyncGraphNode(fn);
   childNode->parent = cur;
   if (fn == cur->fnSymbol) {
     cur->child = childNode;
@@ -691,8 +773,8 @@ static SyncGraph* addChildNode(SyncGraph *cur, FnSymbol* fn) {
 /**
    Add Else child of a conditional Node.
 **/
-static SyncGraph* addElseChildNode(SyncGraph *cur, FnSymbol *fn) {
-  SyncGraph* childNode = new SyncGraph(fn);
+static SyncGraphNode* addElseChildNode(SyncGraphNode *cur, FnSymbol *fn) {
+  SyncGraphNode* childNode = new SyncGraphNode(fn);
   childNode->parent = cur;
   cur->cChild = childNode;
   childNode->syncedScopes.copy(cur->syncedScopes);
@@ -704,7 +786,7 @@ static void updateSafeInfos(VisitedMap* prev, SyncGraphVector& visitedNodes, Use
   bool flag = false;
   for_set(UseInfo, curUseInfo, prev->visitedInfoSet) {
     flag = false;
-    for_vector(SyncGraph, curNode, visitedNodes) {
+    for_vector(SyncGraphNode, curNode, visitedNodes) {
       FnSymbol *parentFn = curNode->fnSymbol;
       if(curUseInfo->fnSymbol == parentFn) {
 	flag = true;
@@ -737,7 +819,7 @@ static void updateSafeInfos(VisitedMap* prev, SyncGraphVector& visitedNodes, Use
    that reach readFE to sync with the write point of the single.
  
 **/
-static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
+static SyncGraphNode* addSyncExprs(Expr *expr, SyncGraphNode *cur) {
   std::vector<CallExpr*> callExprs;
   collectCallExprs(expr, callExprs);
   FnSymbol* curFun = expr->getFunction();
@@ -813,9 +895,9 @@ static SyncGraph* addSyncExprs(Expr *expr, SyncGraph *cur) {
 /**
    Checks if the node is a sync point. ALready filled single point needs to be skipped.
  **/
-static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSinglePoints) {
+static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filledSinglePoints) {
   if(isASyncPoint(cur)) {
-    for_set(SyncGraph, filledSingle, filledSinglePoints) {
+    for_set(SyncGraphNode, filledSingle, filledSinglePoints) {
       if(cur->syncVar == filledSingle->syncVar) {
 	//	checkUseInfoSafety(cur, visited);
 	/**
@@ -830,7 +912,7 @@ static bool isASyncPointSkippingSingles(SyncGraph* cur, SyncGraphSet& filledSing
   return false;
 }
 
-static bool isASyncPoint(SyncGraph * cur) {
+static bool isASyncPoint(SyncGraphNode * cur) {
   INT_ASSERT(cur != NULL);
   if(cur->syncType == NODE_SINGLE_WAIT_FULL ||
      cur->syncType == NODE_SYNC_SIGNAL_FULL ||
@@ -840,7 +922,7 @@ static bool isASyncPoint(SyncGraph * cur) {
   return false;
 }
 
-static bool canVisitNext(SymbolStateMap& stateMap, SyncGraph* sourceSyncPoint) {
+static bool canVisitNext(SymbolStateMap& stateMap, SyncGraphNode* sourceSyncPoint) {
   SymbolStateMap::iterator state = stateMap.find(sourceSyncPoint->syncVar);
   INT_ASSERT(state != stateMap.end());
   // cases  2 & 3
@@ -858,7 +940,7 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMa
   //  useInfos.insert(curVisited->useInfos.begin(), curVisited->useInfos.end());
   if(curVisited == NULL || partialSet.size() == 0)
     return;
-  for_set(SyncGraph, curNode, partialSet) {
+  for_set(SyncGraphNode, curNode, partialSet) {
     FnSymbol *parentFn = curNode->fnSymbol;
     bool safeUse  = false;
     if(canVisitNext(stateMap, curNode) == true) {
@@ -879,7 +961,7 @@ static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMa
 */
 
 static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisited, UseInfoSet& useInfos) {
-  for_vector(SyncGraph, visited, newlyVisited) {
+  for_vector(SyncGraphNode, visited, newlyVisited) {
     if(visited->extVarInfoVec.size() > 0)
       useInfos.insert(visited->extVarInfoVec.begin(), visited->extVarInfoVec.end());
 
@@ -887,7 +969,7 @@ static void collectUseInfos(VisitedMap* curVisited, SyncGraphVector& newlyVisite
 	std::cout<<"The collecting for node id "<<visited->__ID<<std::endl;
 #endif
   
-    SyncGraph* parent = visited->parent;
+    SyncGraphNode* parent = visited->parent;
     while(parent != NULL) {
       if(parent->extVarInfoVec.size() > 0) {
 	UseInfo* st= parent->extVarInfoVec.front();
@@ -927,7 +1009,7 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
   }
   
   unsigned int i = 0;
-  SyncGraph* cur;
+  SyncGraphNode* cur;
   
   while(i < partialVisited.size()) {
     cur = partialVisited.at(i);
@@ -1034,8 +1116,8 @@ static bool handleSingleSyncing(VisitedMap * curVisited) {
   SyncGraphSet destPoints = curVisited->destPoints;
   SyncGraphVector syncPoints;
  
-  for_set(SyncGraph, sourceSyncPoint, destPoints) {
-    for_set(SyncGraph, syncedSingles, curVisited->vSingles) {
+  for_set(SyncGraphNode, sourceSyncPoint, destPoints) {
+    for_set(SyncGraphNode, syncedSingles, curVisited->vSingles) {
       if(sourceSyncPoint->syncVar == syncedSingles->syncVar) {
 	syncPoints.push_back(sourceSyncPoint);
       }
@@ -1043,7 +1125,7 @@ static bool handleSingleSyncing(VisitedMap * curVisited) {
   }
   
   if( syncPoints.size() > 0) {
-    for_vector(SyncGraph, curSingle, syncPoints) {
+    for_vector(SyncGraphNode, curSingle, syncPoints) {
       destPoints.erase(curSingle);
     }
     collectAllAvailableSyncPoints(curVisited, syncPoints, syncPoints, destPoints,SYMBOL_STATE_FULL);
@@ -1068,7 +1150,7 @@ static bool threadedMahjong(void) {
     bool sucess = handleSingleSyncing(curVisited);
     if(!sucess) {
       SyncGraphSet destPoints = curVisited->destPoints;
-      for_set(SyncGraph, sourceSyncPoint, destPoints) {
+      for_set(SyncGraphNode, sourceSyncPoint, destPoints) {
 #ifdef CHPL_DOTGRAPH
 	std::cout<<"Node ID to visit "<<sourceSyncPoint->__ID<<std::endl;
 #endif
@@ -1093,8 +1175,8 @@ static bool threadedMahjong(void) {
 
 
 
-static void checkOrphanStackVar(SyncGraph* root) {
-  SyncGraph* startPoint = root;
+static void checkOrphanStackVar(SyncGraphNode* root) {
+  SyncGraphNode* startPoint = root;
   UseInfoSet useInfos;
   INT_ASSERT(startPoint->extVarInfoVec.size() == 0);
   checkNextSyncNode();
@@ -1219,7 +1301,7 @@ static Scope* getOriginalScope(Symbol* sym) {
    checks if the expression expr refers any external variables.
    if Yes add it to current list.
 **/
-static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
+static bool  refersExternalSymbols(Expr* expr, SyncGraphNode* cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
@@ -1237,7 +1319,7 @@ static bool  refersExternalSymbols(Expr* expr, SyncGraph* cur) {
 /**
    Add use of external variable details to 'node'.
 **/
-static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph* node) {
+static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraphNode* node) {
   if(compareScopes(fn->body,gFnSymbolRoot->body) != 1)
     fn = gFnSymbolRoot;
   /*
@@ -1257,7 +1339,7 @@ static void addExternVarDetails(FnSymbol* fn, Symbol* v, SymExpr* use, SyncGraph
    Add external Variables, begin Nodes, external function calls etc
    to 'cur'.
 **/
-static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
+static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
@@ -1289,7 +1371,7 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
     2. TODO : CalleeFn Should not have begin Fn If it has 
     (we will handle it separately)
     3. User defined Function 
-    4. Should be Internal Function
+    4. Should be Nested Function
     5. Callee should NOT be beyond any of the synced scopes.
     (If it is beyond a synced scope all external variables 
     accessed by the function will have the scope beyond the synced 
@@ -1300,7 +1382,7 @@ static SyncGraph* addSymbolsToGraph(Expr* expr, SyncGraph *cur) {
         && (calleeFn->getModule()->modTag == MOD_USER)
         && isFnSymbol(calleeFn->defPoint->parentSymbol)
 	 && isInsideAllSyncedScopes(calleeFn, cur) == true) {
-      // Non begin used mod function could be an internal function
+      // Non begin used mod function could be an nested function
       // Number of calls to embedded functions should not be more than 1.
       INT_ASSERT(cur->intFuncCall == NULL);
       /**
@@ -1356,7 +1438,7 @@ static void checkSyncedCalls(FnSymbol* fn) {
 /*
   Returns the block statment that is protected by the sync statement.
 */
-static BlockStmt* getSyncBlockStmt(BlockStmt* block, SyncGraph *cur) {
+static BlockStmt* getSyncBlockStmt(BlockStmt* block, SyncGraphNode *cur) {
   for_alist (node, block->body) {
     if(isCallExpr(node)) {
       if(toCallExpr(node)->isPrimitive(PRIM_SET_END_COUNT)) {
@@ -1375,7 +1457,7 @@ static BlockStmt* getSyncBlockStmt(BlockStmt* block, SyncGraph *cur) {
 
    False means use of the external variable is safe.
 **/
-static bool shouldSync(Scope* block, SyncGraph *cur) {
+static bool shouldSync(Scope* block, SyncGraphNode *cur) {
   if(block == NULL ||  gAllCallsSynced == true) {
     return false;
   }
@@ -1388,7 +1470,7 @@ static bool shouldSync(Scope* block, SyncGraph *cur) {
   return true;
 }
 
-static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraph* cur) {
+static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraphNode* cur) {
   Scope* block = calleeFn->body;
   if(cur->syncedScopes.size() > 0) {
     forv_Vec(Scope, syncedScope, cur->syncedScopes) {
@@ -1407,7 +1489,7 @@ static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraph* cur) {
    we collect information about sync points, external variable use and
    begin statements.
 **/
-static SyncGraph* handleSyncStatement(Scope* block, SyncGraph* cur) {
+static SyncGraphNode* handleSyncStatement(Scope* block, SyncGraphNode* cur) {
   cur = addChildNode(cur,cur->fnSymbol);
   cur->syncedScopes.add(block);
   cur = handleBlockStmt(block,cur);
@@ -1416,7 +1498,7 @@ static SyncGraph* handleSyncStatement(Scope* block, SyncGraph* cur) {
   return cur;
 }
 
-static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* ifNode, SyncGraph* elseNode) {
+static SyncGraphNode* handleBranching(SyncGraphNode* start, SyncGraphNode* end,  SyncGraphNode* ifNode, SyncGraphNode* elseNode) {
   elseNode->child = end;
   start->joinNode = end;
   // end->isjoinNode = true;
@@ -1425,14 +1507,14 @@ static SyncGraph* handleBranching(SyncGraph* start, SyncGraph* end,  SyncGraph* 
   return end;
 }
 
-static SyncGraph* handleCondStmt(CondStmt* cond, SyncGraph* cur) {
+static SyncGraphNode* handleCondStmt(CondStmt* cond, SyncGraphNode* cur) {
   BlockStmt* thenBlock = cond->thenStmt;
   BlockStmt* elseBlock = cond->elseStmt;
-  SyncGraph* startBranch = cur;
+  SyncGraphNode* startBranch = cur;
   cur = addChildNode(cur, cur->fnSymbol);
-  SyncGraph* ifNode = handleBlockStmt(thenBlock,cur);
-  SyncGraph* endBranch  = addChildNode(ifNode, ifNode->fnSymbol);
-  SyncGraph* elseNode = addElseChildNode(startBranch, startBranch->fnSymbol);
+  SyncGraphNode* ifNode = handleBlockStmt(thenBlock,cur);
+  SyncGraphNode* endBranch  = addChildNode(ifNode, ifNode->fnSymbol);
+  SyncGraphNode* elseNode = addElseChildNode(startBranch, startBranch->fnSymbol);
   if(elseBlock != NULL) {
     if( ASTContainsBeginFunction(elseBlock) ||
 	refersExternalSymbols(elseBlock, startBranch) ) {
@@ -1443,7 +1525,7 @@ static SyncGraph* handleCondStmt(CondStmt* cond, SyncGraph* cur) {
   return endBranch;
 }
 
-static SyncGraph* handleLoopStmt(BlockStmt* block,SyncGraph* cur) {
+static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
   // TODO
   if(ASTContainsBeginFunction(block) == true || refersExternalSymbols(block, cur)) {
     for_alist (node, block->body) {
@@ -1453,7 +1535,7 @@ static SyncGraph* handleLoopStmt(BlockStmt* block,SyncGraph* cur) {
   return cur;
 }
 
-static SyncGraph* handleDefExpr(DefExpr* def, SyncGraph *cur) {
+static SyncGraphNode* handleDefExpr(DefExpr* def, SyncGraphNode *cur) {
   if (isFnSymbol(def->sym)) {
     FnSymbol* fn = toFnSymbol(def->sym);
     if (fn->hasFlag(FLAG_BEGIN)) {
@@ -1461,7 +1543,7 @@ static SyncGraph* handleDefExpr(DefExpr* def, SyncGraph *cur) {
       cur->syncType = NODE_BLOCK_BEGIN;
     } else {
       handleFunction(fn, cur);
-      cur->syncType = NODE_BLOCK_INTERNAL_FUNCTION;
+      cur->syncType = NODE_BLOCK_NESTED_FUNCTION;
     }
     INT_ASSERT(fn != def->getFunction());
     //    INT_ASSERT(cur->fnSymbol == def->getFunction());
@@ -1475,7 +1557,7 @@ static SyncGraph* handleDefExpr(DefExpr* def, SyncGraph *cur) {
 
 
 
-static SyncGraph* handleBlockStmt(BlockStmt* stmt, SyncGraph *cur) {
+static SyncGraphNode* handleBlockStmt(BlockStmt* stmt, SyncGraphNode *cur) {
   if(stmt->body.length == 0)
     return cur;
   bool handled = false;
@@ -1519,7 +1601,7 @@ static SyncGraph* handleBlockStmt(BlockStmt* stmt, SyncGraph *cur) {
   return cur;
 }
 
-static SyncGraph* handleCallExpr(CallExpr* callExpr, SyncGraph *cur) {
+static SyncGraphNode* handleCallExpr(CallExpr* callExpr, SyncGraphNode *cur) {
   if (callExpr->isNamed("begin_fn")) {
     //   Auto created call no need to add.
   } else {
@@ -1528,7 +1610,7 @@ static SyncGraph* handleCallExpr(CallExpr* callExpr, SyncGraph *cur) {
   return cur;
 }
 
-static SyncGraph* handleExpr(Expr* expr, SyncGraph *cur){
+static SyncGraphNode* handleExpr(Expr* expr, SyncGraphNode *cur){
   if (NamedExpr* named = toNamedExpr(expr)) {
     cur = handleExpr(named->actual, cur);
   } else if (DefExpr* def = toDefExpr(expr)) {
@@ -1546,20 +1628,20 @@ static SyncGraph* handleExpr(Expr* expr, SyncGraph *cur){
 }
 
 
-static SyncGraph* handleBegin(FnSymbol* fn, SyncGraph* cur) {
-  SyncGraph* childNode = addChildNode(cur, fn);
+static SyncGraphNode* handleBegin(FnSymbol* fn, SyncGraphNode* cur) {
+  SyncGraphNode* childNode = addChildNode(cur, fn);
   gFuncGraphMap.put(fn,childNode);
   handleBlockStmt(fn->body, childNode);
   return cur;
 }
 
-static SyncGraph* handleFunction(FnSymbol* fn, SyncGraph *cur) {
-  SyncGraph* newNode = NULL;
+static SyncGraphNode* handleFunction(FnSymbol* fn, SyncGraphNode *cur) {
+  SyncGraphNode* newNode = NULL;
   if (cur == NULL) {
-    newNode = cur  = new SyncGraph(fn);
+    newNode = cur  = new SyncGraphNode(fn);
     gAnalysisRoots.push_back(newNode);
   } else {
-    // Internal Function node.
+    // Nested Function node.
     newNode = addChildNode(cur, fn);
   }
   gFuncGraphMap.put(fn,newNode);
@@ -1636,10 +1718,10 @@ void checkUseAfterLexScope() {
 #endif
     gFnSymbolRoot = fn;
     checkSyncedCalls(fn);
-    SyncGraph* syncGraphRoot = handleFunction(fn, NULL);
+    SyncGraphNode* syncGraphRoot = handleFunction(fn, NULL);
     FnSymbolsVec callStack;
     callStack.add(fn);
-    expandAllInternalFunctions(syncGraphRoot, callStack, NULL);
+    expandAllNestedFunctions(syncGraphRoot, callStack, NULL);
 #ifdef CHPL_DOTGRAPH
     dotGraph(syncGraphRoot);
 #endif
