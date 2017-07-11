@@ -1118,7 +1118,7 @@ static void provideWarning(UseInfo* var) {
   if(! var->isChecked() ) {
     var->setChecked();
     USR_WARN(var->usePoint,
-	     "Potential unsafe (use after free) use of variable %s here. Please make sure the variable use is properly synced.",
+	     "USEAFTERFREE Potential unsafe (use after free) use of variable %s here. Please make sure the variable use is properly synced.",
 	     var->symbol->name);
   }
 }
