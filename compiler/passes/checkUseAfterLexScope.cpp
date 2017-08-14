@@ -1,6 +1,6 @@
 /**************************************************
-  Author: Jyothi Krishna V S (jkrishnavs@gmail.com)
-
+  Authors: Jyothi Krishna V S (jkrishnavs@gmail.com)
+           Vassily Litvinov (vass@cray.com)
   The file explains a pass for Chapel compilers
  to identify use-after-free variables in Chapel.
   Research papers and presentations related to this file:
@@ -11,10 +11,46 @@
 
 
 The overall flow of the algorithm is as follows.
-a. Generation of CCFG.
-b. Expand Nested Functions.
-b. CCFG graph traversal. PPS generations
+a. Generation of CCFG: 
+A CCFG is similar to our normal CFG,  with an additional type of edge
+which represents the creation of a parallel begin task. The edge also
+captures a partial happens-before relationship between the begin tasks
+and the parent task. i.e. all Nodes (and contained operations) in the 
+parent task (say P) from root to the node which is the source of 
+begin edge (say S) happens before the first node of the begin task, which
+is the destination of the begin edge (say D).
+
+Graphically consider the following simple CCFG. Each node in the
+data structure is represented using SyncGraphNode data structure. 
+
+            R
+            |
+            A
+            |
+            S
+            |\
+            B D
+
+Nodes R, A, S all happens before Node D. Whereas we cannot defintly say
+anything about nodes B and D.
+        
+
+b. Expand Nested Functions:
+Expanding the nested functions are improtant as root task variables (outer variables)
+can be accessed by the begin tasks without any parameter passing by calling
+one of the nested tasks (nested inside the root task, but not the begin task).
+
+b. CCFG graph traversal. PPS generations:
+PPS are superset of potential Partial program states 
+(execution order of Nodes, represnted using VisitedMap data structure) 
+that are possible at runtime. 
+If any of the PPS points to a potential Use-After-Free variables
+we report an error.
+
+
 c. Reporting Unsafe uses of outer variables.
+Once the unsafe variables are identified these are reported to the programmers.
+
 ***************************************************/
 
 #include "passes.h"
