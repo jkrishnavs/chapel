@@ -951,7 +951,9 @@ static SyncGraphNode* addChildNode(SyncGraphNode *cur, FnSymbol* fn, GraphNodeSt
   SyncGraphNode* childNode = NULL;
   if(status == CREATE_BRANCH_NODE) {
     childNode = new SyncGraphBranchNode(fn);
-  } else  if(status == CREATE_LOOP_NODE) {
+  } else  if(status == CREATE_FUNCTION_NODE) {
+    childNode = new SyncGraphFunctionNode(fn);
+  } else if(status == CREATE_LOOP_NODE) {
     childNode = new SyncGraphLoopNode(fn);
   } else {
    childNode = new SyncGraphNode(fn);
@@ -1765,6 +1767,7 @@ static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
 static SyncGraphNode* handleDefExpr(DefExpr* def, SyncGraphNode *cur) {
   if (isFnSymbol(def->sym)) {
     FnSymbol* fn = toFnSymbol(def->sym);
+    cur = addChildNode(cur,cur->fnSymbol, CREATE_FUNCTION_NODE);
     SyncGraphFunctionNode* curFn = getFunctionNode(cur); 
     INT_ASSERT(curFn != NULL);
     if (fn->hasFlag(FLAG_BEGIN)) {
