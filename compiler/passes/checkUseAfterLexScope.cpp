@@ -218,28 +218,70 @@ struct SyncGraphFunctionNode: SyncGraphNode {
   
 
 
-// This bound start and end of loop. 
+// This bound start and end of loop.
+/*
+  We divide the Loops into Two Types :
+  headed loops : For and while where the conditional check is at the start
+  tailed loop : 
+ */
 struct SyncGraphLoopNode: SyncGraphNode {
-  SyncGraphNode* jParent; // The second parent. Since we create a
+  SyncGraphNode* lParent; // The second parent. Since we create a
   // join node for each branch we will have only two parents at a time
-  SymExpr *bound;
-  SyncGraphNode* cChild; // The second Child.
-  //
-  //
+  SymExpr *cond;
+  SymExpr *start;
+  bool headedLoop;
+  SyncGraphNode* lChild; // The loop Child.
+
+  SyncGraphNode* getlParent() {
+    return lParent;
+  }
+  void setlParent(SyncGraphNode* p) {
+    lParent = p;
+  }
+
+  SyncGraphNode* getlChild() {
+    return lChild;
+  }
+  void setlChild(SyncGraphNode* c) {
+    lChild = c;
+  }
+
+  
+  void setStart(SymExpr* s) {
+    start = s;
+  }
+  SymExpr* getStart() {
+    return start;
+  }
+
+  void setCond(SymExpr* c) {
+    cond = c;
+  }
+  SymExpr* getCond() {
+    return cond;
+  }
+
+  
   SyncGraphLoopNode(FnSymbol *f):SyncGraphNode(f){
-    jParent = NULL;
-    cChild = NULL;
+    lParent = NULL;
+    lChild = NULL;
+    start = NULL;
+    cond = NULL;
+    headedLoop = false;
   }
   SyncGraphLoopNode(SyncGraphNode *i, FnSymbol*f,   bool copy):SyncGraphNode(i,f, copy) {
-    jParent = NULL;
-    cChild = NULL;
-    bound = NULL;
+    lParent = NULL;
+    lChild = NULL;
+    start = NULL;
+    cond = NULL;
+    headedLoop = false;
   }
-
-  void SetBound(SymExpr* b){
-    bound = b;
+  void setHeadedLoop(bool h) {
+    headedLoop = h;
   }
-
+  bool getHeadedLoop() {
+    return headedLoop;
+  }  
   ~SyncGraphLoopNode(){}
 }; 
 
@@ -451,6 +493,7 @@ static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filled
 static bool isInsideAllSyncedScopes(FnSymbol* calleeFn, SyncGraphNode* cur);
 static bool isPartofBeginBranch(SyncGraphNode* curNode);
 
+static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoopNode head2, Scope parentScope);
 
 
 /**************************************
@@ -625,6 +668,7 @@ static void deleteSyncGraphNode(SyncGraphNode *node) {
     SyncGraphBranchNode* b = getBranchNode(node);
     if(b != NULL)
       deleteSyncGraphNode(b->cChild);
+
 
     // TODO do for loop Node as well
     
@@ -1108,6 +1152,13 @@ static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filled
   }
   return false;
 }
+
+static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoopNode head2, Scope parentScope) {
+  // TODO
+  
+  return true;
+}
+
 
 static bool isASyncPoint(SyncGraphNode * cur) {
   INT_ASSERT(cur != NULL);
