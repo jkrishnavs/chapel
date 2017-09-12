@@ -221,12 +221,16 @@ struct SyncGraphFunctionNode: SyncGraphNode {
 // This bound start and end of loop.
 /*
   We divide the Loops into Two Types :
-  headed loops : For and while where the conditional check is at the start
+  headed loops : For and while where the conditional 
+  check is at the start
   tailed loop : 
  */
 struct SyncGraphLoopNode: SyncGraphNode {
-  SyncGraphNode* lParent; // The second parent. Since we create a
-  // join node for each branch we will have only two parents at a time
+  /* 
+   * The second parent. Since we create a  join node for each 
+   * branch we will have only two parents at a time
+   */
+  SyncGraphNode* lParent;
   SymExpr *cond;
   SymExpr *start;
   bool headedLoop;
@@ -279,7 +283,7 @@ struct SyncGraphLoopNode: SyncGraphNode {
   void setHeadedLoop(bool h) {
     headedLoop = h;
   }
-  bool getHeadedLoop() {
+  bool isHeadedLoop() {
     return headedLoop;
   }  
   ~SyncGraphLoopNode(){}
@@ -460,7 +464,7 @@ static SyncGraphNode* addElseChildNode(SyncGraphBranchNode *cur, FnSymbol *fn);
 static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* parent);
 static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode *endPoint);
 static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec &callStack, SyncGraphNode* stopPoint= NULL);
-
+static bool refersToInternalFunctionCalls(BlockStmt* block);
 
 /******************************
   Graph Clean Up Functions
@@ -642,7 +646,8 @@ static void dotGraph(SyncGraphNode* root) {
 
 
 
- // Check if The PPS is already present in the queue. If already presnt we just megre 
+
+// Check if The PPS is already present in the queue. If already present we just megre 
  // the new PPS to this.
 static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
   for_vector(VisitedMap, curVisited, gListVisited) {
@@ -652,6 +657,34 @@ static VisitedMap* alreadyVisited(SyncGraphSet& dest, SymbolStateMap& map) {
   }
   return NULL;
 }
+
+
+/**
+ We are matching the Equivalent loops that contain the FILL and EMPTY
+operations on the same variable.
+Once a perfect matching is found we remove both the loops
+from our eveluation tree.
+Assumption:If there exists a path with a matching and opposite loops,
+where a variable access is "dangerous" there will be a path where 
+the variable access is dangerous without considering both the loops.
+ **/
+static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoopNode head2, Scope parentScope) {
+   // TODO
+  /**
+   * The loops are assumed to be equivalent if 
+   * starting condition: Should be representing the same 
+   constant value over the parent scope.
+   * ending condition: Should be representing the same 
+   constant value over the parent scope.
+   * increment: equivalent increment
+   **/
+
+
+  
+  return false;
+  //   return true;
+}
+
 
 
 
@@ -668,8 +701,7 @@ static void deleteSyncGraphNode(SyncGraphNode *node) {
     SyncGraphBranchNode* b = getBranchNode(node);
     if(b != NULL)
       deleteSyncGraphNode(b->cChild);
-
-
+    
     // TODO do for loop Node as well
     
     delete node;
@@ -748,7 +780,7 @@ static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* p
 
 
 static SyncGraphNode* getRightTypeofNode(SyncGraphNode* orig, FnSymbol* fn, bool flag) {
-  // TODO We can use base class "SyncgraphNode" for SyncgraphFunctionNode
+  // TODO We can use base class "SyncGraphNode" for SyncGraphFunctionNode
   // if the function attached is not begin node
 
   SyncGraphBranchNode* branch = getBranchNode(orig);
@@ -817,6 +849,15 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
   }
 
   // TODO for Loop Node
+
+  SyncGraphLoop Node loopNode = getLoopNode(branch);
+  if(loopNode != NULL) {
+    if(loopNode.isHeadedLoop() ==true) {
+      
+    } else {
+
+    }
+  } 
   
   return newNode;
 }
@@ -1151,12 +1192,6 @@ static bool isASyncPointSkippingSingles(SyncGraphNode* cur, SyncGraphSet& filled
     return true;
   }
   return false;
-}
-
-static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoopNode head2, Scope parentScope) {
-  // TODO
-  
-  return true;
 }
 
 
@@ -1800,19 +1835,30 @@ static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
     three conditions
     1. If the loop doesnot contain any begin functions.
     2. If the loop doesnot refer to any of the outer variables.
-    3. If the loop doesnot contain any operations on A sync or single 
+    3. If the loop doesnot contain any operations on A sync or single
     or atomic variables
+    4. Or does not refers to internal function calls.
    */
 
   
   
-  if(ASTContainsBeginFunction(block) == true || refersOuterSymbols(block, cur)
-     ||  refersToASyncSingleorAtomicVariable(block)) {
+  if(ASTContainsBeginFunction(block) == true    ||
+     refersOuterSymbols(block, cur)             ||
+     refersToASyncSingleorAtomicVariable(block) ||
+     refersToInternalFunctionCalls(block)) {
     for_alist (node, block->body) {
       cur = handleExpr(node, cur);
     }
   }
   return cur;
+}
+
+
+static bool refersToInternalFunctionCalls(BlockStmt* block) {
+  // TODO
+  
+  
+  return false;
 }
 
 static SyncGraphNode* handleDefExpr(DefExpr* def, SyncGraphNode *cur) {
