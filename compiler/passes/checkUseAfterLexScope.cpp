@@ -215,7 +215,12 @@ struct SyncGraphFunctionNode: SyncGraphNode {
   ~SyncGraphFunctionNode(){}
 };
 
-  
+
+enum LoopType {
+  FORLOOP,
+  WHILELOOP,
+  DOWHILELOOP
+};
 
 
 // This bound start and end of loop.
@@ -223,18 +228,58 @@ struct SyncGraphFunctionNode: SyncGraphNode {
   We divide the Loops into Two Types :
   headed loops : For and while where the conditional 
   check is at the start
-  tailed loop : 
- */
+  tailed loop : do-While Loops
+
+  The CFG stucture for Headed loop
+  
+  |
+  CC_
+  |\  \
+  . LB \
+  .  \  \
+  .   EL-
+
+ THE CFG structure of a non headed loop
+
+  SL-
+  |  |
+  LB |
+  |  |
+  CC-|
+  .
+  .
+  .
+
+Where,
+CC stands for Condition Check
+LB stands for loop body
+EL stands for end of loop
+and 
+SL stands for Start of the loop  
+... stands for the continuation of the program  
+after the loop.
+
+*/
 struct SyncGraphLoopNode: SyncGraphNode {
   /* 
    * The second parent. Since we create a  join node for each 
-   * branch we will have only two parents at a time
+   * branch we will have atmax two parents at a time
    */
   SyncGraphNode* lParent;
+  SyncGraphNode* lChild; // The loop Child.
+
+  /**
+     For headed Loop: 
+     lParent will point towards  EL node.
+     lChild will point towards LB start node 
+     
+     For non headed Loop:
+     lChild will point towards SL node 
+     lParent should be NULL.
+   **/
   SymExpr *cond;
   SymExpr *start;
-  bool headedLoop;
-  SyncGraphNode* lChild; // The loop Child.
+  LoopType loopType;
 
   SyncGraphNode* getlParent() {
     return lParent;
@@ -271,20 +316,24 @@ struct SyncGraphLoopNode: SyncGraphNode {
     lChild = NULL;
     start = NULL;
     cond = NULL;
-    headedLoop = false;
   }
   SyncGraphLoopNode(SyncGraphNode *i, FnSymbol*f,   bool copy):SyncGraphNode(i,f, copy) {
     lParent = NULL;
     lChild = NULL;
     start = NULL;
     cond = NULL;
-    headedLoop = false;
   }
-  void setHeadedLoop(bool h) {
-    headedLoop = h;
+
+  void setLoopType(LoopType t) {
+    loopType = t;
   }
+
+  LoopType getLoopType() {
+    return loopType;
+  }
+  
   bool isHeadedLoop() {
-    return headedLoop;
+    return (loopType == FORLOOP || loopType == WHILELOOP);
   }  
   ~SyncGraphLoopNode(){}
 }; 
@@ -576,7 +625,6 @@ static void digraph(SyncGraphNode* cur, std::string level) {
   } else {
     curSyncVar =  "node" + stringpatch::to_string(cur->__ID);
   }
-  // + "_" + GraphNodeStatusStrings[cur->syncType];
   if(cur->child != NULL) {
     std::string nextSyncVar;
     if(cur->child->syncVar != NULL) {
@@ -585,10 +633,10 @@ static void digraph(SyncGraphNode* cur, std::string level) {
     } else {
       nextSyncVar = "node" + stringpatch::to_string(cur->child->__ID);
     }
-    // outfile << curSyncVar << " -> " << nextSyncVar << "[label=ch]\n";
+   
     std::cout << curSyncVar << " -> " << nextSyncVar << "[label=ch] \n";
-    //    digraph(outfile, cur->child, level+ "O");
-    digraph(cur->child, level+ "O");
+    if(cur->child->parent ==  cur)
+      digraph(cur->child, level+ "O");
   }
 
   if(SyncGraphBranchNode* ccur = dynamic_cast<SyncGraphBranchNode*>(cur)) {
@@ -600,14 +648,25 @@ static void digraph(SyncGraphNode* cur, std::string level) {
       } else {
 	nextSyncVar = "node" + stringpatch::to_string(ccur->cChild->__ID);
       }
-      // outfile << curSyncVar << " -> " << nextSyncVar << "[label=cc]\n";
+   
       std::cout << curSyncVar << " -> " << nextSyncVar << "[label=cc]\n";
-      //digraph(outfile, cur->cChild, level+ "C");
       digraph(ccur->cChild, level+ "C");
     }
   }
 
-  // TODO ADD FOR LOOP NOde
+  if(SyncGraphLoopNode* lcur = dynamic_cast<SyncGraphLoopNode*>(cur)){
+    if(lcur->isHeadedLoop()) {
+      
+      // loop end not defined yet
+      //INT_ASSERT()
+      // TODO
+    } else {
+      //assert()
+      // TODO
+    }
+
+  }
+
   
   if(SyncGraphFunctionNode* fcur = dynamic_cast<SyncGraphFunctionNode*>(cur)){
     if(fcur->fChild != NULL) {
@@ -678,8 +737,9 @@ static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoop
    constant value over the parent scope.
    * increment: equivalent increment
    **/
-
-
+  if(head1->getLoopType() != head2->getLoopType())
+    return false;
+  
   
   return false;
   //   return true;
@@ -701,8 +761,12 @@ static void deleteSyncGraphNode(SyncGraphNode *node) {
     SyncGraphBranchNode* b = getBranchNode(node);
     if(b != NULL)
       deleteSyncGraphNode(b->cChild);
-    
-    // TODO do for loop Node as well
+
+    SyncGraphLoopNode * loopNode = getLoopNode(node);
+    if(loopNode != NULL && loopNode->isHeadedLoop()) {
+      INT_ASSERT(loopNode->lChild != NULL);
+      deleteSyncGraphNode(loopNode->lChild);
+    }
     
     delete node;
   }
@@ -780,7 +844,6 @@ static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* p
 
 
 static SyncGraphNode* getRightTypeofNode(SyncGraphNode* orig, FnSymbol* fn, bool flag) {
-  // TODO We can use base class "SyncGraphNode" for SyncGraphFunctionNode
   // if the function attached is not begin node
 
   SyncGraphBranchNode* branch = getBranchNode(orig);
@@ -800,11 +863,15 @@ static SyncGraphNode* getRightTypeofNode(SyncGraphNode* orig, FnSymbol* fn, bool
 // if endPoint is not null we make copy until the endPoint.
 // parent: parent node of newly generated Copy Node
 // branch: node which is to be copied.
-// endPoint : stop Copying once we reach this node. 
+// endPoint : stop Copying once we reach this node.
+// The end Point should be include in the new copy.
+// but should not go beyond this point even if tehy have childrens.
 static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode* endPoint) {
   
   if(branch == NULL)
     return NULL;
+
+  
   SyncGraphNode* newNode = NULL;
   if(parent != NULL) {
     // copy info vec where our scope is determined by the parent
@@ -819,18 +886,35 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
     newNode = getRightTypeofNode(branch, branch->fnSymbol, false);
     copyUseInfoVec(newNode, branch, branch->fnSymbol);
   }
+
+  if(branch == endPoint)
+    return newNode;
+
+  /** recursive copy start **/
+
  
-  if(branch->child != NULL && branch->child != endPoint) {
+  if(branch->child != NULL) {
     SyncGraphNode* child = copyCFG(newNode, branch->child, endPoint);
     child->parent  = newNode;
     newNode->child = child;
   }
-  
+
 
   SyncGraphBranchNode* bBranch = getBranchNode(branch);  
   
   if(bBranch!= NULL && bBranch->cChild != NULL) {
-    endPoint =  bBranch->joinNode;
+    INT_ASSERT(bBranch->joinNode != NULL);
+    /**
+     * Find end point. The end point would be the node 
+     * connected to the join Node
+     *
+     */
+    SyncGraphNode* joinNode =  bBranch->joinNode;
+    endPoint = bBranch->cChild;
+    while(endPoint->child != joinNode) {
+      endPoint = endPoint->child;
+    }
+    INT_ASSERT(endPoint != NULL);
     SyncGraphNode* child = copyCFG(newNode, bBranch->cChild, endPoint);
     child->parent  = newNode;
     SyncGraphBranchNode* newBranch = getBranchNode(newNode);
@@ -848,14 +932,21 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
     functionParent->fChild = child;
   }
 
-  // TODO for Loop Node
 
-  SyncGraphLoop Node loopNode = getLoopNode(branch);
+  SyncGraphLoopNode* loopNode = getLoopNode(branch);
   if(loopNode != NULL) {
-    if(loopNode.isHeadedLoop() ==true) {
+    if(loopNode->isHeadedLoop() ==true) {
+      /**
+       * TODO
+       * We need to make a copy of the entire loop.
+       **/
+      INT_ASSERT(loopNode->lChild != NULL);
       
     } else {
-
+      /**
+       * TODO
+       * Tailed loop just add the backedge.
+       **/
     }
   } 
   
