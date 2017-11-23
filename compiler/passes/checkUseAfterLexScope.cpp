@@ -219,7 +219,8 @@ struct SyncGraphFunctionNode: SyncGraphNode {
 enum LoopType {
   FORLOOP,
   WHILELOOP,
-  DOWHILELOOP
+  DOWHILELOOP,
+  WHILEDO
 };
 
 
@@ -274,6 +275,12 @@ struct SyncGraphLoopNode: SyncGraphNode {
      lChild will point towards LB start node 
      
      For non headed Loop:
+     We will have two SyncGraphLoopNodes one at the start of the loop
+     Where,
+     lParent is the end Node of the loop and
+     lChild is NULL
+
+     and one at the end of the loop where,
      lChild will point towards SL node 
      lParent should be NULL.
    **/
@@ -333,7 +340,7 @@ struct SyncGraphLoopNode: SyncGraphNode {
   }
   
   bool isHeadedLoop() {
-    return (loopType == FORLOOP || loopType == WHILELOOP);
+    return (loopType == FORLOOP || loopType == WHILELOOP || loopType== WHILEDOLOOP);
   }  
   ~SyncGraphLoopNode(){}
 }; 
@@ -865,7 +872,7 @@ static SyncGraphNode* getRightTypeofNode(SyncGraphNode* orig, FnSymbol* fn, bool
 // branch: node which is to be copied.
 // endPoint : stop Copying once we reach this node.
 // The end Point should be include in the new copy.
-// but should not go beyond this point even if tehy have childrens.
+// but should not go beyond this point even if they have childrens.
 static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode* endPoint) {
   
   if(branch == NULL)
@@ -887,24 +894,22 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
     copyUseInfoVec(newNode, branch, branch->fnSymbol);
   }
 
+  /***
+   * IMPORTANT : We are updating the value of endPoint beyond this 
+   * code several times since we doesn't use to original value 
+   * of the endPoint. Please be careful while updating endPoint.
+   ***/
   if(branch == endPoint)
     return newNode;
 
   /** recursive copy start **/
-
- 
-  if(branch->child != NULL) {
-    SyncGraphNode* child = copyCFG(newNode, branch->child, endPoint);
-    child->parent  = newNode;
-    newNode->child = child;
-  }
-
 
   SyncGraphBranchNode* bBranch = getBranchNode(branch);  
   
   if(bBranch!= NULL && bBranch->cChild != NULL) {
     INT_ASSERT(bBranch->joinNode != NULL);
     /**
+     * Copy Else branch first.
      * Find end point. The end point would be the node 
      * connected to the join Node
      *
@@ -915,12 +920,99 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
       endPoint = endPoint->child;
     }
     INT_ASSERT(endPoint != NULL);
-    SyncGraphNode* child = copyCFG(newNode, bBranch->cChild, endPoint);
-    child->parent  = newNode;
+    SyncGraphNode* cChild = copyCFG(newNode, bBranch->cChild, endPoint);
+    cChild->parent  = newNode;
     SyncGraphBranchNode* newBranch = getBranchNode(newNode);
     INT_ASSERT(newBranch != NULL);
-    newBranch->cChild = child;
+    newBranch->cChild = cChild;
+
+    /***
+     * Now copy the if branch until the joinNode
+     * Why we do this:
+     * This gives us the idea of the join Node in the new if else
+     * branch and thus helping us to maintain the information
+     * in the new setup. 
+     **/
+    endPoint = bBranch->joinNode;
+    SyncGraphNode* child = copyCFG(newNode, bBranch->child, endPoint);
+    child->parent = newNode;
+    newNode->child = child;
+
+    /*Update Join Information*/
+    SyncGraphNode* newJoinNode = child;
+    while(newJoinNode->child != NULL) {
+      newJoinNode = newNoinNode->child;
+    }
+    newBranch->joinNode  = newJoinNode;
+
+    /* Link cchild branch to joinNode */
+    while(cChild->child != NULL) {
+      cChild = cChild->child;
+    }
+    cChild->child = newJoinNode;
+    /*Update the branch Information*/
+    branch = bBranch->joinNode;
   }
+
+
+  SyncGraphLoopNode* loopNode = getLoopNode(branch);
+  if(loopNode != NULL) {
+    SyncGraphLoopNode* newLoopNode = getLoopNode(newNode);
+    INT_ASSERT(newLoopNode != NULL);
+    
+    if(loopNode->isHeadedLoop() ==true) {
+      /**
+       * We need to make a copy of the entire loop.
+       **/
+      
+      INT_ASSERT(loopNode->lChild != NULL);
+      endPoint = loopNode->lParent;
+      INT_ASSERT(endPoint != NULL);
+      SyncGraphNode* lChild = copyCFG(newNode, branch->lChild, endPoint);
+      lChild->parent  = newNode;
+      newLoopNode->lChild = lChild;
+      SyncGraphNode* newEndPoint = lChild;
+      while(newEndPoint->child != NULL)
+	newEndPoint  = newEndPoint->child;
+      // End of loop found complete the loop.
+      newEndPoint->child = newLoopNode;
+      newLoopNode->lParent = newEndPoint;
+    } else {
+
+      if(loopNode->lparent != NULL)  {
+	// head of loop
+	INT_ASSERT(loopNode->lChild == NULL); 
+	endPoint = loopNode->lParent;
+	INT_ASSERT(endPoint != NULL);
+	SyncGraphNode* child = copyCFG(newNode, branch->child, endPoint);
+	child->parent  = newNode;
+	newLoopNode->child = child;
+	SyncGraphNode* newEndPoint = child;
+	while(newEndPoint->child != NULL)
+	  newEndPoint  = newEndPoint->child;
+	// End of loop found complete the loop.
+	SyncGraphLoopNode* newLoopEnd = getLoopNode(newEndPoint);
+	INT_ASSERT(newLoopEnd != NULL);
+	newLoopEnd->lChild = newLoopNode;
+	newLoopNode->lParent = newEndPoint;
+	// update branch pointer
+	branch = endPoint;
+      }
+  } 
+  
+
+
+   
+  if(branch->child != NULL) {
+    SyncGraphNode* child = copyCFG(newNode, branch->child, endPoint);
+    child->parent  = newNode;
+    newNode->child = child;
+  }
+
+
+
+
+  
 
   SyncGraphFunctionNode* fBranch = getFunctionNode(branch);  
   
@@ -933,23 +1025,6 @@ static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, Sync
   }
 
 
-  SyncGraphLoopNode* loopNode = getLoopNode(branch);
-  if(loopNode != NULL) {
-    if(loopNode->isHeadedLoop() ==true) {
-      /**
-       * TODO
-       * We need to make a copy of the entire loop.
-       **/
-      INT_ASSERT(loopNode->lChild != NULL);
-      
-    } else {
-      /**
-       * TODO
-       * Tailed loop just add the backedge.
-       **/
-    }
-  } 
-  
   return newNode;
 }
 
