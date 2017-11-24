@@ -512,6 +512,7 @@ static bool  refersOuterSymbols(Expr* expr, SyncGraphNode * cur);
 ******************************/
 static SyncGraphNode* addChildNode(SyncGraphNode *cur, FnSymbol* fn, GraphNodeStatus status);
 static SyncGraphNode* addElseChildNode(SyncGraphBranchNode *cur, FnSymbol *fn);
+static SyncGraphNode* addLChildNode(SyncGraphLoopNode* cur, FnSymbol* fn);
 
 
 /*******************************
@@ -520,7 +521,7 @@ static SyncGraphNode* addElseChildNode(SyncGraphBranchNode *cur, FnSymbol *fn);
 static void copyUseInfoVec(SyncGraphNode *copy, SyncGraphNode* orig, FnSymbol* parent);
 static SyncGraphNode* copyCFG(SyncGraphNode* parent, SyncGraphNode* branch, SyncGraphNode *endPoint);
 static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec &callStack, SyncGraphNode* stopPoint= NULL);
-static bool refersToInternalFunctionCalls(BlockStmt* block);
+static bool refersToInternalFunctionCallsWithBeginorSync(BlockStmt* block, FnSymbolsVec& callStack);
 
 /******************************
   Graph Clean Up Functions
@@ -1144,15 +1145,22 @@ static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec& callStac
       INT_ASSERT(stopPoint != NULL);
       expandAllNextedFunctions(loopNode->lChild, callStack, stopPoint);
     }
-    
 
+
+    
+    /* Expand else branch */
     SyncGraphBranchNode* branch = getBranchNode(cur);
     if(branch != NULL && branch->cChild != NULL ) {
       expandAllNestedFunctions(branch->cChild, callStack,branch->joinNode);
     }
 
+    
+    /* Expand the function calls */
     SyncGraphFunctionNode* func  = getFunctionNode(cur);
-    if(func != NULL && func->fChild != NULL ) {
+    if(func != NULL && func->fChild != NULL) {
+      //   && fBranch->fChild->fnSymbol->hasFlag(FLAG_BEGIN)
+      // We need to expand both begin functions and embedded
+      // functions.
       expandAllNestedFunctions(func->fChild, callStack,stopPoint);
     }
     cur = cur->child;
@@ -1245,6 +1253,22 @@ static SyncGraphNode* addElseChildNode(SyncGraphBranchNode *cur, FnSymbol *fn) {
   childNode->syncedScopes.copy(cur->syncedScopes);
   return childNode;
 }
+
+
+ 
+/**
+   Add LoopChild child of headed Loop Node.
+**/
+static SyncGraphNode* addLoopChildNode(SyncGraphLoopNode *cur, FnSymbol *fn) {
+  SyncGraphNode* childNode = new SyncGraphNode(fn);
+  childNode->parent = cur;
+  cur->lChild = childNode;
+  childNode->syncedScopes.copy(cur->syncedScopes);
+  return childNode;
+}
+
+
+
 
 
 static void updateSafeInfos(VisitedMap* prev, SyncGraphVector& visitedNodes, UseInfoSet& safeInfoset, UseInfoSet& visitedUseInfo) {
@@ -1401,7 +1425,6 @@ static bool canVisitNext(SymbolStateMap& stateMap, SyncGraphNode* sourceSyncPoin
 
 /*
 static void updateUnsafeUseInfos(VisitedMap* curVisited, SymbolStateMap& stateMap, SyncGraphSet& partialSet, UseInfoVec& useInfos) {
-  // TODO currently we are syncing by the function later we
   // should sync by the scope.
   //  useInfos.insert(curVisited->useInfos.begin(), curVisited->useInfos.end());
   if(curVisited == NULL || partialSet.size() == 0)
@@ -2012,35 +2035,114 @@ static bool refersToASyncSingleorAtomicVariable(BlockStmt* block) {
 }
 
 static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
-  // TODO we have to refine the conditions.
   /*
      We need not expand the loop if the loop does satisfy the following
     three conditions
     1. If the loop doesnot contain any begin functions.
-    2. If the loop doesnot refer to any of the outer variables.
-    3. If the loop doesnot contain any operations on A sync or single
+    2. If the loop doesnot contain any operations on A sync or single
     or atomic variables
-    4. Or does not refers to internal function calls.
+    3. Or does not refers to internal function calls, which violates
+    the above two rules.
+    
+    plus if 
+    If the loop doesnot refer to any of the outer variables, 
+    we can ignore the loop altogether.
+   
    */
 
+
+
+  FnSymbolsVec callStack;
+  callStack.add(gFnSymbolRoot);
   
-  
-  if(ASTContainsBeginFunction(block) == true    ||
-     refersOuterSymbols(block, cur)             ||
-     refersToASyncSingleorAtomicVariable(block) ||
-     refersToInternalFunctionCalls(block)) {
+  if(ASTContainsBeginFunction(block)||
+     refersToASyncSingleorAtomicVariable(block)||
+     refersToInternalFunctionCallsWithBeginorSync(block, callStack)) {
+
+    
+    SyncGraphNode* loopNode =
+	addChildNode(cur, cur->fnSymbol, CREATE_LOOP_NODE); 
+    cur = loopNode;
+    // We need to expand the loop
+    if(!block->isDoWhileStmt()) {
+      // headed loop
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      cur = addLoopChildNode(startLoopNode, cur->fnSymbol);
+    }
+    
     for_alist (node, block->body) {
       cur = handleExpr(node, cur);
     }
+    if(block->isDoWhileStmt()) {
+      // tailed loop
+      SyncGraphNode* endNode =
+	addChildNode(cur,cur->fnSymbol, CREATE_LOOP_NODE);
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      SyncGraphLoopNode* endLoopNode = getLoopNode(endNode);
+      startLoopNode->setLoopType(LoopType.DOWHILELOOP);
+      endLoopNode->setLoopType(LoopType.DOWHILELOOP);
+      endLoopNode->lChild = startLoopNode;
+      startLoopNode->lParent = endLoopNode;
+      // TODO 
+      
+    } else {
+      //headedLoop
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      cur->child = startLoopNode;
+      startLoopNode->lParent = cur;
+    }
+
+    
+    
+    // TODO add conditional checks
+    
+  } else if(refersOuterSymbols(block, cur)) {
+    // We can note the reference in a Single Node
+    // Since there are no synchronization event
+    // all the references to the outer variables
+    // can be combined to a single event.
+    // TODO 
+
   }
   return cur;
 }
 
 
-static bool refersToInternalFunctionCalls(BlockStmt* block) {
-  // TODO
-  
-  
+ static bool refersToInternalFunctionCallsWithBeginorSync(BlockStmt* block, FnSymbolsVec& callStack) {
+  /**
+   * IMPORTANT: Here we go ahead with a big assumption that all internal functions 
+   * that are refered by the current blocks is already encountered.
+   * We assume that this rule holds recursively.
+   * We maintain callStack to prevent infinite loop due to recursion.
+   */
+
+  std::vector<CallExpr*> callExprs;
+  collectCallExprs(block, callExprs);
+  for_vector(CallExpr, call, callExprs) {
+    FnSymbol* caleeFn = call->theFnSymbol();
+    if (caleeFn != NULL && ! (caleeFn->hasFlag(FLAG_BEGIN))
+	&& gFuncGraphMap(caleeFn) != NULL) {
+      // bool found  = false;
+      // for_Vec(FnSymbol* fn: callStack) {
+      // 	if(fn == caleeFn) {
+      // 	  found  = true;
+      // 	  break;
+      // 	}
+      // }
+      if(callStack.in(caleeFn) == NULL) {
+	/* Internal Function Found:
+	   definition not null, not begin and not root */
+	callStack.add_exclusive(caleeFn);
+	bool retVal = (ASTContainsBeginFunction(caleeFn) ||
+		       refersToASyncSingleorAtomicVariable(caleeFn)||
+		       refersToInternalFunctionCallsWithBeginorSync(caleeFn->body, callStack));
+	if(retVal)
+	  return retVal;
+	callStack.pop();
+	// TODO add assert.
+      }
+    }
+  }
   return false;
 }
 
