@@ -605,7 +605,11 @@ std::string GraphNodeStatusStrings[] = {
 
 
 #ifdef CHPL_DOTGRAPH
-
+/***
+ ** These Functions will help us visualize our generated CFG.
+ ** Default mode the CHPL_DOTGRAPH flag is undefined.
+ ** This can be used for debugging.
+ **/
 
 namespace stringpatch
 {
@@ -1127,7 +1131,20 @@ static void expandAllNestedFunctions(SyncGraphNode* root, FnSymbolsVec& callStac
       }
     }
 
-    // TODO SyncGraphLoopNode
+
+    /**
+     * Since all tailed loop node are in mainline of the 
+     * we need not do anything. 
+     * Headed loop we need to expand all function calls. 
+     **/
+
+    SyncGraphLoopNode* loopNode = getLoopNode(cur);
+    if(loopNode != NULL && loopNode.isHeadedLoop() == true) {
+      stopPoint = loopNode->lParent;
+      INT_ASSERT(stopPoint != NULL);
+      expandAllNextedFunctions(loopNode->lChild, callStack, stopPoint);
+    }
+    
 
     SyncGraphBranchNode* branch = getBranchNode(cur);
     if(branch != NULL && branch->cChild != NULL ) {
