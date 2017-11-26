@@ -217,10 +217,12 @@ struct SyncGraphFunctionNode: SyncGraphNode {
 
 
 enum LoopType {
+  CFORLOOP,
   FORLOOP,
   WHILELOOP,
   DOWHILELOOP,
-  WHILEDO
+  WHILEDO,
+  LOOP
 };
 
 
@@ -284,8 +286,9 @@ struct SyncGraphLoopNode: SyncGraphNode {
      lChild will point towards SL node 
      lParent should be NULL.
    **/
-  SymExpr *cond;
-  SymExpr *start;
+  // Expr *test;
+  // Expr *start;
+  // Expr *inc; 
   LoopType loopType;
 
   SyncGraphNode* getlParent() {
@@ -303,32 +306,43 @@ struct SyncGraphLoopNode: SyncGraphNode {
   }
 
   
-  void setStart(SymExpr* s) {
-    start = s;
-  }
-  SymExpr* getStart() {
-    return start;
-  }
+  // void setInit(Expr* s) {
+  //   start = s;
+  // }
+  
+  // Expr* getInit() {
+  //   return start;
+  // }
 
-  void setCond(SymExpr* c) {
-    cond = c;
-  }
-  SymExpr* getCond() {
-    return cond;
-  }
+  // void setIncrement(Expr* i){
+  //   inc = i;
+  // }
+
+  // Expr* getIncrement() {
+  //   return inc;
+  // }
+
+  // void setCond(Expr* c) {
+  //   test = c;
+  // }
+  // Expr* getCond() {
+  //   return test;
+  // }
 
   
   SyncGraphLoopNode(FnSymbol *f):SyncGraphNode(f){
     lParent = NULL;
     lChild = NULL;
-    start = NULL;
-    cond = NULL;
+    // start = NULL;
+    // test = NULL;
+    // inc = NULL;
   }
   SyncGraphLoopNode(SyncGraphNode *i, FnSymbol*f,   bool copy):SyncGraphNode(i,f, copy) {
     lParent = NULL;
     lChild = NULL;
-    start = NULL;
-    cond = NULL;
+    // start = NULL;
+    // test = NULL;
+    // inc = NULL;
   }
 
   void setLoopType(LoopType t) {
@@ -504,8 +518,7 @@ static bool shouldSync(Scope* scope, SyncGraphNode* cur);
 static int compareScopes(Scope* a, Scope * b);
 static bool  refersOuterSymbols(Expr* expr, SyncGraphNode * cur);
 
-
-
+static void recursivelyAddAllOuterVariablesintheBlock(BlockStmt* block, SyncGraphNode* cur, FnSymbolVec& callStack);
 
 /******************************
   Graph building Functions
@@ -1789,12 +1802,53 @@ static Scope* getOriginalScope(Symbol* sym) {
   return sym->defPoint->getScopeBlock();
 }
 
+/**
+ * Recursively collect all outer variable references
+ * 
+ */
+ static void recursivelyAddAllOuterVariablesintheBlock(BlockStmt* block, SyncGraphNode* cur, FnSymbolVec& callStack) {
+   
+   std::vector<SymExpr*> symExprs;
+   collectSymExprs(block, symExprs);
+   for_vector (SymExpr, se, symExprs) {
+     Symbol* sym = se->symbol();
+     if(sym == NULL)
+       continue;
+     if (isOuterVar(sym, block->getFunction())) {
+       Scope* block = getOriginalScope(sym);
+       if(shouldSync(block, cur)) {
+	 FnSymbol* fnsymbol = block->getFunction();
+	 addExternVarDetails(fnsymbol, sym, se, cur);
+       }
+     }
+   }
+
+   
+   // Now collect all external Variables from all Internal
+   //Function Calls
+   
+   callStack.add(block->fnSymbol);
+   std::vector<CallExpr*> callExprs;
+   collectCallExprs(block, callExprs);
+   for_vector(CallExpr, call, callExprs) {
+     FnSymbol* caleeFn = call->theFnSymbol();
+     if (caleeFn != NULL && ! (caleeFn->hasFlag(FLAG_BEGIN))
+	&& gFuncGraphMap(caleeFn) != NULL) {
+       // to prevent infinit loop
+       if(callStack.in(caleeFn) == NULL) {
+	 recursivelyAddAllOuterVariablesintheBlock(caleeFn->body,
+						   cur, callStack));
+      }
+   }
+   callStack.pop();
+ }
+
 
 /**
    checks if the expression expr refers any outer variables.
    if Yes add it to current list.
 **/
-static bool  refersOuterSymbols(Expr* expr, SyncGraphNode* cur) {
+ static bool  refersOuterSymbols(Expr* expr, SyncGraphNode* cur) {
   std::vector<SymExpr*> symExprs;
   collectSymExprs(expr, symExprs);
   for_vector (SymExpr, se, symExprs) {
@@ -2082,10 +2136,27 @@ static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
       startLoopNode->setLoopType(LoopType.DOWHILELOOP);
       endLoopNode->setLoopType(LoopType.DOWHILELOOP);
       endLoopNode->lChild = startLoopNode;
-      startLoopNode->lParent = endLoopNode;
-      // TODO 
+      startLoopNode->lParent = endLoopNode;      
+    } else if(block->isCforLoop()) {
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      startLoopNode->setLoopType(CFORLOOP);
       
+    } else if(block->isForLoop()) {
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      startLoopNode->setLoopType(FORLOOP);
+     
+    } else if(block->isWhileDoStmt()) {
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      startLoopNode->setLoopType(WHILEDOLOOP);
+    } else if(block->isWhileStmt()) {
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      startLoopNode->setLoopType(WHILELOOP);
     } else {
+      SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
+      startLoopNode->setLoopType(LOOP);
+    }
+     
+    if(! block->isDoWhileStmt()){
       //headedLoop
       SyncGraphLoopNode* startLoopNode = getLoopNode(loopNode);
       cur->child = startLoopNode;
@@ -2094,16 +2165,21 @@ static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
 
     
     
-    // TODO add conditional checks
     
-  } else if(refersOuterSymbols(block, cur)) {
+  } else {
+    callStack.clear();
+    recursivelyCollectAllOuterVariablesintheBlock(block,
+                          cur,  callStack);    
+  }
+  
+  //else if(refersOuterSymbols(block, cur)) {
     // We can note the reference in a Single Node
     // Since there are no synchronization event
     // all the references to the outer variables
     // can be combined to a single event.
-    // TODO 
+   
 
-  }
+  //}
   return cur;
 }
 
@@ -2139,7 +2215,6 @@ static SyncGraphNode* handleLoopStmt(BlockStmt* block,SyncGraphNode* cur) {
 	if(retVal)
 	  return retVal;
 	callStack.pop();
-	// TODO add assert.
       }
     }
   }
