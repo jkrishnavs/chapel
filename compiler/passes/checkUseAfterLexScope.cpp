@@ -73,6 +73,9 @@ enum GraphNodeStatus {
   NODE_SINGLE_WAIT_FULL,
   NODE_SYNC_SIGNAL_FULL,
   NODE_SYNC_SIGNAL_EMPTY,
+  NODE_ATOMIC_READ, // Atomic variable reads
+  NODE_ATOMIC_WRITE, // Atomic variable writes
+  NODE_ATOMIC_WAIT_FOR, // Atomic varible wait for.
   NODE_BLOCK_BEGIN, //A NEW BEGIN FUNCTION START HERE
   NODE_BLOCK_NESTED_FUNCTION, // A NEW FUNCTION NODE STARTS HERE
   NODE_START_LOOP,
@@ -180,6 +183,23 @@ struct SyncGraphNode {
   //  ~SyncGraphNode() {}
   virtual ~SyncGraphNode() {}
 };
+
+/**
+ * TODO: Should we use template for 
+ * handling all type of atomic variables
+ **/
+struct SyncGraphAtomicNode: SyncGraphNode {
+  void* value;
+
+  SyncGraphAtomicNode(FnSymbol* f):SyncGraphNode(f) {    
+  }
+  SyncGraphAtomicNode(SyncGraphNode* i, FnSymbol *f, bool copy):SyncGraphNode(i,f, copy) {
+  }
+
+  ~SyncGraphAtomicNode() {
+
+  }
+}
 
 
 struct SyncGraphBranchNode: SyncGraphNode {
@@ -766,7 +786,7 @@ static bool verifyLoopEquivalenceForScope(SyncGraphLoopNode head1, SyncGraphLoop
     return false;
   
   
-  return false;
+  return true;
   //   return true;
 }
 
@@ -1553,7 +1573,6 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
   collectUseInfos(curVisited, newlyVisited, useInfos);
 
   if(partialSet.size() > 0) {
-    //TODO if curVisited == NULL;
     VisitedMap* prev = NULL;
     if(curVisited != NULL) {
       SymbolStateMap stateMap = curVisited->symbolMap;
@@ -1564,6 +1583,8 @@ static void collectAllAvailableSyncPoints(VisitedMap* curVisited, SyncGraphVecto
 #ifdef CHPL_DOTGRAPH
       std::cout<<"Check visited map "<<std::endl;
 #endif
+    } else {
+      // TODO
     }
     if(prev == NULL) {
 #ifdef CHPL_DOTGRAPH
@@ -1912,20 +1933,24 @@ static SyncGraphNode* addSymbolsToGraph(Expr* expr, SyncGraphNode *cur) {
   collectCallExprs(expr, callExprs);
   for_vector (CallExpr, call, callExprs) {
     FnSymbol* calleeFn = call->theFnSymbol();
+
+     /* TODO(For Inter procedural): 
+    CalleeFn Should not have begin Fn if it has a sync/single/atomic 
+    variable passed into it as a reference. 
+    Else, we can handle it separately.
+     */
+    
     /**
        Conditions :
     1. The calleeFn definition should not be NULL
-    2. TODO : CalleeFn Should not have begin Fn If it has 
-    (we will handle it separately)
-    3. User defined Function 
-    4. Should be Nested Function
-    5. Callee should NOT be beyond any of the synced scopes.
+    2. User defined Function 
+    3. Should be Nested Function
+    4. Callee should NOT be beyond any of the synced scopes.
     (If it is beyond a synced scope all outer variables 
     accessed by the function will have the scope beyond the synced 
     scope. Hence all accesses are SAFE)
      **/
     if ( calleeFn != NULL
-	 //&& !(caleeFn->hasFlag(FLAG_BEGIN))
         && (calleeFn->getModule()->modTag == MOD_USER)
         && isFnSymbol(calleeFn->defPoint->parentSymbol)
 	 && isInsideAllSyncedScopes(calleeFn, cur) == true) {
