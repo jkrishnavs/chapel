@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -23,6 +23,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "chplcgfns.h"
 #include "chpllaunch.h"
 #include "chpl-mem.h"
 #include "chpltypes.h"
@@ -104,12 +105,12 @@ static char* chpl_launch_create_command(int argc, char* argv[],
   }
   fprintf(llFile, "\n");
 
-  fprintf(llFile, "%samudprun ", WRAP_TO_STR(LAUNCH_PATH));
+  fprintf(llFile, "%s/%samudprun ", CHPL_THIRD_PARTY, WRAP_TO_STR(LAUNCH_PATH));
 #elif CHPL_COMM_SUBSTRATE == mpi
   fprintf(llFile, "export MPIRUN_CMD='srun --kill-on-bad-exit %%C'\n");
   fprintf(llFile, "export MPIRUN_CMD_OK=true\n");
   fprintf(llFile, "\n");
-  fprintf(llFile, "%sgasnetrun_mpi ", WRAP_TO_STR(LAUNCH_PATH));
+  fprintf(llFile, "%s/%sgasnetrun_mpi ", CHPL_THIRD_PARTY, WRAP_TO_STR(LAUNCH_PATH));
 #elif CHPL_COMM_SUBSTRATE == none
 #else
 #error "Unknown CHPL_COMM_SUBSTRATE"

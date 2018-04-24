@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -64,6 +64,7 @@
 static int  processIdentifier(yyscan_t scanner);
 static int  processToken(yyscan_t scanner, int t);
 static int  processStringLiteral(yyscan_t scanner, const char* q, int type);
+static int  processMultilineStringLiteral(yyscan_t scanner, const char* q);
 
 static int  processExtern(yyscan_t scanner);
 static int  processExternCode(yyscan_t scanner);
@@ -126,6 +127,7 @@ coforall         return processToken(yyscanner, TCOFORALL);
 config           return processToken(yyscanner, TCONFIG);
 const            return processToken(yyscanner, TCONST);
 continue         return processToken(yyscanner, TCONTINUE);
+defer            return processToken(yyscanner, TDEFER);
 delete           return processToken(yyscanner, TDELETE);
 dmapped          return processToken(yyscanner, TDMAPPED);
 do               return processToken(yyscanner, TDO);
@@ -156,11 +158,13 @@ on               return processToken(yyscanner, TON);
 only             return processToken(yyscanner, TONLY);
 otherwise        return processToken(yyscanner, TOTHERWISE);
 out              return processToken(yyscanner, TOUT);
+owned            return processToken(yyscanner, TOWNED);
 param            return processToken(yyscanner, TPARAM);
 pragma           return processToken(yyscanner, TPRAGMA);
 __primitive      return processToken(yyscanner, TPRIMITIVE);
 private          return processToken(yyscanner, TPRIVATE);
 proc             return processToken(yyscanner, TPROC);
+prototype        return processToken(yyscanner, TPROTOTYPE);
 public           return processToken(yyscanner, TPUBLIC);
 record           return processToken(yyscanner, TRECORD);
 reduce           return processToken(yyscanner, TREDUCE);
@@ -170,6 +174,7 @@ return           return processToken(yyscanner, TRETURN);
 scan             return processToken(yyscanner, TSCAN);
 select           return processToken(yyscanner, TSELECT);
 serial           return processToken(yyscanner, TSERIAL);
+shared           return processToken(yyscanner, TSHARED);
 single           return processToken(yyscanner, TSINGLE);
 sparse           return processToken(yyscanner, TSPARSE);
 subdomain        return processToken(yyscanner, TSUBDOMAIN);
@@ -181,6 +186,7 @@ try              return processToken(yyscanner, TTRY);
 "try!"           return processToken(yyscanner, TTRYBANG);
 type             return processToken(yyscanner, TTYPE);
 union            return processToken(yyscanner, TUNION);
+unmanaged        return processToken(yyscanner, TUNMANAGED);
 use              return processToken(yyscanner, TUSE);
 var              return processToken(yyscanner, TVAR);
 when             return processToken(yyscanner, TWHEN);
@@ -266,11 +272,12 @@ zip              return processToken(yyscanner, TZIP);
 {floatLiteral}i  return processToken(yyscanner, IMAGLITERAL);
 
 {ident}          return processIdentifier(yyscanner);
+"\"\"\""         return processMultilineStringLiteral(yyscanner, "\"");
+"'''"            return processMultilineStringLiteral(yyscanner, "'");
 "\""             return processStringLiteral(yyscanner, "\"", STRINGLITERAL);
 "\'"             return processStringLiteral(yyscanner, "\'", STRINGLITERAL);
 "c\""            return processStringLiteral(yyscanner, "\"", CSTRINGLITERAL);
 "c\'"            return processStringLiteral(yyscanner, "\'", CSTRINGLITERAL);
-
 "//"             return processSingleLineComment(yyscanner);
 "/*"             return processBlockComment(yyscanner);
 
@@ -299,7 +306,8 @@ zip              return processToken(yyscanner, TZIP);
 static void  newString();
 static void  addString(const char* str);
 static void  addChar(char c);
-static void  addCharEscape(char c);
+static void  addCharEscapeNonprint(char c);
+static void  addCharEscapingC(yyscan_t scanner, char c);
 
 static int   getNextYYChar(yyscan_t scanner);
 
@@ -389,6 +397,8 @@ static int processToken(yyscan_t scanner, int t) {
 ************************************* | ************************************/
 
 static const char* eatStringLiteral(yyscan_t scanner, const char* startChar);
+static const char* eatMultilineStringLiteral(yyscan_t scanner,
+                                             const char* startChar);
 
 static int processStringLiteral(yyscan_t scanner, const char* q, int type) {
   const char* yyText = yyget_text(scanner);
@@ -407,6 +417,21 @@ static int processStringLiteral(yyscan_t scanner, const char* q, int type) {
   return type;
 }
 
+static int processMultilineStringLiteral(yyscan_t scanner, const char* q) {
+  const char* yyText = yyget_text(scanner);
+  YYSTYPE* yyLval = yyget_lval(scanner);
+  yyLval->pch = eatMultilineStringLiteral(scanner, q);
+
+  countToken(q, yyLval->pch, q);
+
+  if (captureTokens) {
+    captureString.append(yyText);
+    captureString.append(yyLval->pch);
+    captureString.append(yyText);
+  }
+  return STRINGLITERAL;
+}
+
 static const char* eatStringLiteral(yyscan_t scanner, const char* startChar) {
   char*      yyText  = yyget_text(scanner);
   YYLTYPE*   yyLloc  = yyget_lloc(scanner);
@@ -423,14 +448,14 @@ static const char* eatStringLiteral(yyscan_t scanner, const char* startChar) {
       yyerror(yyLloc, &context, "end-of-line in a string literal without a preceding backslash");
     } else {
       if (startCh == '\'' && c == '\"') {
-        addCharEscape('\\');
+        addCharEscapeNonprint('\\');
       }
 
       // \ escape ? to avoid C trigraphs
       if (c == '?')
-        addCharEscape('\\');
+        addCharEscapeNonprint('\\');
 
-      addCharEscape(c);
+      addCharEscapeNonprint(c);
     }
 
     if (c == '\\') {
@@ -438,18 +463,22 @@ static const char* eatStringLiteral(yyscan_t scanner, const char* startChar) {
 
       if (c == '\n') {
         processNewline(scanner);
-        addCharEscape('n');
+        addCharEscapeNonprint('n');
       } else if (c == 'u' || c == 'U') {
         ParserContext context(scanner);
         yyerror(yyLloc, &context, "universal character name not yet supported in string literal");
+        addCharEscapeNonprint('t'); // add a valid escape to continue parsing
       } else if ('0' <= c && c <= '7' ) {
         ParserContext context(scanner);
         yyerror(yyLloc, &context, "octal escape not supported in string literal");
-      } else if (c != 0) {
-        addCharEscape(c);
+        addCharEscapeNonprint('t'); // add a valid escape to continue parsing
+      } else if (c == 0) {
+        // we've reached EOF
+        addCharEscapeNonprint('t'); // add a valid escape to continue parsing
+        break; // EOF reached, so stop
+      } else {
+        addCharEscapeNonprint(c);
       }
-      else
-        break;
     }
   } /* eat up string */
 
@@ -461,6 +490,50 @@ static const char* eatStringLiteral(yyscan_t scanner, const char* startChar) {
 
   return astr(stringBuffer);
 }
+
+static const char* eatMultilineStringLiteral(yyscan_t scanner,
+                                             const char* startChar) {
+  YYLTYPE* yyLloc    = yyget_lloc(scanner);
+  const char startCh = *startChar;
+  int startChCount   = 0;
+  int c              = 0;
+
+  newString();
+
+  while (true) {
+    c = getNextYYChar(scanner);
+
+    if (c == 0) {
+      break;
+    }
+
+    if (c == startCh) {
+      startChCount++;
+      if (startChCount == 3) {
+        break;
+      }
+    } else {
+      startChCount = 0;
+    }
+
+    addCharEscapingC(scanner, c);
+  } /* eat up string */
+
+  if (c == 0) {
+    ParserContext context(scanner);
+
+    yyerror(yyLloc, &context, "EOF in string");
+  }
+  // Remove two escaped quotes from the end of the string that are
+  // actually part of the string closing token.  If this is a single
+  // quoted string that will be two characters, but if it is a double
+  // quoted string it will be four because of extra escape characters
+  int removeChars = (startCh == '\'') ? 2 : 4;
+  std::string sub = stringBuffer.substr(0, stringBuffer.length()-removeChars);
+
+  return astr(sub);
+}
+
 
 /************************************ | *************************************
 *                                                                           *
@@ -778,6 +851,7 @@ static int processBlockComment(yyscan_t scanner) {
                 startFilename, nestedStartLine);
       }
       yyerror(yyLloc, &context, "EOF in comment");
+      break;
     }
   }
 
@@ -864,7 +938,7 @@ static void addChar(char c) {
 }
 
 // Escapes
-static void addCharEscape(char c) {
+static void addCharEscapeNonprint(char c) {
   int escape  = !(isascii(c) && isprint(c));
 
   if (escape) {
@@ -874,6 +948,57 @@ static void addCharEscape(char c) {
     stringBuffer.push_back(toHex(c & 0xf));
   } else {
     stringBuffer.push_back(c);
+  }
+}
+
+// Convert C escape characters into two characters: '\\' and the other character
+static void addCharEscapingC(yyscan_t scanner, char c) {
+  switch (c) {
+    case '\"' :
+      addChar('\\');
+      addChar('"');
+      break;
+    case '?' :
+      addChar('\\');
+      addChar('?');
+      break;
+    case '\\' :
+      addChar('\\');
+      addChar('\\');
+      break;
+    case '\a' :
+      addChar('\\');
+      addChar('a');
+      break;
+    case '\b' :
+      addChar('\\');
+      addChar('b');
+      break;
+    case '\f' :
+      addChar('\\');
+      addChar('f');
+      break;
+    case '\n' :
+      addChar('\\');
+      addChar('n');
+      // Keep track of line numbers when a newline is found in a string
+      processNewline(scanner);
+      break;
+    case '\r' :
+      addChar('\\');
+      addChar('r');
+      break;
+    case '\t' :
+      addChar('\\');
+      addChar('t');
+      break;
+    case '\v' :
+      addChar('\\');
+      addChar('v');
+      break;
+    default :
+      addChar(c);
+      break;
   }
 }
 

@@ -239,7 +239,94 @@ all:
     - Make the multi-ddata specific fields in DR arrays 'void' when not using them (#5723)
   05/03/17:
     - Flag some compiler temps as const (#6154)
-
+  06/08/17:
+    - text: upgrade gnu target compiler from 6.3.0 to 7.1.0
+      config: Single node XC, 16 node XC
+  06/10/17:
+    - text: bounded-coforall optimization for remote coforalls (#6419)
+      config: 16 node XC
+  06/14/17:
+    - text: upgrade gnu target compiler from 6.3.0 to 7.1.0
+      config: chapcs, chap04
+  06/16/17:
+    - text: revert gnu target compiler from 7.1.0 to 6.3.0
+      config: chapcs, chap04
+  06/20/17:
+    - text: revert gnu target compiler from 7.1.0 to 6.3.0
+      config: Single node XC, 16 node XC
+  06/21/17:
+    - change tmp directory
+  07/26/17:
+    - Add dsiAssignDomain (#6722)
+    - Move EndCount to task local storage (#6765)
+  07/31/17:
+    - text: Enable GASNet's multi-comm-domain support for gemini/aries (#6893)
+      config: 16 node XC
+  08/08/17:
+    - text: With comm=ugni, register large arrays dynamically (#6947)
+      config: 16 node XC
+  08/15/17:
+    - add error handling to the IO module (#6890)
+  09/06/17:
+    - text: Improve the accuracy of our running task counter (#7193)
+      config: 16 node XC
+  09/19/17:
+    - Fix LICM bug (#7371)
+  10/21/17:
+    - Reduce wide pointer overhead for sparse domains/arrays (#7627)
+  11/21/17:
+    - New bulk transfer interface (#7775)
+  12/08/17:
+    - text: Machine upgraded to CLE6
+      config: 16 node XC
+  12/12/17:
+    - (no-local) QualifiedType ref improvements (#7990)
+  01/16/18:
+    - rework iterator memory management (#8073)
+  01/17/18:
+    - text: support dynamically extendable heap w/ ugni (#7700)
+      config: 16 node XC
+  01/25/18:
+    - text: Do nonblocking responses in the polling task (#8297)
+      config: 16 node XC
+  02/07/18:
+    - text: machine operating system update to SLES12
+      config: chapcs
+  02/13/18:
+    - Change default intent for range to const in (#8368)
+  02/22/18:
+    - text: Put the main process to sleep while waiting to shutdown (#8533)
+      config: 16 node XC
+  03/03/18:
+    - text: add error handling to casts from string #8547
+      config: chapcs
+  03/04/18:
+    - text: system update
+      config: 16 node XC
+  03/16/18:
+    - text: QSBR (#8182)
+      config: 16 node XC
+  03/18/18:
+    - text: QSBR reverted (#8841)
+      config: 16 node XC
+  03/20/18:
+    - text: upgrade default LLVM to LLVM 6 (#8869)
+      config: chapcs 
+  04/03/18:
+    - text: Reduce contention from ugni's polling thread (#9068)
+      config: 16 node XC
+  04/08/18:
+    - move lowering of ForallStmts at resolution (#8785)
+  04/11/18:
+    - Convert BaseDom and its derived classes to use initializers (#9113)
+  04/14/18:
+    - Update BaseArr to use initializers (#9160)
+  04/17/18:
+    - Workaround for StencilDom performance (#9231)
+  04/18/18:
+    - Update strings to use initializers (#9217)
+  04/19/19:
+    - Use zero-arg initializer in BaseDom (#9250)
 
 AllCompTime:
   11/09/14:
@@ -254,6 +341,10 @@ AllCompTime:
     - Fix parse slowdown (#5257)
   02/07/17:
     - Loop over Defs and Uses with SymbolSymExprs (#5285)
+
+arguments:
+  09/20/17:
+    - Adjust string pass/return test (#7360)
 
 arrayPerformance-1d:
   03/19/15:
@@ -273,6 +364,10 @@ array-of-strings-read:
 arr-forall:
   03/24/15:
     - with CCE, bug fix to avoid vectorizing when not valid
+
+array_iter:
+  06/19/17:
+    - Reduce amount of locking in associative array dsiAccess (#6244)
 
 arguments:
   03/10/17:
@@ -330,9 +425,19 @@ blackscholes_promote:
   10/21/16:
     - Improvements to scalarReplace, refPropagation and copyPropagation (#4761)
 
+build-associative:
+  07/14/17:
+    - Extend parallel array initialization to POD arrays (#6675)
+
 chameneos-redux:
   07/08/13:
     - altered output order for chameneos data, old data incompatible
+  09/15/17:
+    - Chameneos initializer updates (#7328)
+
+CoMD:
+  07/26/17:
+    - Update PR 5296 (#6722)
 
 compSampler-timecomp:
   09/09/16:
@@ -346,6 +451,11 @@ cg:
   09/22/16:
     - Added overloaded compileErrors for Sort/Search (#4621)
 
+cg-a:
+  04/05/18:
+    - Convert BaseDist-inheriting classes to use initializers (#9075)
+
+
 cg-sparse-timecomp:
   09/09/16:
     - disable function resolution optimization (#4476)
@@ -357,6 +467,10 @@ c-ray:
     - Parallelized C-ray and transposed array (#4743)
   11/09/16:
     - Code cleanups in preparation for SC16 (#4830 and others)
+
+create-views:
+  04/05/18:
+    - Convert BaseDist-inheriting classes to use initializers (#9075)
 
 dgemm.128:
   09/06/13:
@@ -377,6 +491,14 @@ ep-b:
     - added -E to tests which would benefit from it
   11/22/14:
     - revert -E use for nightly on 21st (which failed, unrelatedly)
+
+ep.ml-perf:
+  07/26/17:
+    - Update PR 5296 (#6722)
+
+ep.ml-time:
+  07/26/17:
+    - Update PR 5296 (#6722)
 
 fannkuch-redux:
   07/22/14:
@@ -412,6 +534,8 @@ fasta:
   03/10/17:
     - text: Re-enable binary IO optimization on NUMA (#5572)
       config: chapcs
+  08/02/17:
+    - Remove handling of references from copyPropagation (#6779)
 
 fastaredux:
   01/14/14:
@@ -457,14 +581,6 @@ hpl_performance:
     - text: Improvements to inferConstRefs (#4904)
       config: 16 node XC
 
-hpl.hpcc2012.ml-perf:
-  03/03/17:
-    - Modified test as part of array views (#5338)
-
-hpl.hpcc2012.ml-time:
-  03/03/17:
-    - Modified test as part of array views (#5338)
-
 init:
   05/03/16:
     - Fix ref-return intent bugs (#3795)
@@ -484,6 +600,10 @@ isx-no-return:
   02/26/16:
     - ISx ref to array (#3365)
 
+isx-release:
+  01/23/18:
+    - Fix memory leak introduced in PR #8073 (#8268)
+
 isx.ml-time: &isx-ml-base
   02/26/16:
     - ISx ref to array (#3365)
@@ -491,6 +611,10 @@ isx.ml-time: &isx-ml-base
     - Switched to PCG random number generator (#3764)
   12/22/16:
     - Increased isx problem size (internal #279)
+  01/12/18:
+    - Avoid task yielding during ugni memory registration (#8162)
+  01/24/18:
+    - Stop forcing serial initialization for isx-hand-optimized (#8290)
 isx-hand-optimized.ml-time:
   <<: *isx-ml-base
 isx-release.ml-time:
@@ -529,11 +653,21 @@ jacobi:
     - add param versions of min/max for ints (#5073)
   01/13/17:
     - refactoring of rectangular IO (#5157)
+  08/02/17:
+    - Remove handling of references from copyPropagation (#6779)
+  03/13/18:
+    - Enable phase one dynamic dispatch (#8790)
 
 knucleotide:
   10/17/15:
     - text: Plain Old Data type improvement (#2752)
       config: chap04
+  06/16/17:
+    - Let parSafe revert to default in blc study version (#6475)
+  06/19/17:
+    - Remove locking from associative array accesses (#6244)
+  11/21/17:
+    - Clear associative array elements when created by dsiAdd (#7828)
 
 LCALS-raw-short: &lcals-base
   10/20/16:
@@ -543,6 +677,8 @@ LCALS-raw-short: &lcals-base
     - Stop throwing --dataParMinGranularity=1000 (#4917)
   12/10/16:
     - Throw --no-ieee-float for LCALS (#5001)
+  10/24/17:
+    - Fix LCALS inner_prod kernel (#7632)
 LCALS-raw-medium:
   <<: *lcals-base
 LCALS-raw-long:
@@ -591,6 +727,8 @@ mandelbrot-extras:
     - maxTaskPar change delayed fifo->qthreads performance hit
   11/11/15:
     - Initial commit of C complexes
+  09/21/17:
+    - Restore string perf (#7416)
 
 memleaks:
   11/13/13:
@@ -633,6 +771,18 @@ memleaks:
     - Rank change dom dist view (#5694)
   03/23/17:
     - Fix some memory leaks in ArrayViewRankChange (#5789)
+  06/19/17:
+    - Close some user-level memory leaks in SSCA2 (#6494)
+  06/22/17:
+    - Close strings leaked by regular expressions (#6509)
+  06/27/17:
+    - Close leaks in DimensionalDist2D (#6541)
+  07/06/17:
+    - Close more leaks in DimensionalDist2D (#6590)
+  07/14/17:
+    - Have reindex domains/distributions preserve locality (#5757)
+  07/25/17:
+    - fix leaks introduced by reindex views in PR 5757 (#6776)
 
 memleaksfull:
   07/08/14:
@@ -655,12 +805,68 @@ memleaksfull:
     - Rank change dom dist view (#5694)
   03/23/17:
     - Fix some memory leaks in ArrayViewRankChange (#5789)
+  06/19/17:
+    - Close some user-level memory leaks in SSCA2 (#6494)
+  06/22/17:
+    - Close strings leaked by regular expressions (#6509)
+  06/27/17:
+    - Close leaks in DimensionalDist2D (#6541)
+  07/04/17:
+    - LLNL version of CoMD added, leaks memory (#6553)
+  07/06/17:
+    - skip LLNL CoMD for memory leaks (#6611)
+    - Close more leaks in DimensionalDist2D (#6590)
+  07/14/17:
+    - Have reindex domains/distributions preserve locality (#5757)
+  07/25/17:
+    - fix leaks introduced by reindex views in PR 5757 (#6776)
+  09/17/17:
+    - close test code leaks (#7348 and #7349)
+  09/18/17:
+    - allow Mason testing to compile again after change (#7350)
+  09/19/17:
+    - close additional graph 500 leaks (#7357)
+  09/20/17:
+    - close more test code leaks (#7406, #7399, #7395, #7364, and #7400)
+  11/15/17:
+    - Delete classes in some tests (#7791)
+  12/19/17:
+    - Rewrite default argument handling (#7858)
+  01/23/18:
+    - Fix memory leak introduced in PR #8073 (#8268)
+  03/14/18:
+    - Convert RecordParser over from constructors to initializers (#8810)
+  04/04/18:
+    - Update a slew of tests with initialize() methods to use postinit() instead (#8988)
+  04/07/18:
+    - Fix some initializer leaks (#9111)
+  04/10/18:
+    - Partial reduction straw man (#9158)
+  04/19/18:
+    - New test for warn-unstable (#9229)
+    - Partial reductions for LayoutCS (#9269)
 
 meteor:
   12/18/13:
     - Chapel level improvement by using implicit domains
   08/10/16:
     - Updated meteor's lock to yield less frequently (#4300)
+
+mg-b:
+  05/23/17:
+    - Fix NPB MG (#6284)
+  06/13/17:
+    - Optimize updateFluff (#6418)
+  06/22/17:
+    - Only perform packed updateFluff when there are multiple locales (#6512)
+
+mg.ml-time:
+  05/11/17:
+    - Move chpl_getPrivatizedClass() into chpl-privatization.h (#6212)
+  05/23/17:
+    - Fix NPB MG (#6284)
+  06/13/17:
+    - Optimize updateFluff (#6418)
 
 miniMD:
   12/21/13:
@@ -677,6 +883,16 @@ miniMD:
     - RVF reference fields with record-wrapped type (#4925)
   03/10/17:
     - Three way refpair (#5561)
+  12/05/17:
+    - Enforce qualified refs after inlining (#7906)
+
+miniMD.ml-time:
+  09/14/17:
+    - Introduce ShadowVarSymbol for forall intents (#7307)
+  09/22/17:
+    - Manually hoist loop-invariant array access in miniMD (#7432)
+  09/26/17:
+    - Prevent certain data races upon 'in' forall intents (#7467)
 
 nbody:
   03/17/14:
@@ -725,6 +941,8 @@ prk-stencil:
     - blockDist for useStencilDist output matrix and more (#3705)
   05/06/16:
     - Problem size increased from --order=1000 to --order=32000 (#3813)
+  06/13/17:
+    - Optimize updateFluff (#6418)
 
 prk-stencil.ml-perf:
   04/08/16:
@@ -735,6 +953,24 @@ prk-stencil.ml-perf:
     - Problem size increased from --order=1000 to --order=32000 (#3813)
   08/12/16:
     - Improve and enable strided bulk transfer optimization as default (#4318)
+  05/11/17:
+    - Move chpl_getPrivatizedClass() into chpl-privatization.h (#6212)
+  05/18/17:
+    - Use nonblocking transactions for strided transfers (#6262)
+  06/06/17:
+    - Increase the PRK stencil problem size (#6380)
+  06/13/17:
+    - Optimize updateFluff (#6418)
+  07/26/17:
+    - Update PR 5296 (#6722)
+  12/02/17:
+    - Stop doing a task-yield while forking remote tasks under ugni (#7915)
+
+prk-stencil-time:
+  05/11/17:
+    - Move chpl_getPrivatizedClass() into chpl-privatization.h (#6212)
+  06/13/17:
+    - Optimize updateFluff (#6418)
 
 prk-transpose: &transpose-base
   05/04/17:
@@ -760,12 +996,22 @@ ra:
       config: Single node XC
   03/21/17:
     - Rank change dom dist view (#5694)
+  04/05/18:
+    - Convert BaseDist-inheriting classes to use initializers (#9075)
+
+ra.ml-perf:
+  09/19/17:
+    - machine changes, cannot reproduce old numbers
+
+ra-atomics.ml-perf:
+  10/03/17:
+    - Increase the number of updates for RA to stabilize performance timings (#7522)
 
 RBC:
   02/22/17:
     - update logic for pruning unused module level variables (#5395)
 
-regexdna:
+regexdna: &regexdna-base
   10/07/14:
     - Add c_string_copy type
   11/29/15:
@@ -776,10 +1022,17 @@ regexdna:
     - implemented good_alloc_size for jemalloc(#3446)
   04/20/17:
     - Update RE2 (#6024)
+  06/22/17:
+    - Free strings leaked by Regex.subn() / qio_regexp_replace() (#6509)
 
 regexdna-redux:
-  04/20/17:
-    - Update RE2 (#6024)
+  <<: *regexdna-base
+
+regexdna-submitted:
+  <<: *regexdna-base
+
+regexdnaredux-submitted:
+  <<: *regexdna-base
 
 return-array-8: &return-array-base
   03/04/17:
@@ -800,6 +1053,10 @@ revcomp:
   03/10/17:
     - text: Re-enable binary IO optimization on NUMA (#5572)
       config: chapcs
+  03/15/18:
+    - Brad version overhauled, based on mark-skip-read-begin (#8815)
+  03/31/18:
+    - Update revcomp problem size; filenames for fasta-based inputs (#9043)
 
 sad:
   05/03/16:
@@ -880,6 +1137,10 @@ temporary-copies:
   04/20/17:
     - Update RE2 (#6024)
 
+twopt-paircount:
+  06/22/17:
+    - Free strings leaked by Regex.subn() / qio_regexp_replace() (#6509)
+
 search:
   04/20/17:
     - Update RE2 (#6024)
@@ -894,6 +1155,8 @@ thread-ring:
       config: chap03
   03/21/17:
     - Limit the maximum size of qthreads memory pools to 65MB (#5748)
+  12/05/17:
+    - Enforce qualified refs after inlining (#7906)
 
 time_array_vs_ddata:
   05/31/14:
@@ -902,6 +1165,8 @@ time_array_vs_ddata:
     - Optimize iteration over anonymous low-bounded counted ranges (#3154)
   03/01/16:
     - Extend early string-as-rec work to cover more sub-types of record (#3386)
+  10/05/17:
+    - Fix the anonymous range optimization for low-bounded counted ranges (#7422)
 
 time_array_vs_ref:
   09/13/16:
@@ -936,6 +1201,22 @@ timeVectorArray:
     - upgrade jemalloc to 4.2.0 (#3919)
   01/31/17:
     - upgrade jemalloc to 4.4.0 (#5278)
+  07/26/17:
+    - Allow domains to implement specialized assignment (#6722)
+  09/13/17:
+    - Support arrays as args to array.{push_front,push_back,insert} (#7180)
+  09/16/17:
+    - Resolve timeVectorArray regressions (#7333)
+  09/20/17:
+    - Resolve push_back / pop_front regressions w/ inline (#7397)
+  12/05/17:
+    - Enforce qualified refs after inlining (#7906)
+
+views-forall-iter:
+  10/12/17:
+    - Switch from these(tag) to foralls for some standalone iters (#7578)
+  10/14/17:
+    - Pass Iterator Classes by Value (#7596)
 
 dynamic:
   02/28/17:

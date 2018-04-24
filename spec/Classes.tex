@@ -591,7 +591,11 @@ The identifier in the field access expression indicates which field is accessed.
 A field can
 be modified via an assignment statement where the left-hand side of
 the assignment is a field access expression.
-Accessing a parameter field returns a parameter.
+
+Accessing a parameter or type field returns a parameter or type,
+respectively. In addition to being available for access with a class
+instance receiver, parameter and type fields can be accessed from the
+instantiated class type itself.
 
 \begin{chapelexample}{useActor1.chpl}
 Given a variable \chpl{anActor} of type \chpl{Actor} as defined above,
@@ -712,25 +716,30 @@ These conversions do not change the value.
 % Perhaps make the memory management part of the introduction, and then let the
 % description of deinitializers appear naturally at the same indentation level as
 % constructors.
-\section{Dynamic Memory Management}
-\label{Dynamic_Memory_Management}
+\section{Deleting Class Objects}
 \label{Class_Delete}
-\index{memory management}
 \index{classes!delete}
-\index{delete!classes}
+\index{delete!class objects}
+\index{delete!arrays}
+\index{deallocation!class objects}
 
 Memory associated with class instances can be reclaimed with the \chpl{delete}
 statement:
 
 \begin{syntax}
 delete-statement:
-  `delete' expression ;
+  `delete' expression-list ;
 \end{syntax}
 
-where the expression is a reference to the instance that will be reclaimed.
-The expression may evaluate to \chpl{nil}, in which case the \chpl{delete}
-statement has no effect.  If an object is referenced after it has
-been deleted, the behavior is undefined.
+where the expression-list specifies the class objects whose memory
+will be reclaimed.  Prior to releasing their memory, the
+deinitialization routines for these objects will be executed
+(\rsec{Class_Deinitializer}).  The expression-list can contain array
+expressions, in which case each element of that array will be deleted
+in parallel using a \chpl{forall} loop over the array.  It is legal to
+delete a class variable whose value is \chpl{nil}, though this has no
+effect.  If a class object is referenced after it has been deleted,
+the behavior is undefined.
 
 \begin{chapelexample}{delete.chpl}
 The following example allocates a new object \chpl{c} of class type \chpl{C}
@@ -772,14 +781,12 @@ Number of leaked allocations
 \end{chapelexample}
 
 \begin{openissue}
-Chapel was originally specified without a \chpl{delete} keyword.  The intention
-was that Chapel would be implemented with a distributed-memory garbage
-collector.  This is a research challenge.  In order to focus elsewhere, the
-design has been scaled back.  There is an expectation that Chapel will
-eventually support an optional distributed-memory garbage collector as well as
-a region-based memory management scheme similar to that used in the Titanium
-language.  Support of \chpl{delete} will likely continue even as these optional
-features become supported.
+Chapel was originally specified without a \chpl{delete} keyword.  The
+intention was that it would support distributed-memory garbage
+collection~(GC).  This is an open research challenge which has been
+put off (potentially indefinitely) in order to focus on more pressing
+issues.  Some effort has also been put into exploring alternatives to
+GC such as support for owned class references and/or borrow checking.
 \end{openissue}
 
 
@@ -790,7 +797,7 @@ features become supported.
 
 A class author may specify additional actions to be performed before a class object is
 reclaimed, by defining a class deinitializer.  A class deinitializer is a method
-named \chpl{deinit}.  A class deinitializer takes no arguments (aside from
+named \chpl{deinit()}.  A class deinitializer takes no arguments (aside from
 the implicit \chpl{this} argument).  If defined, the deinitializer is called each time
 a \chpl{delete} statement is invoked with a valid instance of that class type.  The
 deinitializer is not called if the argument of \chpl{delete} evaluates to \chpl{nil}.
@@ -806,11 +813,10 @@ var c : C = nil;
 delete c;        // Does nothing: c is nil.
 
 c = new C();     // Creates a new object.
-delete c;        // Deletes that object: Writes out "Bye, bye." 
+delete c;        // Deletes that object: Writes out "Bye, bye."
                  // and reclaims the memory that was held by c.
 \end{chapel}
 \begin{chapeloutput}
-Bye, bye.
 Bye, bye.
 \end{chapeloutput}
 \end{chapelexample}

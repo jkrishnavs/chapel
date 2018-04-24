@@ -14,7 +14,7 @@ class DistribArray {
   var internalArr: [LocaleSpace] DistribArrayNode(arrType);
   var isLocalize = false;
 
-  proc initialize() {
+  proc postinit() {
     if isLocalize then return;
 
     for loc in LocaleSpace {
@@ -25,6 +25,15 @@ class DistribArray {
           const numElts = arrSize - localSize*(numLocales-1);
           internalArr(loc) = new DistribArrayNode(arrType, numElts);
         }
+      }
+    }
+  }
+
+  proc deinit() {
+    if isLocalize then return;
+    for loc in LocaleSpace {
+      on Locales(loc) {
+        delete internalArr(loc);
       }
     }
   }
@@ -90,8 +99,10 @@ class DistribArray {
 
 proc main {
   var delta: sync real;
-  ref localAs = (new DistribArray(real, size)).localize();
-  ref localBs = (new DistribArray(real, size)).localize();
+  var distA = new DistribArray(real, size);
+  var distB = new DistribArray(real, size);
+  ref localAs = distA.localize();
+  ref localBs = distB.localize();
   localAs(0).element(0) = 1.0;
 
   do {
@@ -120,5 +131,9 @@ proc main {
   } while (delta > epsilon);
 
   write(localAs(0));
+
+  delete distA, distB;
+  for a in localAs do delete a;
+  for b in localBs do delete b;
 }
 

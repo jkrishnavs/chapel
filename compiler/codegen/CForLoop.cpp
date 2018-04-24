@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -23,9 +23,50 @@
 #include "AstVisitor.h"
 #include "build.h"
 #include "codegen.h"
+#include "driver.h"
 #include "ForLoop.h"
+#include "LayeredValueTable.h"
+
+#ifdef HAVE_LLVM
+#include "llvm/IR/Module.h"
+#endif
 
 #include <algorithm>
+
+#ifdef HAVE_LLVM
+
+
+static llvm::MDNode* generateLoopMetadata(bool addVectorizeEnableMetadata)
+{
+  GenInfo* info = gGenInfo;
+  auto &ctx = info->module->getContext();
+
+  std::vector<llvm::Metadata*> args;
+  auto tmpNode        = llvm::MDNode::getTemporary(ctx, llvm::None);
+  args.push_back(tmpNode.get());
+
+  // llvm.loop.vectorize.enable metadata is only used to either:
+  // 1) Explicitly disable vectorization of particular loop
+  // 2) Print warning when vectorization is enabled (using metadata) and vectorization didn't occur
+  // This means enabling vectorization using this metadata is not necessary for llvm vectorizer to vectorize loop
+  if(addVectorizeEnableMetadata)
+  {
+    llvm::Metadata *loopVectorizeEnable[] = { llvm::MDString::get(ctx, "llvm.loop.vectorize.enable"),
+                                              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(llvm::Type::getInt1Ty(ctx), true))};
+    args.push_back(llvm::MDNode::get(ctx, loopVectorizeEnable));
+  }
+
+  llvm::MDNode *loopMetadata = llvm::MDNode::get(ctx, args);
+  loopMetadata->replaceOperandWith(0, loopMetadata);
+  return loopMetadata;
+}
+
+static void addLoopMetadata(llvm::Instruction* instruction, llvm::MDNode* loopMetadata)
+{
+  instruction->setMetadata("llvm.loop", loopMetadata);
+}
+
+#endif
 
 /************************************ | *************************************
 *                                                                           *
@@ -84,7 +125,7 @@ GenRet CForLoop::codegen()
   else
   {
 #ifdef HAVE_LLVM
-    llvm::Function*   func          = info->builder->GetInsertBlock()->getParent();
+    llvm::Function*   func          = info->irBuilder->GetInsertBlock()->getParent();
 
     llvm::BasicBlock* blockStmtInit = NULL;
     llvm::BasicBlock* blockStmtBody = NULL;
@@ -111,10 +152,10 @@ GenRet CForLoop::codegen()
     func->getBasicBlockList().push_back(blockStmtInit);
 
     // Insert an explicit branch from the current block to the init block
-    info->builder->CreateBr(blockStmtInit);
+    info->irBuilder->CreateBr(blockStmtInit);
 
     // Now switch to the init block for code generation
-    info->builder->SetInsertPoint(blockStmtInit);
+    info->irBuilder->SetInsertPoint(blockStmtInit);
 
     // Code generate the init block.
     initBlock->body.codegen("");
@@ -125,20 +166,29 @@ GenRet CForLoop::codegen()
 
     // Normalize it to boolean
     if (condValue0->getType() != llvm::Type::getInt1Ty(info->module->getContext()))
-      condValue0 = info->builder->CreateICmpNE(condValue0,
+      condValue0 = info->irBuilder->CreateICmpNE(condValue0,
                                                llvm::ConstantInt::get(condValue0->getType(), 0),
                                                FNAME("condition"));
 
     // Create the conditional branch
-    info->builder->CreateCondBr(condValue0, blockStmtBody, blockStmtEnd);
+    info->irBuilder->CreateCondBr(condValue0, blockStmtBody, blockStmtEnd);
 
     // Now add the body.
     func->getBasicBlockList().push_back(blockStmtBody);
 
-    info->builder->SetInsertPoint(blockStmtBody);
+    info->irBuilder->SetInsertPoint(blockStmtBody);
     info->lvt->addLayer();
 
+    llvm::MDNode* loopMetadata = nullptr;
+    if(fNoVectorize == false && isOrderIndependent()) {
+      loopMetadata = generateLoopMetadata(false);
+      info->loopStack.emplace(loopMetadata, true);
+    }
+
     body.codegen("");
+
+    if(loopMetadata)
+      info->loopStack.pop();
 
     info->lvt->removeLayer();
 
@@ -149,16 +199,19 @@ GenRet CForLoop::codegen()
 
     // Normalize it to boolean
     if (condValue1->getType() != llvm::Type::getInt1Ty(info->module->getContext()))
-      condValue1 = info->builder->CreateICmpNE(condValue1,
-                                               llvm::ConstantInt::get(condValue1->getType(), 0),
-                                               FNAME("condition"));
+      condValue1 = info->irBuilder->CreateICmpNE(condValue1,
+                                                 llvm::ConstantInt::get(condValue1->getType(), 0),
+                                                 FNAME("condition"));
 
     // Create the conditional branch
-    info->builder->CreateCondBr(condValue1, blockStmtBody, blockStmtEnd);
+    llvm::Instruction* endLoopBranch = info->irBuilder->CreateCondBr(condValue1, blockStmtBody, blockStmtEnd);
+
+    if(loopMetadata)
+      addLoopMetadata(endLoopBranch, loopMetadata);
 
     func->getBasicBlockList().push_back(blockStmtEnd);
 
-    info->builder->SetInsertPoint(blockStmtEnd);
+    info->irBuilder->SetInsertPoint(blockStmtEnd);
 
     if (blockStmtBody) INT_ASSERT(blockStmtBody->getParent() == func);
     if (blockStmtEnd ) INT_ASSERT(blockStmtEnd->getParent()  == func);

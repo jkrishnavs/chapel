@@ -56,10 +56,9 @@ record Population {
   //
   // construct the population in terms of an array of colors passed in
   //
-  proc Population(colors) {
+  proc init(colors: [] Color) {
     chamSpace = colors.domain;
-    forall i in chamSpace do
-      chameneos[i] = new Chameneos(i, colors[i]);
+    chameneos = new Chameneos(1..colors.size, colors);
   }
 
   //
@@ -97,7 +96,7 @@ record Population {
   //
   // Delete the chameneos objects.
   //
-  proc ~Population {
+  proc deinit() {
     for c in chameneos do
       delete c;
   }
@@ -238,7 +237,8 @@ class MeetingPlace {
   //
   // Initialize the number of meetings that should take place
   //
-  proc MeetingPlace(numMeetings) {
+  proc init(numMeetings) {
+    this.complete();
     state.write(numMeetings << bitsPerChameneosID);
   }
 

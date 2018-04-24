@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -76,7 +76,7 @@ ifndef CHPL_MAKE_SETTINGS_NO_NEWLINES
 # Evaluate all of the definitions in CHPL_MAKE_ALL_VARS before running
 # printchplenv in order to pass the existing values from the compiler forward
 
-export CHPL_MAKE_SETTINGS_NO_NEWLINES := $(shell $(CHPL_MAKE_ALL_VARS) $(CHPL_MAKE_HOME)/util/printchplenv --make | tr '\n' '|' )
+export CHPL_MAKE_SETTINGS_NO_NEWLINES := $(shell $(CHPL_MAKE_ALL_VARS) $(CHPL_MAKE_HOME)/util/printchplenv --all --internal --no-tidy --make | tr '\n' '|' )
 endif
 
 # This really needs TWO newlines!
@@ -94,6 +94,9 @@ endef
 # Now eval our settings to set the Make variables to
 # set all of the CHPL_MAKE_... configuration-based variables!
 $(eval $(CHPL_MAKE_SETTINGS))
+
+# Try this to debug issues with CHPL_MAKE_* variables
+# $(info $(CHPL_MAKE_SETTINGS_NO_NEWLINES))
 
 # Now do some minor situational clean-ups.
 
@@ -164,7 +167,6 @@ else
   THIRD_PARTY_DIR = $(CHPL_MAKE_HOME)/third-party
 endif
 
-include $(THIRD_PARTY_DIR)/amudprun/Makefile.include
 include $(THIRD_PARTY_DIR)/gasnet/Makefile.include
 include $(THIRD_PARTY_DIR)/massivethreads/Makefile.include
 include $(THIRD_PARTY_DIR)/qthread/Makefile.include
@@ -236,6 +238,8 @@ LAUNCHER_BUILD = $(RUNTIME_ROOT)/../build/runtime-launch/$(CHPL_MAKE_LAUNCHER_SU
 LAUNCHER_OBJDIR = $(LAUNCHER_BUILD)/$(RUNTIME_SUBDIR)
 LAUNCHER_OBJ_DIR_STAMP = $(LAUNCHER_OBJ_DIR)/.timestamp
 
+# These are for use only when building the Chapel runtime,
+# since otherwise the lib directory should be CHPL_MAKE_RUNTIME_LIB
 LIB_RT_DIR = lib/$(CHPL_MAKE_RUNTIME_SUBDIR)
 LIB_LN_DIR = lib/$(CHPL_MAKE_LAUNCHER_SUBDIR)
 

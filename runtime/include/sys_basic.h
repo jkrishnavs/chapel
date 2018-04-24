@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -76,6 +76,9 @@
 // Ask a C++ compiler if it would please include e.g. INT64_MAX
 #ifndef __STDC_CONSTANT_MACROS
 #define __STDC_CONSTANT_MACROS
+#endif
+#ifndef __STDC_LIMIT_MACROS
+#define __STDC_LIMIT_MACROS
 #endif
 
 #include <sys/types.h>

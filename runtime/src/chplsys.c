@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -34,11 +34,6 @@
 #include "chpltypes.h"
 #include "error.h"
 
-// disable mem warnings for this file
-// to enable warnings-free compilation
-// (malloc might be used in the system headers)
-#include "chpl-mem-no-warning-macros.h"
-
 // System headers
 
 // We need this first so we can then decide based on the existence and
@@ -57,6 +52,7 @@
 #include <sched.h>
 #endif
 
+#include <ctype.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -249,7 +245,7 @@ static void computeHeapPageSizeByGuessing(size_t page_size_in)
   // in the heap.
   heapPageSize = page_size_in;
 
-  chpl_comm_desired_shared_heap(&heap_start, &heap_size);
+  chpl_comm_regMemHeapInfo(&heap_start, &heap_size);
 
   if (heap_start != NULL && heap_size != 0) {
 
@@ -363,22 +359,32 @@ size_t chpl_getHeapPageSize(void) {
 }
 
 
-uint64_t chpl_bytesPerLocale(void) {
+// This function returns the amount of physical memory the
+// system reports there is. This amount of memory is not generally
+// allocatable, since there has to be space for the kernel. This routine
+// makes no attempt to account for kernel space.
+uint64_t chpl_sys_physicalMemoryBytes(void) {
 #ifdef NO_BYTES_PER_LOCALE
   chpl_internal_error("sorry- bytesPerLocale not supported on this platform");
   return 0;
 #elif defined __APPLE__
   uint64_t membytes;
   size_t len = sizeof(membytes);
-  if (sysctlbyname("hw.memsize", &membytes, &len, NULL, 0)) 
+  if (sysctlbyname("hw.memsize", &membytes, &len, NULL, 0))
     chpl_internal_error("query of physical memory failed");
   return membytes;
 #elif defined _AIX
   return _system_configuration.physmem;
+#elif defined __FreeBSD__
+  uint64_t membytes;
+  size_t len = sizeof(membytes);
+  if (sysctlbyname("hw.physmem", &membytes, &len, NULL, 0))
+    chpl_internal_error("query of physical memory failed");
+  return membytes;
 #elif defined __NetBSD__
   uint64_t membytes;
   size_t len = sizeof(membytes);
-  if (sysctlbyname("hw.usermem", &membytes, &len, NULL, 0))
+  if (sysctlbyname("hw.physmem64", &membytes, &len, NULL, 0))
     chpl_internal_error("query of physical memory failed");
   return membytes;
 #elif defined __CYGWIN__
@@ -394,6 +400,8 @@ uint64_t chpl_bytesPerLocale(void) {
   //
 #else
   long int numPages, pageSize;
+  // This code runs for linux, but probably works for FreeBSD/NetBSD.
+  //
   numPages = sysconf(_SC_PHYS_PAGES);
   if (numPages < 0)
     chpl_internal_error("query of physical memory failed");
@@ -404,23 +412,82 @@ uint64_t chpl_bytesPerLocale(void) {
 #endif
 }
 
+// Should return in some sense "currently available user memory"
+// This should return one of:
+//  * the amount of memory that can be allocated without causing swapping
+//  * the amount of memory that is currently unused (i.e. free)
+uint64_t chpl_sys_availMemoryBytes(void) {
+#if defined(__APPLE__)
 
-size_t chpl_bytesAvailOnThisLocale(void) {
-#if defined __APPLE__
-  int membytes;
-  size_t len = sizeof(membytes);
-  if (sysctlbyname("hw.usermem", &membytes, &len, NULL, 0)) 
-    chpl_internal_error("query of physical memory failed");
-  return (size_t) membytes;
-#elif defined __NetBSD__
-  int64_t membytes;
-  size_t len = sizeof(membytes);
-  if (sysctlbyname("hw.usermem64", &membytes, &len, NULL, 0))
-    chpl_internal_error("query of hw.usermem64 failed");
-  return (size_t) membytes;
+  // On Mac OS X, we could get this value by calling host_statistics64
+  // but that's not really documented.
+  //
+  // So, we run vm_stat, which calls host_statistics, but
+  // which hopefully has a more stable interface.
+  //
+  // We used to use sysctlbyname("hw.usermem", &membytes, &len, NULL, 0)
+  // but that led to nonsense values being returned on some systems, anyway.
+
+  uint64_t pageSize = chpl_getSysPageSize();
+  FILE* f = popen("vm_stat", "r");
+  char buffer[256];
+  unsigned long pagesFree = 0;
+  int foundPagesFree = 0;
+
+  if (!f)
+    chpl_internal_error("could not run vm_stat in chpl_sys_availMemoryBytes");
+
+  while( fgets(buffer, sizeof(buffer), f) ) {
+    if (1 == sscanf(buffer, "Pages free: %lu", &pagesFree)) {
+      foundPagesFree = 1;
+    }
+  }
+
+  pclose(f);
+
+  if (!foundPagesFree)
+    chpl_internal_error("could not find Pages free vm_stat output "
+                        "in chpl_sys_availMemoryBytes");
+
+  return pageSize * pagesFree;
+
+#elif defined(__NetBSD__) || defined(__FreeBSD__)
+  // This used to run
+  //   sysctlbyname("hw.usermem64", &membytes, &len, NULL, 0)
+  // which returns the amount of non-kernel memory.
+  // It now gathers the amount of free memory to be more consistent
+  // with the Linux version.
+
+  uint64_t pageSize = chpl_getSysPageSize();
+  FILE* f = popen("vmstat -s", "r");
+  char buffer[256];
+  unsigned long pagesFree = 0;
+  int foundPagesFree = 0;
+
+  if (!f)
+    chpl_internal_error("could not run vm_stat in chpl_sys_availMemoryBytes");
+
+  while( fgets(buffer, sizeof(buffer), f) ) {
+    if (strstr(buffer, "pages free\n")) {
+      if (1 == sscanf(buffer, "%lu", &pagesFree))
+        foundPagesFree = 1;
+    }
+  }
+
+  pclose(f);
+
+  if (!foundPagesFree)
+    chpl_internal_error("could not find pages free vm_stat output "
+                        "in chpl_sys_availMemoryBytes");
+
+  return pageSize * pagesFree;
+
 #elif defined(__linux__)
   struct sysinfo s;
 
+  // MPF: I think this should return MemAvailable not MemFree
+  // on linux, because the page cache might be full of memory we can
+  // discard.
   if (sysinfo(&s) != 0)
     chpl_internal_error("sysinfo() failed");
   return (size_t) s.freeram;
@@ -435,19 +502,39 @@ size_t chpl_bytesAvailOnThisLocale(void) {
 //
 // Return information about the processors on the system.
 //
-static void getCpuInfo(int* p_numPhysCpus, int* p_numLogCpus) {
-  //
-  // Currently this is pretty limited -- it only returns the number of
-  // physical and logical (hyperthread, e.g.) CPUs, only looks at
-  // /proc/cpuinfo, and only supports homogeneous compute nodes with
-  // the same number of cores and siblings on every physical CPU.  It
-  // will probably need to become more complicated in the future.
-  //
+static struct {
+  int physId, coreId;
+} cpuTab[8192];
+static const int cpuTabSize = sizeof(cpuTab) / sizeof(cpuTab[0]);
+static int cpuTabLen = 0;
+
+
+static void
+add_to_cpuTab(int physId, int coreId) {
+  int i = 0;
+  while (i < cpuTabLen
+         && (physId != cpuTab[i].physId || coreId != cpuTab[i].coreId))
+    i++;
+  if (i >= cpuTabLen) {
+    if (++cpuTabLen >= cpuTabSize) {
+      chpl_internal_error("cpuTab[] full");
+    } else {
+      cpuTab[i].physId = physId;
+      cpuTab[i].coreId = coreId;
+    }
+  }
+}
+
+
+static int numCores, numPUs;
+
+
+static void getCpuInfo_once(void) {
   FILE* f;
   char buf[100];
   int procs = 0;
-  int cpuCores = 0;
-  int siblings = 0;
+  int physId;
+  int coreId;
 
   if ((f = fopen("/proc/cpuinfo", "r")) == NULL)
     chpl_internal_error("Cannot open /proc/cpuinfo");
@@ -459,42 +546,126 @@ static void getCpuInfo(int* p_numPhysCpus, int* p_numLogCpus) {
   //
   assert(f != NULL);
 
+  physId = coreId = -1;
+
   while (!feof(f) && fgets(buf, sizeof(buf), f) != NULL) {
     size_t buf_len = strlen(buf);
     int procTmp;
-    int cpuCoresTmp;
-    int siblingsTmp;
+    int physIdTmp;
+    int coreIdTmp;
 
     if (sscanf(buf, "processor : %i", &procTmp) == 1) {
       procs++;
     }
-    else if (sscanf(buf, "cpu cores : %i", &cpuCoresTmp) == 1) {
-      if (cpuCores == 0)
-        cpuCores = cpuCoresTmp;
-      else if (cpuCoresTmp != cpuCores)
-        chpl_internal_error("varying number of cpu cores");
+    else if (sscanf(buf, "physical id : %i", &physIdTmp) == 1) {
+      if (physId >= 0) {
+        add_to_cpuTab(physId, coreId);
+        coreId = -1;
+      }
+      physId = physIdTmp;
     }
-    else if (sscanf(buf, "siblings : %i", &siblingsTmp) == 1) {
-      if (siblings == 0)
-        siblings = siblingsTmp;
-      else if (siblingsTmp != siblings)
-        chpl_internal_error("varying number of siblings");
+    else if (sscanf(buf, "core id : %i", &coreIdTmp) == 1) {
+      if (coreId >= 0) {
+        add_to_cpuTab(physId, coreId);
+        physId = -1;
+      }
+      coreId = coreIdTmp;
     }
 
     while (buf[buf_len - 1] != '\n' && fgets(buf, sizeof(buf), f) != NULL)
       buf_len = strlen(buf);
   }
 
+  if (physId >= 0 || coreId >= 0) {
+    add_to_cpuTab(physId, coreId);
+  }
+
   fclose(f);
 
-  if (cpuCores == 0)
-    cpuCores = 1;
-  if (siblings == 0)
-    siblings = 1;
-  if ((*p_numPhysCpus = procs / (siblings / cpuCores)) <= 0)
-    *p_numPhysCpus = 1;
-  if ((*p_numLogCpus = procs) <= 0)
-    *p_numLogCpus = 1;
+  if ((numPUs = procs) <= 0)
+    numPUs = cpuTabLen;
+
+  if (cpuTabLen > 0) {
+    numCores = cpuTabLen;
+    return;
+  }
+
+  // We have a limited-format /proc/cpuinfo.
+  // See if the /sys filesystem has any more information for us.
+  int threads_per_core = 0;
+  if ((f = fopen("/sys/devices/system/cpu/cpu0/topology/thread_siblings", "r"))
+      != NULL) {
+    int c;
+    while ((c = getc(f)) != EOF) {
+      // The number of threads per core is the total number of bits
+      // set in the hex digits of the thread_siblings map.
+      //
+      // The most authoritative source, kernel.org, does not dictate
+      // the formatting of the mask.  However, the following document
+      // indicates that it is either a hex or binary bit mask.  The code
+      // below works in either case.
+      //
+      // https://www.ibm.com/support/knowledgecenter/en/linuxonibm/liaat/liaattunproctop.htm
+      //
+      // Also note that hwloc itself parses the file as a hex bitmap only.
+      if (isxdigit(c)) {
+        switch (tolower(c)) {
+        case '0':
+          break;
+        case '1':
+        case '2':
+        case '4':
+        case '8':
+          threads_per_core += 1;
+          break;
+        case '3':
+        case '5':
+        case '6':
+        case '9':
+        case 'a':
+        case 'c':
+          threads_per_core += 2;
+          break;
+        case '7':
+        case 'b':
+        case 'd':
+        case 'e':
+          threads_per_core += 3;
+          break;
+        case 'f':
+          threads_per_core += 4;
+          break;
+        }
+      } else if (c != ',' && c != '\n' && tolower(c) != 'x') {
+        // unknown file format -- don't use
+        threads_per_core = 1;
+        break;
+      }
+    }
+    fclose(f);
+  }
+  if (threads_per_core == 0)
+    threads_per_core = 1;
+  if ((numCores = procs / threads_per_core) <= 0)
+    numCores = 1;
+}
+
+
+static void getCpuInfo(int* p_numPhysCpus, int* p_numLogCpus) {
+#ifdef _POSIX_VERSION
+  {
+    static pthread_once_t onceCtl = PTHREAD_ONCE_INIT;
+
+    if (pthread_once(&onceCtl, getCpuInfo_once) != 0) {
+      chpl_internal_error("pthread_once(getCpuInfo_once) failed");
+    }
+
+    *p_numPhysCpus = numCores;
+    *p_numLogCpus = numPUs;
+  }
+#else
+#error "on __linux__ or __NetBSD__, but !defined(_POSIX_VERSION)"
+#endif
 }
 #endif
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -20,11 +20,17 @@
 #ifndef _VIEW_H_
 #define _VIEW_H_
 
-#include "baseAST.h"
+#include "expr.h"
 #include "vec.h"
+#include <vector>
 
-BaseAST*    aid(int id);
-BaseAST*    aid09(int id);
+BaseAST* aid(int id);
+BaseAST* aid09(int id);
+Expr*    aidExpr(int id);
+
+// counterparts of the above for convenient shortcuts
+BaseAST* aid(BaseAST* ast);
+Expr*    aidExpr(BaseAST* ast);
 
 void        list_view_noline(BaseAST* ast);
 void        nprint_view(BaseAST* ast);
@@ -69,12 +75,21 @@ void        vec_view(Vec<Symbol*,   VEC_INTEGRAL_SIZE>* v);
 void        vec_view(Vec<Symbol*,   VEC_INTEGRAL_SIZE>& v);
 void        vec_view(Vec<FnSymbol*, VEC_INTEGRAL_SIZE>* v);
 void        vec_view(Vec<FnSymbol*, VEC_INTEGRAL_SIZE>& v);
+void        vec_view(std::vector<Symbol*>* vec);
+void        vec_view(std::vector<Symbol*>& vec);
+
 
 void        fnsWithName(const char* name);
 void        fnsWithName(const char* name, Vec<FnSymbol*>& fnVec);
 
 void        whocalls(int id);
 void        whocalls(BaseAST* ast);
+
+FnSymbol*   debugGetTheIteratorFn(int id);
+FnSymbol*   debugGetTheIteratorFn(BaseAST* ast);
+FnSymbol*   debugGetTheIteratorFn(Symbol* sym);
+FnSymbol*   debugGetTheIteratorFn(Type* type);
+FnSymbol*   debugGetTheIteratorFn(ForLoop* forLoop);
 
 // NB these return the same static buffer
 const char* stringLoc(int id);
@@ -88,6 +103,11 @@ const char* debugLoc(BaseAST* ast);
 
 int debugID(int id);
 int debugID(BaseAST* ast);
-
+void debugSummary(int id);
+void debugSummary(BaseAST* ast);
+Symbol* debugParentSym(int id);
+Symbol* debugParentSym(BaseAST* ast);
+Expr* debugParentExpr(int id);
+Expr* debugParentExpr(BaseAST* ast);
 
 #endif

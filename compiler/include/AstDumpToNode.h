@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -22,6 +22,7 @@
 
 #include "AstLogger.h"
 
+#include "alist.h"
 #include <cstdio>
 
 class BaseAST;
@@ -83,7 +84,6 @@ public:
   virtual void     exitAggrType        (AggregateType*     node);
 
   virtual bool     enterEnumType       (EnumType*          node);
-  virtual void     exitEnumType        (EnumType*          node);
 
   virtual void     visitPrimType       (PrimitiveType*     node);
 
@@ -103,6 +103,7 @@ public:
   virtual void     visitVarSym         (VarSymbol*         node);
 
   virtual bool     enterCallExpr       (CallExpr*          node);
+
   virtual bool     enterContextCallExpr(ContextCallExpr*   node);
 
   virtual bool     enterDefExpr        (DefExpr*           node);
@@ -117,6 +118,8 @@ public:
   virtual void     visitUseStmt        (UseStmt*           node);
 
   virtual bool     enterBlockStmt      (BlockStmt*         node);
+
+  virtual bool     enterForallStmt     (ForallStmt*        node);
 
   virtual bool     enterWhileDoStmt    (WhileDoStmt*       node);
 
@@ -133,7 +136,12 @@ public:
   virtual void     visitEblockStmt     (ExternBlockStmt*   node);
 
   virtual bool     enterGotoStmt       (GotoStmt*          node);
-  virtual void     exitGotoStmt        (GotoStmt*          node);
+
+  virtual bool     enterTryStmt        (TryStmt*           node);
+
+  virtual bool     enterCatchStmt      (CatchStmt*         node);
+
+  virtual bool     enterDeferStmt      (DeferStmt*         node);
 
 private:
                    AstDumpToNode();
@@ -155,23 +163,12 @@ private:
 
   void             newline();
 
-  void             logEnter(BaseAST* node);
-  void             logEnter(BaseAST* node, const char* fmt, ...);
-  void             logEnter(const char* fmt, ...);
-
-  void             logExit (BaseAST* node);
-  void             logExit (const char* fmt, ...);
-
-  void             logVisit(BaseAST* node);
-  void             logVisit(const char* fmt, ...);
-
-  void             logWrite(const char* fmt, ...);
-
   // enable compact mode
   void             enterNode(BaseAST* node)                             const;
   void             enterNodeSym(Symbol* node, const char* name = 0)     const;
   void             exitNode(BaseAST* node, bool addNewline = false)     const;
   void             writeField(const char* msg, int offset, BaseAST* field);
+  void             writeField(const char* msg, AList& list);
   void             writeLongString(const char* msg, const char* arg)    const;
   void             writeNodeID(BaseAST* node,
                                bool     spaceBefore,

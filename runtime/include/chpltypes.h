@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -110,12 +110,15 @@ typedef int32_t c_sublocid_t;
 #define FORMAT_c_sublocid_t PRId32
 typedef int64_t c_localeid_t;
 
-// These are special values that mean "no sublocale and "any sublocale".
+// These are special values that mean "no", "any", and "all sublocales",
+// respectively.
 #define c_sublocid_none_val -1
 #define c_sublocid_any_val  -2
+#define c_sublocid_all_val  -3
 
 static const c_sublocid_t c_sublocid_none = c_sublocid_none_val;
 static const c_sublocid_t c_sublocid_any  = c_sublocid_any_val;
+static const c_sublocid_t c_sublocid_all  = c_sublocid_all_val;
 
 static inline int isActualSublocID(c_sublocid_t subloc) {
   return subloc >= 0;
@@ -132,24 +135,12 @@ static inline int isActualSublocID(c_sublocid_t subloc) {
 // include chpl-locale-model.h.  (note: moving it out of the #ifdef leads to
 // problems building the launcher).
 
-#ifdef CHPL_WIDE_POINTER_STRUCT
 #include "chpl-locale-model.h"
 typedef struct wide_ptr_s {
   chpl_localeID_t locale;
   void* addr;
 } wide_ptr_t;
 typedef wide_ptr_t* ptr_wide_ptr_t;
-#else
-// It's useful to have the type for a wide pointer-to-void.
-// This is the packed pointer version (the other version would be
-// {{node,subloc}, address}).
-#ifdef CHPL_WIDE_POINTER_PACKED
-#include "chpl-locale-model.h"
-typedef void * wide_ptr_t;
-typedef wide_ptr_t* ptr_wide_ptr_t;
-#ifndef CHPL_WIDE_POINTER_NODE_BITS
-#error Missing packed wide pointer definition CHPL_WIDE_POINTER_NODE_BITS
-#endif
 
 #else
 // Just don't define wide_ptr_t. That way, other programs
@@ -161,10 +152,6 @@ typedef wide_ptr_t* ptr_wide_ptr_t;
 // builds using chpl-comm.h (which uses that type to declare the
 // global variables registry), can continue to work.
 typedef void* ptr_wide_ptr_t;
-#endif
-
-#endif
-
 #endif // LAUNCHER
 
 #define nil 0 

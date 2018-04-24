@@ -16,7 +16,7 @@ class myNumaDomain : myAbstractLocaleModel {
   const name: string;
   proc chpl_name() return name;
 
-  proc myNumaDomain() {
+  proc init() {
     name = "test";
   }
 }
@@ -24,4 +24,4 @@ class myNumaDomain : myAbstractLocaleModel {
 
 var c = new myNumaDomain();
 writeln(c.name);
-
+delete c;

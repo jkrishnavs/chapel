@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -27,6 +27,7 @@
 #include "AstVisitor.h"
 #include "build.h"
 #include "docsDriver.h"
+#include "driver.h"
 #include "expr.h"
 #include "files.h"
 #include "intlimits.h"
@@ -41,32 +42,30 @@
 
 static bool isDerivedType(Type* type, Flag flag);
 
-Type::Type(AstTag astTag, Symbol* init_defaultVal) :
-  BaseAST(astTag),
-
-  symbol(NULL),
-  refType(NULL),
-  hasGenericDefaults(false),
-  defaultValue(init_defaultVal),
-  defaultInitializer(NULL),
-  defaultTypeConstructor(NULL),
-  destructor(NULL),
-  isInternalType(false),
-  instantiatedFrom(NULL),
-  scalarPromotionType(NULL) {
+Type::Type(AstTag astTag, Symbol* iDefaultVal) : BaseAST(astTag) {
+  symbol              = NULL;
+  refType             = NULL;
+  hasGenericDefaults  = false;
+  defaultValue        = iDefaultVal;
+  destructor          = NULL;
+  isInternalType      = false;
+  scalarPromotionType = NULL;
 }
 
 Type::~Type() {
 
 }
 
+const char* Type::name() const {
+  return symbol->name;
+}
+
 void Type::verify() {
 }
 
-void Type::addSymbol(TypeSymbol* newsymbol) {
-  symbol = newsymbol;
+void Type::addSymbol(TypeSymbol* newSymbol) {
+  symbol = newSymbol;
 }
-
 
 bool Type::inTree() {
   if (symbol)
@@ -97,11 +96,124 @@ bool Type::isDefaultIntentConst() const {
   return retval;
 }
 
-Symbol* Type::getField(const char* name, bool fatal) {
+bool Type::isWidePtrType() const {
+  if (symbol->hasEitherFlag(FLAG_WIDE_REF, FLAG_WIDE_CLASS)) {
+    // Workaround an ugly hack in insert wide references
+    // which can make a wide _array record containing an "addr" record
+    Type* baseType = this->getField("addr")->type;
+    if (isReferenceType(baseType) || isClass(baseType) || baseType == dtNil)
+      return true;
+  }
+  return false;
+}
+
+Symbol* Type::getField(const char* name, bool fatal) const {
   INT_FATAL(this, "getField not called on AggregateType");
   return NULL;
 }
 
+bool Type::hasDestructor() const {
+  return destructor != NULL;
+}
+
+FnSymbol* Type::getDestructor() const {
+  return destructor;
+}
+
+void Type::setDestructor(FnSymbol* fn) {
+  destructor = fn;
+}
+
+const char* toString(Type* type) {
+  const char* retval = NULL;
+
+  if (type != NULL) {
+    retval = type->getValType()->symbol->name;
+
+  } else {
+    retval = "null type";
+  }
+
+  return retval;
+}
+
+/************************************* | **************************************
+*                                                                             *
+* Qualifier and QualifiedType                                                 *
+*                                                                             *
+************************************** | *************************************/
+
+const char* qualifierToStr(Qualifier q) {
+    switch (q) {
+      case QUAL_UNKNOWN:
+        return "unknown";
+
+      case QUAL_CONST:
+        return "const";
+      case QUAL_REF:
+        return "ref";
+      case QUAL_CONST_REF:
+        return "const-ref";
+
+      case QUAL_PARAM:
+        return "param";
+
+      case QUAL_VAL:
+        return "val";
+      case QUAL_NARROW_REF:
+        return "narrow-ref";
+      case QUAL_WIDE_REF:
+        return "wide-ref";
+
+      case QUAL_CONST_VAL:
+        return "const-val";
+      case QUAL_CONST_NARROW_REF:
+        return "const-narrow-ref";
+      case QUAL_CONST_WIDE_REF:
+        return "const-wide-ref";
+    }
+
+    INT_FATAL("Unhandled Qualifier");
+    return "UNKNOWN-QUAL";
+}
+
+bool QualifiedType::isRefType() const {
+  return _type->symbol->hasFlag(FLAG_REF);
+}
+
+bool QualifiedType::isWideRefType() const {
+  return _type->symbol->hasFlag(FLAG_WIDE_REF);
+}
+
+const char* QualifiedType::qualStr() const {
+  if (isRefType())
+    return qualifierToStr(QUAL_REF);
+
+  if (isWideRefType())
+    return qualifierToStr(QUAL_WIDE_REF);
+
+  // otherwise
+  return qualifierToStr(_qual);
+}
+
+QualifiedType QualifiedType::refToRefType() const {
+  Qualifier qual = _qual;
+  Type* type = _type;
+  if (isRef() && !type->symbol->hasFlag(FLAG_REF)) {
+    // Use a ref type here.
+    // In the future, the Qualifier should be sufficient
+    INT_ASSERT(type->refType != NULL);
+    type = type->refType;
+  }
+
+  return QualifiedType(qual, type);
+}
+
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 PrimitiveType::PrimitiveType(Symbol *init, bool internalType) :
   Type(E_PrimitiveType, init)
@@ -135,7 +247,6 @@ PrimitiveType::copyInner(SymbolMap* map) {
 void PrimitiveType::replaceChild(BaseAST* old_ast, BaseAST* new_ast) {
   INT_FATAL(this, "Unexpected case in PrimitiveType::replaceChild");
 }
-
 
 
 void PrimitiveType::verify() {
@@ -185,17 +296,9 @@ void PrimitiveType::accept(AstVisitor* visitor) {
   visitor->visitPrimType(this);
 }
 
-bool QualifiedType::isRefType() const {
-  return _type->symbol->hasFlag(FLAG_REF);
-}
-
-bool QualifiedType::isWideRefType() const {
-  return _type->symbol->hasFlag(FLAG_WIDE_REF);
-}
-
 EnumType::EnumType() :
   Type(E_EnumType, NULL),
-  constants(), integerType(NULL),
+  constants(), integerType(NULL), minConstant(), maxConstant(),
   doc(NULL)
 {
   gEnumTypes.add(this);
@@ -216,6 +319,8 @@ void EnumType::verify() {
   for_alist(expr, constants) {
     if (expr->parentSymbol != symbol)
       INT_FATAL(this, "Bad EnumType::constants::parentSymbol");
+    if (!isDefExpr(expr))
+      INT_FATAL(this, "Bad EnumType::constants - not a DefExpr");
   }
 }
 
@@ -223,8 +328,14 @@ void EnumType::verify() {
 EnumType*
 EnumType::copyInner(SymbolMap* map) {
   EnumType* copy = new EnumType();
-  for_enums(def, this)
-    copy->constants.insertAtTail(COPY_INT(def));
+
+  for_enums(def, this) {
+    DefExpr* newDef = COPY_INT(def);
+    newDef->sym->type = copy;
+    copy->constants.insertAtTail(newDef);
+  }
+  copy->minConstant = this->minConstant;
+  copy->maxConstant = this->maxConstant;;
   copy->addSymbol(symbol);
   return copy;
 }
@@ -246,11 +357,17 @@ void EnumType::sizeAndNormalize() {
   uint64_t max;
   int64_t min;
   PrimitiveType* ret = NULL;
+  Immediate* minImm = NULL;
+  Immediate* maxImm = NULL;
 
   // First, look for negative numbers in the enum.
   // If there are any, we have to store all
   // the values in negative numbers.
   for_enums(constant, this) {
+    // If this passes testing, much of the following can
+    // be significantly simplified.
+    INT_ASSERT(constant->init);
+
     if( constant->init ) {
       if( get_int( constant->init, &v ) ) {
         if( v < 0 ) {
@@ -288,11 +405,16 @@ void EnumType::sizeAndNormalize() {
     SET_LINENO(constant);
     if( constant->init ) {
       // set v and uv to the initializer value
+      // if the number doesn't fit in one of them, set it
+      // to 1. That avoids overflow when we increment these below,
+      // and won't confuse max/min calculations since any size
+      // integer needs to be able to represent 1.
       if( get_int( constant->init, &v ) ) {
         if( v >= 0 ) uv = v;
         else uv = 1;
       } else if( get_uint( constant->init, &uv ) ) {
-        v = uv;
+        if (uv <= (uint64_t)INT64_MAX) v = uv;
+        else v = 1;
       }
     } else {
       // create initializer with v
@@ -322,11 +444,18 @@ void EnumType::sizeAndNormalize() {
       if( max_v < v ) max_v = v;
       if( min_uv > uv ) min_uv = uv;
       if( max_uv < uv ) max_uv = uv;
+
     }
     // Increment v for the next one, in case it is not set.
     v++;
     uv++;
   }
+
+  // User error if the enum contains both negative values and
+  // something needing a uint64.
+  if (min_v < 0 && max_uv > (uint64_t)INT64_MAX)
+    USR_FATAL(this,
+              "this enum cannot be represented with a single integer type");
 
   num_bytes = 0;
 
@@ -356,11 +485,11 @@ void EnumType::sizeAndNormalize() {
 
     if( num_bytes < num_bytes_neg ) num_bytes = num_bytes_neg;
   } else {
-    if( max_v <= UINT8_MAX ) {
+    if( max_uv <= UINT8_MAX ) {
       num_bytes = 1;
-    } else if( max_v <= UINT16_MAX ) {
+    } else if( max_uv <= UINT16_MAX ) {
       num_bytes = 2;
-    } else if( max_v <= UINT32_MAX ) {
+    } else if( max_uv <= UINT32_MAX ) {
       num_bytes = 4;
     } else {
       num_bytes = 8;
@@ -371,43 +500,46 @@ void EnumType::sizeAndNormalize() {
   // and set et->integerType
   min = max = 0;
 
+  IF1_int_type int_size = INT_SIZE_DEFAULT;
+
   if( num_bytes == 1 ) {
+    int_size = INT_SIZE_8;
     if( issigned ) {
       max = INT8_MAX;
       min = INT8_MIN;
-      ret = dtInt[INT_SIZE_8];
     } else {
       max = UINT8_MAX;
-      ret = dtUInt[INT_SIZE_8];
     }
   } else if( num_bytes == 2 ) {
+    int_size = INT_SIZE_16;
     if( issigned ) {
       max = INT16_MAX;
       min = INT16_MIN;
-      ret = dtInt[INT_SIZE_16];
     } else {
       max = UINT16_MAX;
-      ret = dtUInt[INT_SIZE_16];
     }
   } else if( num_bytes == 4 ) {
+    int_size = INT_SIZE_32;
     if( issigned ) {
       max = INT32_MAX;
       min = INT32_MIN;
-      ret = dtInt[INT_SIZE_32];
     } else {
       max = UINT32_MAX;
-      ret = dtUInt[INT_SIZE_32];
     }
   } else if( num_bytes == 8 ) {
+    int_size = INT_SIZE_64;
     if( issigned ) {
       max = INT64_MAX;
       min = INT64_MIN;
-      ret = dtInt[INT_SIZE_64];
     } else {
       max = UINT64_MAX;
-      ret = dtUInt[INT_SIZE_64];
     }
   }
+
+  if (issigned)
+    ret = dtInt[int_size];
+  else
+    ret = dtUInt[int_size];
 
   // At the end of it all, check that each enum
   // symbol fits into the assigned type.
@@ -426,15 +558,119 @@ void EnumType::sizeAndNormalize() {
     }
   }
 
+  // Replace the immediates with one of the appropriate numeric type.
+  // This is a way of normalizing the enum constants and simplifying
+  // what follow-on passes need to deal with.
+  for_enums(constant, this) {
+    SET_LINENO(constant);
+    INT_ASSERT(constant->init);
+
+    if (ret == constant->init->typeInfo()) {
+      // Nothing to do, constant already has appropriate type
+    } else {
+      bool have_v = true;
+      bool have_uv = true;
+      v = 0;
+      uv = 0;
+      // set v and uv to the initializer value
+      if( get_int( constant->init, &v ) ) {
+        if( v >= 0 ) uv = v;
+        else have_uv = false;
+      } else if( get_uint( constant->init, &uv ) ) {
+        if (uv <= (uint64_t)INT64_MAX) v = uv;
+        else have_v = false;
+      }
+
+      if( issigned ) {
+        INT_ASSERT(have_v);
+        constant->init->replace(new SymExpr(new_IntSymbol(v, int_size)));
+      } else {
+        INT_ASSERT(have_uv);
+        constant->init->replace(new SymExpr(new_UIntSymbol(uv, int_size)));
+      }
+    }
+  }
+
+  first = true;
+
+  min_v = max_v = 0;
+  min_uv = max_uv = 0;
+
+  // Set minConstant and maxConstant
+  for_enums(constant, this) {
+    SET_LINENO(constant);
+    INT_ASSERT(constant->init);
+
+    bool got = false;
+
+    v = 0;
+    uv = 0;
+    if (issigned)
+      got = get_int(constant->init, &v);
+    else
+      got = get_uint(constant->init, &uv);
+
+    INT_ASSERT(got);
+
+    Immediate* imm = getSymbolImmediate(constant->sym);
+
+    if (first) {
+      if (issigned) {
+        min_v = v;
+        max_v = v;
+      } else {
+        min_uv = uv;
+        max_uv = uv;
+      }
+      minImm = imm;
+      maxImm = imm;
+      first = false;
+    } else {
+      if (issigned) {
+        if (v < min_v) {
+          min_v = v;
+          minImm = imm;
+        }
+        if (v > max_v) {
+          max_v = v;
+          maxImm = imm;
+        }
+      } else {
+        if (uv < min_uv) {
+          min_uv = uv;
+          minImm = imm;
+        }
+        if (uv > max_uv) {
+          max_uv = uv;
+          maxImm = imm;
+        }
+      }
+    }
+  }
+
+  INT_ASSERT(minImm && maxImm);
+  this->minConstant = *minImm;
+  this->maxConstant = *maxImm;
+
+
   integerType = ret;
 }
 
 PrimitiveType* EnumType::getIntegerType() {
+  INT_ASSERT(integerType);
   if( ! integerType ) {
     sizeAndNormalize();
   }
   return integerType;
 }
+
+Immediate* EnumType::getMinConstant() {
+  return &minConstant;
+}
+Immediate* EnumType::getMaxConstant() {
+  return &maxConstant;
+}
+
 
 void EnumType::accept(AstVisitor* visitor) {
   if (visitor->enterEnumType(this) == true) {
@@ -633,15 +869,6 @@ void initPrimitiveTypes() {
   INIT_PRIM_COMPLEX( "complex(64)", 64);
   INIT_PRIM_COMPLEX( "complex", 128);       // default size
 
-  dtStringCopy = createPrimitiveType( "c_string_copy", "c_string_copy" );
-  dtStringCopy->defaultValue = gOpaque;
-  dtStringCopy->symbol->addFlag(FLAG_NO_CODEGEN);
-
-  CREATE_DEFAULT_SYMBOL(dtStringCopy, gStringCopy, "_nullString");
-  gStringCopy->cname = "NULL";
-  gStringCopy->addFlag(FLAG_EXTERN);
-
-  // Like c_string_copy but unowned.
   // Could be == c_ptr(int(8)) e.g.
   // used in some runtime interfaces
   dtCVoidPtr   = createPrimitiveType("c_void_ptr", "c_void_ptr" );
@@ -701,6 +928,9 @@ void initPrimitiveTypes() {
   dtIteratorClass = createInternalType("_iteratorClass", "_iteratorClass");
   dtIteratorClass->symbol->addFlag(FLAG_GENERIC);
 
+  dtUnmanaged = createInternalType("_unmanaged", "_unmanaged");
+  dtUnmanaged->symbol->addFlag(FLAG_GENERIC);
+
   dtMethodToken = createInternalType ("_MT", "_MT");
 
   CREATE_DEFAULT_SYMBOL(dtMethodToken, gMethodToken, "_mt");
@@ -756,40 +986,6 @@ static VarSymbol* createSymbol(PrimitiveType* primType, const char* name) {
 *                                                                             *
 ************************************** | *************************************/
 
-DefExpr* defineObjectClass() {
-  // The base object class looks like this:
-  //
-  //   class object {
-  //     chpl__class_id chpl__cid;
-  //   }
-  //
-  // chpl__class_id is an int32_t field identifying the classes
-  //  in the program.  We never create the actual field within the
-  //  IR (it is directly generated in the C code).  It might
-  //  be the right thing to do, so I made an attempt at adding the
-  //  field.  Unfortunately, we would need some significant changes
-  //  throughout compilation, and it seemed to me that the it might result
-  //  in possibly more special case code.
-  //
-  DefExpr* retval = buildClassDefExpr("object",
-                                      NULL,
-                                      AGGREGATE_CLASS,
-                                      NULL,
-                                      new BlockStmt(),
-                                      FLAG_UNKNOWN,
-                                      NULL);
-
-  retval->sym->addFlag(FLAG_OBJECT_CLASS);
-
-  // Prevents removal in pruneResolvedTree().
-  retval->sym->addFlag(FLAG_GLOBAL_TYPE_SYMBOL);
-  retval->sym->addFlag(FLAG_NO_OBJECT);
-
-  dtObject = retval->sym->type;
-
-  return retval;
-}
-
 void initChplProgram(DefExpr* objectDef) {
   theProgram           = new ModuleSymbol("chpl__Program",
                                           MOD_INTERNAL,
@@ -798,15 +994,6 @@ void initChplProgram(DefExpr* objectDef) {
   theProgram->filename = astr("<internal>");
 
   theProgram->addFlag(FLAG_NO_CODEGEN);
-
-  UseStmt* base = new UseStmt(new UnresolvedSymExpr("ChapelBase"));
-  UseStmt* std  = new UseStmt(new UnresolvedSymExpr("ChapelStandard"));
-
-  theProgram->block->insertAtTail(base);
-
-  // it may be better to add the following use after parsing
-  // to simplify insertion of module guard sync var defs
-  theProgram->block->insertAtTail(std);
 
   theProgram->block->insertAtHead(objectDef);
 
@@ -817,11 +1004,13 @@ void initChplProgram(DefExpr* objectDef) {
 // matching 'value'. For use in initCompilerGlobals.
 static void setupBoolGlobal(VarSymbol* globalVar, bool value) {
   rootModule->block->insertAtTail(new DefExpr(globalVar));
+
   if (value) {
-    globalVar->immediate = new Immediate;
+     globalVar->immediate = new Immediate;
     *globalVar->immediate = *gTrue->immediate;
+
   } else {
-    globalVar->immediate = new Immediate;
+     globalVar->immediate = new Immediate;
     *globalVar->immediate = *gFalse->immediate;
   }
 }
@@ -972,6 +1161,39 @@ int get_width(Type *t) {
   return 0;
 }
 
+// numbers between -2**width .. 2**width
+// will fit exactly in a floating-point representation.
+int get_mantissa_width(Type *t) {
+  // FLOAT_SIZE_16 would have 11 bits of precision
+  if (t == dtReal[FLOAT_SIZE_32] ||
+      t == dtImag[FLOAT_SIZE_32] ||
+      t == dtComplex[COMPLEX_SIZE_64])
+    // mantissa for 32-bit float
+    return 24;
+  if (t == dtReal[FLOAT_SIZE_64] ||
+      t == dtImag[FLOAT_SIZE_64] ||
+      t == dtComplex[COMPLEX_SIZE_128])
+    // mantissa for 64-bit float
+    return 53;
+  INT_FATAL(t, "Unknown mantissa width");
+  return 0;
+}
+
+int get_exponent_width(Type *t) {
+  // FLOAT_SIZE_16 would have 5 bits of exponent
+  if (t == dtReal[FLOAT_SIZE_32] ||
+      t == dtImag[FLOAT_SIZE_32] ||
+      t == dtComplex[COMPLEX_SIZE_64])
+    // exponent bits for 32-bit float
+    return 8;
+  if (t == dtReal[FLOAT_SIZE_64] ||
+      t == dtImag[FLOAT_SIZE_64] ||
+      t == dtComplex[COMPLEX_SIZE_128])
+    // exponent bits for 64-bit float
+    return 15;
+  INT_FATAL(t, "Unknown exponent width");
+  return 0;
+}
 
 bool isClass(Type* t) {
   if (AggregateType* ct = toAggregateType(t))
@@ -979,6 +1201,19 @@ bool isClass(Type* t) {
   return false;
 }
 
+bool isClassOrNil(Type* t) {
+  if (t == dtNil) return true;
+  return isClass(t);
+}
+
+bool isClassLike(Type* t) {
+  return isClass(t) || isUnmanagedClassType(t);
+}
+
+bool isClassLikeOrNil(Type* t) {
+  if (t == dtNil) return true;
+  return isClassLike(t);
+}
 
 bool isRecord(Type* t) {
   if (AggregateType* ct = toAggregateType(t))
@@ -1050,6 +1285,10 @@ static bool isDerivedType(Type* type, Flag flag)
   return retval;
 }
 
+bool isManagedPtrType(const Type* t) {
+  return t && t->symbol->hasFlag(FLAG_MANAGED_POINTER);
+}
+
 bool isSyncType(const Type* t) {
   return t->symbol->hasFlag(FLAG_SYNC);
 }
@@ -1077,56 +1316,84 @@ bool isRefIterType(Type* t) {
   return false;
 }
 
-bool isSubClass(Type* type, Type* baseType)
-{
-  if (type == baseType)
-    return true;
+bool isSubClass(Type* type, Type* baseType) {
+  bool retval = false;
 
-  forv_Vec(Type, pt, type->dispatchParents)
-    if (isSubClass(pt, baseType))
-      return true;
+  if (type == baseType) {
+    retval = true;
 
-  return false;
+  } else if (AggregateType* at = toAggregateType(type)) {
+    forv_Vec(AggregateType, pt, at->dispatchParents) {
+      if (isSubClass(pt, baseType) == true) {
+        retval = true;
+        break;
+      }
+    }
+  }
+
+  return retval;
 }
 
 bool isDistClass(Type* type) {
-  if (type->symbol->hasFlag(FLAG_BASE_DIST))
-    return true;
+  bool retval = false;
 
-  forv_Vec(Type, pt, type->dispatchParents)
-    if (isDistClass(pt))
-      return true;
+  if (type->symbol->hasFlag(FLAG_BASE_DIST) == true) {
+    retval = true;
 
-  return false;
+  } else if (AggregateType* at = toAggregateType(type)) {
+    forv_Vec(AggregateType, pt, at->dispatchParents) {
+      if (isDistClass(pt) == true) {
+        retval = true;
+        break;
+      }
+    }
+  }
+
+  return retval;
 }
 
 bool isDomainClass(Type* type) {
-  if (type->symbol->hasFlag(FLAG_BASE_DOMAIN))
-    return true;
+  bool retval = false;
 
-  forv_Vec(Type, pt, type->dispatchParents)
-    if (isDomainClass(pt))
-      return true;
+  if (type->symbol->hasFlag(FLAG_BASE_DOMAIN) == true) {
+    retval = true;
 
-  return false;
+  } else if (AggregateType* at = toAggregateType(type)) {
+    forv_Vec(AggregateType, pt, at->dispatchParents) {
+      if (isDomainClass(pt) == true) {
+        retval = true;
+        break;
+      }
+    }
+  }
+
+  return retval;
 }
 
 bool isArrayClass(Type* type) {
-  if (type->symbol->hasFlag(FLAG_BASE_ARRAY))
-    return true;
+  bool retval = false;
 
-  forv_Vec(Type, t, type->dispatchParents)
-    if (isArrayClass(t))
-      return true;
+  if (type->symbol->hasFlag(FLAG_BASE_ARRAY) == true) {
+    retval = true;
 
-  return false;
+  } else if (AggregateType* at = toAggregateType(type)) {
+    forv_Vec(AggregateType, t, at->dispatchParents) {
+      if (isArrayClass(t) == true) {
+        retval = true;
+        break;
+      }
+    }
+  }
+
+  return retval;
 }
 
 bool isString(Type* type) {
   bool retval = false;
 
-  if (AggregateType* aggr = toAggregateType(type))
+  if (AggregateType* aggr = toAggregateType(type)) {
     retval = strcmp(aggr->symbol->name, "string") == 0;
+  }
 
   return retval;
 }
@@ -1158,12 +1425,17 @@ bool isString(Type* type) {
 // Noakes 2017/03/02
 // This function now includes range and atomics
 //
+// MPF    2017/08/03
+// This function now includes iterator records
+//
+// TODO: rename this to isMemoryManagedRecord or something along
+//       those lines, since it now applies to some compiler-internal records.
+//
 bool isUserDefinedRecord(Type* type) {
   bool retval = false;
 
   if (AggregateType* aggr = toAggregateType(type)) {
     Symbol*     sym  = aggr->symbol;
-    const char* name = sym->name;
 
     // Must be a record type
     if (aggr->aggregateTag != AGGREGATE_RECORD) {
@@ -1171,10 +1443,6 @@ bool isUserDefinedRecord(Type* type) {
 
     // Not a RUNTIME_type
     } else if (sym->hasFlag(FLAG_RUNTIME_TYPE_VALUE) == true) {
-      retval = false;
-
-    // Not an iterator
-    } else if (strncmp(name, "_ir_", 4)              ==    0) {
       retval = false;
 
     } else {
@@ -1207,7 +1475,7 @@ bool needsCapture(Type* t) {
       is_complex_type(t) ||
       is_enum_type(t) ||
       t == dtStringC ||
-      isClass(t) ||
+      isClassLike(t) ||
       isRecord(t) ||
       isUnion(t) ||
       t == dtTaskID || // false?
@@ -1332,7 +1600,11 @@ bool isNonGenericClassWithInitializers(Type* type) {
 
   if (isNonGenericClass(type) == true) {
     if (AggregateType* at = toAggregateType(type)) {
-      retval = at->initializerStyle == DEFINES_INITIALIZER;
+      if (at->initializerStyle == DEFINES_INITIALIZER) {
+        retval = true;
+      } else if (at->wantsDefaultInitializer()) {
+        retval = true;
+      }
     }
   }
 
@@ -1358,7 +1630,26 @@ bool isGenericClassWithInitializers(Type* type) {
 
   if (isGenericClass(type) == true) {
     if (AggregateType* at = toAggregateType(type)) {
-      retval = at->initializerStyle == DEFINES_INITIALIZER;
+      if (at->initializerStyle == DEFINES_INITIALIZER) {
+        retval = true;
+      } else if (at->wantsDefaultInitializer()) {
+        retval = true;
+      }
+    }
+  }
+
+  return retval;
+}
+
+bool isClassWithInitializers(Type* type) {
+  bool retval = false;
+
+  if (AggregateType* at = toAggregateType(type)) {
+    if (at->isClass()                    == true  &&
+        at->symbol->hasFlag(FLAG_EXTERN) == false &&
+        (at->initializerStyle == DEFINES_INITIALIZER ||
+         at->wantsDefaultInitializer())) {
+      retval = true;
     }
   }
 
@@ -1384,7 +1675,11 @@ bool isNonGenericRecordWithInitializers(Type* type) {
 
   if (isNonGenericRecord(type) == true) {
     if (AggregateType* at = toAggregateType(type)) {
-      retval = at->initializerStyle == DEFINES_INITIALIZER;
+      if (at->initializerStyle == DEFINES_INITIALIZER) {
+        retval = true;
+      } else if (at->wantsDefaultInitializer()) {
+        retval = true;
+      }
     }
   }
 
@@ -1410,7 +1705,49 @@ bool isGenericRecordWithInitializers(Type* type) {
 
   if (isGenericRecord(type) == true) {
     if (AggregateType* at = toAggregateType(type)) {
-      retval = at->initializerStyle == DEFINES_INITIALIZER;
+      if (at->initializerStyle == DEFINES_INITIALIZER) {
+        retval = true;
+      } else if (at->wantsDefaultInitializer()) {
+        retval = true;
+      }
+    }
+  }
+
+  return retval;
+}
+
+bool isRecordWithInitializers(Type* type) {
+  bool retval = false;
+
+  if (AggregateType* at = toAggregateType(type)) {
+    if (at->isRecord()                   == true  &&
+        at->symbol->hasFlag(FLAG_EXTERN) == false &&
+        (at->initializerStyle == DEFINES_INITIALIZER ||
+         at->wantsDefaultInitializer())) {
+      retval = true;
+    }
+  }
+
+  return retval;
+}
+
+//
+// The simplest and most obvious case is that generic records need generic
+// initializers.
+//
+// Instantiated records also require generic initializers, because their
+// type or param fields need to be handled by an initializer.
+//
+bool needsGenericRecordInitializer(Type* type) {
+  bool retval = false;
+
+  if (AggregateType* at = toAggregateType(type)) {
+    if (isRecordWithInitializers(type)) {
+      if (at->isGeneric() == true ||
+          at->symbol->hasFlag(FLAG_GENERIC) == true ||
+          at->instantiatedFrom != NULL) {
+        retval = true;
+      }
     }
   }
 

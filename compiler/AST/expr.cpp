@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -34,6 +34,7 @@
 #include "stmt.h"
 #include "stringutil.h"
 #include "type.h"
+#include "wellknown.h"
 #include "WhileStmt.h"
 
 
@@ -279,10 +280,20 @@ void Expr::verify() {
   }
 }
 
+void Expr::verify(AstTag expectedTag) {
+  if (astTag != expectedTag)
+    INT_FATAL(this, "bad astTag");
+  Expr::verify();
+}
+
+void Expr::verifyParent(const Expr* child) {
+  if (child && child->parentExpr != this)
+    INT_FATAL(this, "bad parent of a child node");
+}
 
 bool Expr::inTree() {
   if (parentSymbol)
-    return parentSymbol->inTree();
+    return true;
   else
     return false;
 }
@@ -513,25 +524,18 @@ void SymExpr::replaceChild(Expr* old_ast, Expr* new_ast) {
   INT_FATAL(this, "Unexpected case in SymExpr::replaceChild");
 }
 
-Expr* SymExpr::getFirstChild() {
-  return NULL;
-}
-
 Expr* SymExpr::getFirstExpr() {
   return this;
 }
 
 void SymExpr::verify() {
-  Expr::verify();
-
-  if (astTag != E_SymExpr)
-    INT_FATAL(this, "SymExpr::verify %12d: Bad astTag", id);
+  Expr::verify(E_SymExpr);
 
   if (var == NULL)
     INT_FATAL(this, "SymExpr::verify %12d: var is NULL", id);
 
   if (var->defPoint) {
-    if (var->defPoint->parentSymbol == NULL)
+    if (!var->defPoint->inTree())
       INT_FATAL(this, "SymExpr::verify %12d:  var->defPoint is not in AST", id);
   } else {
     if (var != rootModule)
@@ -637,19 +641,13 @@ UnresolvedSymExpr::replaceChild(Expr* old_ast, Expr* new_ast) {
 }
 
 
-Expr* UnresolvedSymExpr::getFirstChild() {
-  return NULL;
-}
-
 Expr* UnresolvedSymExpr::getFirstExpr() {
   return this;
 }
 
 void
 UnresolvedSymExpr::verify() {
-  Expr::verify();
-  if (astTag != E_UnresolvedSymExpr)
-    INT_FATAL(this, "bad UnresolvedSymExpr::astTag");
+  Expr::verify(E_UnresolvedSymExpr);
   if (!unresolved)
     INT_FATAL(this, "UnresolvedSymExpr::unresolved is NULL");
 }
@@ -714,19 +712,12 @@ DefExpr::DefExpr(Symbol* initSym, BaseAST* initInit, BaseAST* initExprType) :
   gDefExprs.add(this);
 }
 
-Expr* DefExpr::getFirstChild() {
-  return NULL;
-}
-
 Expr* DefExpr::getFirstExpr() {
   return this;
 }
 
 void DefExpr::verify() {
-  Expr::verify();
-  if (astTag != E_DefExpr) {
-    INT_FATAL(this, "Bad DefExpr::astTag");
-  }
+  Expr::verify(E_DefExpr);
   if (!sym) {
     INT_FATAL(this, "DefExpr has no sym");
   }
@@ -734,12 +725,10 @@ void DefExpr::verify() {
     INT_FATAL(this, "Bad FnSymbol::defPoint");
   if (toArgSymbol(sym) && (exprType || init))
     INT_FATAL(this, "Bad ArgSymbol::defPoint");
-  if (init && init->parentExpr != this)
-    INT_FATAL(this, "Bad DefExpr::init::parentExpr");
-  if (exprType && exprType->parentExpr != this)
-    INT_FATAL(this, "Bad DefExpr::exprType::parentExpr");
   if (sym->defPoint != this)
     INT_FATAL(this, "Bad DefExpr::sym->defPoint");
+  verifyParent(init);
+  verifyParent(exprType);
   verifyNotOnList(init);
   verifyNotOnList(exprType);
 }
@@ -783,629 +772,39 @@ void DefExpr::accept(AstVisitor* visitor) {
   }
 }
 
-/************************************ | *************************************
-*                                                                           *
-*                                                                           *
-************************************* | ************************************/
-
-
 void DefExpr::prettyPrint(std::ostream *o) {
   *o << "<DefExprType>";
 }
 
-static void callExprHelper(CallExpr* call, BaseAST* arg) {
-  if (!arg)
-    return;
-  if (toSymbol(arg) || toExpr(arg))
-    call->insertAtTail(arg);
-  else
-    INT_FATAL(call, "Bad argList in CallExpr constructor");
-}
-
-
 /************************************* | **************************************
+*                                                                             *
 *                                                                             *
 *                                                                             *
 ************************************** | *************************************/
 
-CallExpr::CallExpr(BaseAST* base,
-                   BaseAST* arg1,
-                   BaseAST* arg2,
-                   BaseAST* arg3,
-                   BaseAST* arg4,
-                   BaseAST* arg5) :
-  Expr(E_CallExpr),
-  primitive(NULL),
-  baseExpr(NULL),
-  argList(),
-  partialTag(false),
-  methodTag(false),
-  square(false)
-{
-  if (Symbol* b = toSymbol(base)) {
-    baseExpr = new SymExpr(b);
-  } else if (Expr* b = toExpr(base)) {
-    baseExpr = b;
-  } else {
-    INT_FATAL(this, "Bad baseExpr in CallExpr constructor");
-  }
-
-  callExprHelper(this, arg1);
-  callExprHelper(this, arg2);
-  callExprHelper(this, arg3);
-  callExprHelper(this, arg4);
-  callExprHelper(this, arg5);
-
-  argList.parent = this;
-
-  gCallExprs.add(this);
-}
-
-
-CallExpr::CallExpr(PrimitiveOp* prim,
-                   BaseAST*     arg1,
-                   BaseAST*     arg2,
-                   BaseAST*     arg3,
-                   BaseAST*     arg4,
-                   BaseAST*     arg5) :
-  Expr(E_CallExpr),
-  primitive(prim),
-  baseExpr(NULL),
-  argList(),
-  partialTag(false),
-  methodTag(false),
-  square(false) {
-  callExprHelper(this, arg1);
-  callExprHelper(this, arg2);
-  callExprHelper(this, arg3);
-  callExprHelper(this, arg4);
-  callExprHelper(this, arg5);
-
-  argList.parent = this;
-
-  gCallExprs.add(this);
-}
-
-CallExpr::CallExpr(PrimitiveTag prim,
-                   BaseAST*     arg1,
-                   BaseAST*     arg2,
-                   BaseAST*     arg3,
-                   BaseAST*     arg4,
-                   BaseAST*     arg5) :
-  Expr(E_CallExpr),
-  primitive(primitives[prim]),
-  baseExpr(NULL),
-  argList(),
-  partialTag(false),
-  methodTag(false),
-  square(false) {
-  callExprHelper(this, arg1);
-  callExprHelper(this, arg2);
-  callExprHelper(this, arg3);
-  callExprHelper(this, arg4);
-  callExprHelper(this, arg5);
-
-  argList.parent = this;
-
-  gCallExprs.add(this);
-}
-
-
-CallExpr::CallExpr(const char* name,
-                   BaseAST*    arg1,
-                   BaseAST*    arg2,
-                   BaseAST*    arg3,
-                   BaseAST*    arg4,
-                   BaseAST*    arg5) :
-  Expr(E_CallExpr),
-  primitive(NULL),
-  baseExpr(new UnresolvedSymExpr(name)),
-  argList(),
-  partialTag(false),
-  methodTag(false),
-  square(false) {
-  callExprHelper(this, arg1);
-  callExprHelper(this, arg2);
-  callExprHelper(this, arg3);
-  callExprHelper(this, arg4);
-  callExprHelper(this, arg5);
-
-  argList.parent = this;
-
-  gCallExprs.add(this);
-}
-
-
-CallExpr::~CallExpr() {
-}
-
-
-bool CallExpr::isEmpty() const {
-  return primitive == NULL && baseExpr == NULL;
-}
-
-bool CallExpr::isPrimitive() const {
-  return primitive != NULL;
-}
-
-bool CallExpr::isPrimitive(PrimitiveTag primitiveTag) const {
-  return primitive && primitive->tag == primitiveTag;
-}
-
-bool CallExpr::isPrimitive(const char* primitiveName) const {
-  return primitive && !strcmp(primitive->name, primitiveName);
-}
-
-Expr* CallExpr::getFirstChild() {
-  Expr* retval = NULL;
-
-  if (baseExpr)
-    retval = baseExpr;
-
-  else if (argList.head)
-    retval = argList.head;
-
-  return retval;
-}
-
-Expr* CallExpr::getFirstExpr() {
-  Expr* retval = NULL;
-
-  if (baseExpr != NULL)
-    retval = baseExpr->getFirstExpr();
-
-  else if (argList.head != NULL)
-    retval = argList.head->getFirstExpr();
-
-  else
-    retval = this;
-
-  return retval;
-}
-
-Expr* CallExpr::getNextExpr(Expr* expr) {
-  Expr* retval = this;
-
-  if (expr == baseExpr && argList.head != NULL)
-    retval = argList.head->getFirstExpr();
-
-  return retval;
-}
-
-void CallExpr::verify() {
-  Expr::verify();
-
-  if (astTag != E_CallExpr) {
-    INT_FATAL(this, "Bad CallExpr::astTag");
-  }
-
-  if (! parentExpr)
-    INT_FATAL(this, "Every CallExpr is expected to have a parentExpr");
-
-  if (argList.parent != this)
-    INT_FATAL(this, "Bad AList::parent in CallExpr");
-
-  if (baseExpr && baseExpr->parentExpr != this)
-    INT_FATAL(this, "Bad baseExpr::parent in CallExpr");
-
-  if (normalized && isPrimitive(PRIM_RETURN)) {
-    FnSymbol* fn  = toFnSymbol(parentSymbol);
-    SymExpr*  sym = toSymExpr(get(1));
-
-    if (!fn)
-      INT_FATAL(this, "Return is not in a function.");
-
-    if (fn->body->body.last() != this)
-      INT_FATAL(this, "Return is in middle of function.");
-
-    if (!sym)
-      INT_FATAL(this, "Return does not return a symbol.");
-  }
-
-  for_actuals(actual, this) {
-    if (actual->parentExpr != this)
-      INT_FATAL(this, "Bad CallExpr::argList::parentExpr");
-
-    if (isSymExpr(actual)                           &&
-        toSymExpr(actual)->symbol() == gMethodToken &&
-        actual != this->get(1))
-      INT_FATAL(this,
-                "If present, the method token must be the first argument.");
-  }
-
-  if (primitive) {
-    if (!(PRIM_UNKNOWN <= primitive->tag && primitive->tag < NUM_KNOWN_PRIMS))
-      INT_FATAL(this, "invalid primitive->tag");
-
-    switch (primitive->tag) {
-    case PRIM_BLOCK_PARAM_LOOP:
-    case PRIM_BLOCK_WHILEDO_LOOP:
-    case PRIM_BLOCK_DOWHILE_LOOP:
-    case PRIM_BLOCK_FOR_LOOP:
-    case PRIM_BLOCK_BEGIN:
-    case PRIM_BLOCK_COBEGIN:
-    case PRIM_BLOCK_COFORALL:
-    case PRIM_BLOCK_ON:
-    case PRIM_BLOCK_BEGIN_ON:
-    case PRIM_BLOCK_COBEGIN_ON:
-    case PRIM_BLOCK_COFORALL_ON:
-    case PRIM_BLOCK_LOCAL:
-      if (toBlockStmt(parentExpr)) {
-
-      } else {
-        INT_FATAL(this, "blockInfo-type CallExpr not in a BlockStmt");
-      }
-      break;
-    case PRIM_BLOCK_UNLOCAL:
-      INT_FATAL("PRIM_BLOCK_UNLOCAL between passes");
-      break;
-    case PRIM_TYPE_INIT:
-      // A "type init" call is always expected to have a parent.
-      INT_ASSERT(toCallExpr(this->parentExpr));
-      break;
-    default:
-      break; // do nothing
-    }
-  }
-
-  verifyNotOnList(baseExpr);
-}
-
-CallExpr* CallExpr::copyInner(SymbolMap* map) {
-  CallExpr* _this = 0;
-
-  if (primitive)
-    _this = new CallExpr(primitive);
-  else
-    _this = new CallExpr(COPY_INT(baseExpr));
-
-  for_actuals(expr, this)
-    _this->insertAtTail(COPY_INT(expr));
-
-  _this->primitive  = primitive;
-  _this->partialTag = partialTag;
-  _this->methodTag  = methodTag;
-  _this->square     = square;
-
-  return _this;
-}
-
-
-void CallExpr::replaceChild(Expr* oldAst, Expr* newAst) {
-  if (oldAst == baseExpr) {
-    baseExpr = newAst;
-  } else {
-    INT_FATAL(this, "Unexpected case in CallExpr::replaceChild");
-  }
-}
-
-
-void CallExpr::insertAtHead(BaseAST* ast) {
-  Expr* toInsert = NULL;
-
-  if (Symbol* a = toSymbol(ast))
-    toInsert = new SymExpr(a);
-  else
-    toInsert = toExpr(ast);
-
-  argList.insertAtHead(toInsert);
-
-  parent_insert_help(this, toInsert);
-}
-
-
-void CallExpr::insertAtTail(BaseAST* ast) {
-  Expr* toInsert = NULL;
-
-  if (Symbol* a = toSymbol(ast))
-    toInsert = new SymExpr(a);
-  else
-    toInsert = toExpr(ast);
-
-  argList.insertAtTail(toInsert);
-
-  parent_insert_help(this, toInsert);
-}
-
-void CallExpr::setUnresolvedFunction(const char* name) {
-  // Currently a PRIM_OP
-  if (primitive != NULL) {
-    primitive = NULL;
-    baseExpr  = new UnresolvedSymExpr(astr(name));
-
-    parent_insert_help(this, baseExpr);
-
-  } else if (UnresolvedSymExpr* use = toUnresolvedSymExpr(baseExpr)) {
-    use->unresolved = astr(name);
-
-  } else if (SymExpr*           se  = toSymExpr(baseExpr)) {
-    se->replace(new UnresolvedSymExpr(name));
-
-  } else {
-    INT_ASSERT(false);
-  }
-}
-
-bool CallExpr::isResolved() const {
-  return (resolvedFunction() != NULL) ? true : false;
-}
-
-FnSymbol* CallExpr::resolvedFunction() const {
-  FnSymbol* retval = NULL;
-
-  // A PRIM-OP
-  if (primitive != NULL) {
-    INT_ASSERT(baseExpr  == NULL);
-
-  // A Chapel call
-  } else if (baseExpr != NULL) {
-    if (isUnresolvedSymExpr(baseExpr) == true) {
-
-    } else if (SymExpr* base = toSymExpr(baseExpr)) {
-      if (FnSymbol* fn = toFnSymbol(base->symbol())) {
-        retval = fn;
-
-      // Probably an array index
-      } else if (isArgSymbol(base->symbol())  == true ||
-                 isVarSymbol(base->symbol())  == true) {
-
-      // A type specifier
-      } else if (isTypeSymbol(base->symbol()) == true) {
-
-      } else {
-        INT_ASSERT(false);
-      }
-
-    } else if (CallExpr* subCall = toCallExpr(baseExpr)) {
-      // Confirm that this is a partial call
-      INT_ASSERT(subCall->partialTag == true);
-
-    } else {
-      INT_ASSERT(false);
-    }
-
-  // The CallExpr has been purged during resolve
-  } else {
-    INT_ASSERT(false);
-  }
-
-  return retval;
-}
-
-void CallExpr::setResolvedFunction(FnSymbol* fn) {
-  // Currently a PRIM_OP
-  if (primitive != NULL) {
-    primitive = NULL;
-    baseExpr  = new SymExpr(fn);
-
-    parent_insert_help(this, baseExpr);
-
-  } else if (isUnresolvedSymExpr(baseExpr) == true) {
-    baseExpr->replace(new SymExpr(fn));
-
-  } else if (SymExpr* se = toSymExpr(baseExpr)) {
-    se->setSymbol(fn);
-
-  } else {
-    INT_ASSERT(false);
-  }
-}
-
-FnSymbol* CallExpr::theFnSymbol() const {
-  FnSymbol* retval = NULL;
-
-  if (SymExpr* base = toSymExpr(baseExpr))
-    retval = toFnSymbol(base->symbol());
-
-  return retval;
-}
-
-
-bool CallExpr::isNamed(const char* name) {
-  if (SymExpr* base = toSymExpr(baseExpr))
-    if (strcmp(base->symbol()->name, name) == 0)
-      return true;
-
-  if (UnresolvedSymExpr* base = toUnresolvedSymExpr(baseExpr))
-    if (strcmp(base->unresolved, name) == 0)
-      return true;
-
-  return false;
-}
-
-
-int CallExpr::numActuals() const {
-  return argList.length;
-}
-
-
-Expr* CallExpr::get(int index) const {
-  return argList.get(index);
-}
-
-
-FnSymbol* CallExpr::findFnSymbol(void) {
-  FnSymbol* fn = NULL;
-
-  if (SymExpr* variable = toSymExpr(baseExpr))
-    fn = toFnSymbol(variable->symbol());
-
-  if (!fn)
-    INT_FATAL(this, "Cannot find FnSymbol in CallExpr");
-
-  return fn;
-}
-
-bool CallExpr::isCast(void) {
-  return isNamed("_cast");
-}
-
-Expr* CallExpr::castFrom(void) {
-  INT_ASSERT(isCast());
-
-  return get(2);
-}
-
-Expr* CallExpr::castTo(void) {
-  INT_ASSERT(isCast());
-
-  return get(1);
-}
-
-CallExpr* createCast(BaseAST* src, BaseAST* toType)
-{
-  CallExpr* expr = new CallExpr("_cast", toType, src);
-  return expr;
-}
-
-
-QualifiedType CallExpr::qualType(void) {
-  QualifiedType retval(NULL);
-
-  if (primitive) {
-    retval = primitive->returnInfo(this);
-
-  } else if (isResolved()) {
-    retval = QualifiedType(resolvedFunction()->retType);
-
-  } else {
-    retval = QualifiedType(dtUnknown);
-  }
-
-  return retval;
-}
-
-void CallExpr::prettyPrint(std::ostream *o) {
-  if (FnSymbol* fn = theFnSymbol()) {
-    if      (fn->hasFlag(FLAG_BEGIN_BLOCK))
-      *o << "begin";
-    else if (fn->hasFlag(FLAG_ON_BLOCK))
-      *o << "on";
-  }
-
-  bool array   = false;
-  bool unusual = false;
-
-  if (baseExpr != NULL) {
-    if (UnresolvedSymExpr *expr = toUnresolvedSymExpr(baseExpr)) {
-      if (strcmp(expr->unresolved, "*") == 0){
-        unusual = true;
-        argList.first()->prettyPrint(o);
-        *o << "*(";
-        argList.last()->prettyPrint(o);
-        *o << ")";
-      } else if (strcmp(expr->unresolved, "chpl_build_bounded_range") == 0) {
-        // Note that this code path is only used by chpldoc to create function
-        // return signatures and the only place a range will show up is in a
-        // fully specified array, in which case the range must be fully bounded
-        argList.first()->prettyPrint(o);
-        *o << "..";
-        argList.last()->prettyPrint(o);
-        unusual = true;
-      } else if (strcmp(expr->unresolved,
-                        "chpl__ensureDomainExpr") == 0) {
-        unusual = true;
-        for_alist(expr, argList) {
-          if (expr != argList.first()) {
-            *o << ", ";
-          }
-          expr->prettyPrint(o);
-        }
-      } else if (strcmp(expr->unresolved,
-                        "chpl__buildArrayRuntimeType") == 0) {
-        *o << "[";
-        array = true;
-      } else if (strcmp(expr->unresolved,
-                        "chpl__buildDomainRuntimeType") == 0) {
-        *o << "domain(";
-        argList.last()->prettyPrint(o);
-        *o << ")";
-        unusual = true;
-      } else if (strcmp(expr->unresolved,
-                        "_build_tuple") != 0) {
-        baseExpr->prettyPrint(o);
-      }
-    } else {
-      baseExpr->prettyPrint(o);
-    }
-  } else if (primitive != NULL) {
-    if (primitive->tag == PRIM_INIT ||
-      primitive->tag == PRIM_TYPE_INIT) {
-      unusual = true;
-      argList.head->prettyPrint(o);
-    }
-  }
-
-  if (!array && !unusual)
-    *o << "(";
-
-  if (!unusual) {
-    for_alist(expr, argList) {
-      if (expr != argList.first()) {
-        if (array && expr == argList.last()) {
-          *o << "] ";
-        } else {
-          *o << ", ";
-        }
-      }
-      expr->prettyPrint(o);
-    }
-
-    if (array && argList.first() == argList.last())
-      *o << "]";
-  }
-
-  if (!array && !unusual) {
-    *o << ")";
-  }
-}
-
-void CallExpr::accept(AstVisitor* visitor) {
-  if (visitor->enterCallExpr(this) == true) {
-
-    if (baseExpr)
-      baseExpr->accept(visitor);
-
-    for_alist(next_ast, argList)
-      next_ast->accept(visitor);
-
-    visitor->exitCallExpr(this);
-  }
-}
-
-bool CallExpr::isRefExternStarTuple(Symbol* formal, Expr* actual) const {
-  Symbol* formalSym  = formal->type->symbol;
-  Symbol* formalVal  = formalSym->getValType()->symbol;
-
-  bool  retval       = false;
-
-  if (formal->isRef()                     == true &&
-      formalVal->hasFlag(FLAG_STAR_TUPLE) == true &&
-      actual->isRef()                     == true)
-    retval = true;
-
-  return retval;
-}
-
-/************************************* | **************************************
-*                                                                             *
-*                                                                             *
-************************************** | *************************************/
-
-ContextCallExpr::ContextCallExpr() :
-  Expr(E_ContextCallExpr),
-  options()
-{
+ContextCallExpr::ContextCallExpr() : Expr(E_ContextCallExpr) {
   options.parent = this;
+
+  hasValue       = false;
+  hasConstRef    = false;
+  hasRef         = false;
+
   gContextCallExprs.add(this);
 }
 
-ContextCallExpr*
-ContextCallExpr::copyInner(SymbolMap* map) {
+ContextCallExpr* ContextCallExpr::copyInner(SymbolMap* map) {
   ContextCallExpr* _this = 0;
-  _this = new ContextCallExpr();
-  for_alist(expr, options)
+
+  _this              = new ContextCallExpr();
+
+  _this->hasValue    = hasValue;
+  _this->hasConstRef = hasConstRef;
+  _this->hasRef      = hasRef;
+
+  for_alist(expr, options) {
     _this->options.insertAtTail(COPY_INT(expr));
+  }
+
   return _this;
 }
 
@@ -1413,24 +812,25 @@ CallExpr* getDesignatedCall(const ContextCallExpr* a) {
   return toCallExpr(a->options.tail);
 }
 
-void
-ContextCallExpr::replaceChild(Expr* old_ast, Expr* new_ast) {
+void ContextCallExpr::replaceChild(Expr* oldAst, Expr* newAst) {
   INT_FATAL(this, "unexpected case in ContextCallExpr::replaceChild");
 }
 
-void
-ContextCallExpr::verify() {
-  Expr::verify();
-  if (astTag != E_ContextCallExpr)
-    INT_FATAL(this, "bad ContextCallExpr::astTag");
+void ContextCallExpr::verify() {
+  Expr::verify(E_ContextCallExpr);
+
   for_alist(expr, options) {
-    if (expr->parentExpr != this)
-      INT_FATAL(this, "Bad ContextCallExpr::options::parentExpr");
-    if (isContextCallExpr(expr))
+    verifyParent(expr);
+
+    if (isContextCallExpr(expr) == true) {
       INT_FATAL(this, "ContextCallExpr cannot contain a ContextCallExpr");
-    if (!isCallExpr(expr))
+    }
+
+    if (isCallExpr(expr) == false) {
       INT_FATAL(this, "ContextCallExpr must contain only CallExpr");
+    }
   }
+
   // ContextCallExpr handles ref/value/const ref, so there should
   // be 2 or 3 options.
   if (options.length < 2 || options.length > 3)
@@ -1449,23 +849,25 @@ void ContextCallExpr::accept(AstVisitor* visitor) {
 }
 
 QualifiedType ContextCallExpr::qualType() {
-  CallExpr* mainCall = getDesignatedCall(this);
-  if (mainCall)
-    return mainCall->qualType();
-  return QualifiedType(dtUnknown);
+  CallExpr*     mainCall = getDesignatedCall(this);
+  QualifiedType retval   = QualifiedType(dtUnknown);
+
+  if (mainCall) {
+    retval = mainCall->qualType();
+  }
+
+  return retval;
 }
 
-void ContextCallExpr::prettyPrint(std::ostream *o) {
+void ContextCallExpr::prettyPrint(std::ostream* o) {
   *o << "(options";
+
   for_alist(expr, options) {
     *o << " ";
     expr->prettyPrint(o);
   }
-  *o << " )";
-}
 
-Expr* ContextCallExpr::getFirstChild() {
-  return options.head;
+  *o << " )";
 }
 
 Expr* ContextCallExpr::getFirstExpr() {
@@ -1473,81 +875,106 @@ Expr* ContextCallExpr::getFirstExpr() {
 }
 
 
-void ContextCallExpr::setRefRValueOptions(CallExpr* refCall,
-                                          CallExpr* rvalueCall) {
-  // Storing the ref call after the value call allows a
-  // postorder traversal to skip the value call.
-  // The order is important also - the first is always the value.
-
-  options.insertAtTail(rvalueCall);
-  parent_insert_help(this, rvalueCall);
-  options.insertAtTail(refCall);
-  parent_insert_help(this, refCall);
-}
-
 void ContextCallExpr::setRefValueConstRefOptions(CallExpr* refCall,
                                                  CallExpr* valueCall,
                                                  CallExpr* constRefCall) {
 
+  // always use order of value, const ref, ref
   // ContextCallExpr::getCalls depends on this order
-  options.insertAtTail(constRefCall);
-  parent_insert_help(this, constRefCall);
-  options.insertAtTail(valueCall);
-  parent_insert_help(this, valueCall);
-  options.insertAtTail(refCall);
-  parent_insert_help(this, refCall);
+  int n = 0;
+
+  if (valueCall != NULL) {
+    options.insertAtTail(valueCall);
+    parent_insert_help(this, valueCall);
+    hasValue = true;
+    n++;
+  }
+
+  if (constRefCall != NULL) {
+    options.insertAtTail(constRefCall);
+    parent_insert_help(this, constRefCall);
+    hasConstRef = true;
+    n++;
+  }
+
+  if (refCall != NULL) {
+    options.insertAtTail(refCall);
+    parent_insert_help(this, refCall);
+    hasRef = true;
+    n++;
+  }
+
+  // We shouldn't be making a ContextCallExpr with < 2 options
+  INT_ASSERT(n >= 2);
 }
 
-CallExpr* ContextCallExpr::getRefCall() {
-  // This used to check for the call with RET_REF, but
-  // the return tag might change during resolution. So
-  // instead we rely on them always being in order.
-  return toCallExpr(options.tail);
-}
+void ContextCallExpr::getCalls(CallExpr*& refCall,
+                               CallExpr*& valueCall,
+                               CallExpr*& constRefCall) const {
 
-CallExpr* ContextCallExpr::getRValueCall() {
-  return toCallExpr(options.head);
-}
+  // always use order of value, const ref, ref
+  int n = 1;
 
-void  ContextCallExpr::getCalls(CallExpr*& refCall,
-                                CallExpr*& valueCall,
-                                CallExpr*& constRefCall) {
-  refCall      = NULL;
-  valueCall    = NULL;
-  constRefCall = NULL;
-
-  if (options.length == 2) {
-    refCall = getRefCall();
-
-    CallExpr* rvalueCall = getRValueCall();
-    FnSymbol* fn         = rvalueCall->resolvedFunction();
-
-    INT_ASSERT(fn);
-
-    if (fn->retTag == RET_CONST_REF) {
-      constRefCall = rvalueCall;
-    } else {
-      valueCall = rvalueCall;
-    }
-
-  } else if (options.length == 3) {
-    // Note: it would be nicer to check retTag to decide between
-    // ref / value versions. However, doing so is challenging because
-    // of the way that iterator functions no longer have the original
-    // retTag.
-    constRefCall = toCallExpr(options.get(1));
-    valueCall    = toCallExpr(options.get(2));
-    refCall      = toCallExpr(options.get(3));
-
+  if (hasValue) {
+    valueCall = toCallExpr(options.get(n));
+    n++;
   } else {
-    INT_FATAL("Bad ContextCallExpr options");
+    valueCall = NULL;
+  }
+
+  if (hasConstRef) {
+    constRefCall = toCallExpr(options.get(n));
+    n++;
+  } else {
+    constRefCall = NULL;
+  }
+
+  if (hasRef) {
+    refCall = toCallExpr(options.get(n));
+    n++;
+  } else {
+    refCall = NULL;
   }
 }
 
-/************************************ | *************************************
-*                                                                           *
-*                                                                           *
-************************************* | ************************************/
+CallExpr* ContextCallExpr::getValueCall() const {
+  CallExpr* retval = NULL;
+
+  if (hasValue == true) {
+    retval = toCallExpr(options.get(1));
+  }
+
+  return retval;
+}
+
+CallExpr* ContextCallExpr::getConstRefCall() const {
+  CallExpr* retval = NULL;
+
+  if (hasConstRef == true) {
+    int n = (hasValue == true) ? 2 : 1;
+
+    retval = toCallExpr(options.get(n));
+  }
+
+  return retval;
+}
+
+CallExpr* ContextCallExpr::getRefCall() const {
+  CallExpr* retval = NULL;
+
+  if (hasRef == true) {
+    int n = (hasValue == true && hasConstRef == true) ? 3 : 2;
+
+    retval = toCallExpr(options.get(n));
+  }
+
+  return retval;
+}
+
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 ForallExpr::ForallExpr(Expr* indices,
                        Expr* iteratorExpr,
@@ -1591,19 +1018,12 @@ void ForallExpr::replaceChild(Expr* old_ast, Expr* new_ast) {
 
 void
 ForallExpr::verify() {
-  Expr::verify();
-  if (astTag != E_ForallExpr)
-    INT_FATAL(this, "bad ForallExpr::astTag");
+  Expr::verify(E_ForallExpr);
   INT_FATAL(this, "ForallExpr::verify() is not implemented");
 }
 
 void ForallExpr::accept(AstVisitor* visitor) {
   INT_FATAL(this, "ForallExpr::accept() is not implemented");
-}
-
-Expr* ForallExpr::getFirstChild() {
-  INT_FATAL(this, "ForallExpr::getFirstChild() is not implemented");
-  return NULL;
 }
 
 Expr* ForallExpr::getFirstExpr() {
@@ -1618,28 +1038,20 @@ Expr* ForallExpr::getFirstExpr() {
 
 NamedExpr::NamedExpr(const char* init_name, Expr* init_actual) :
   Expr(E_NamedExpr),
-  name(init_name),
+  name(astr(init_name)),
   actual(init_actual)
 {
   gNamedExprs.add(this);
 }
 
 
-Expr* NamedExpr::getFirstChild() {
-  return (actual != NULL) ? actual : NULL ;
-}
-
 Expr* NamedExpr::getFirstExpr() {
   return (actual != NULL) ? actual->getFirstExpr() : this;
 }
 
 void NamedExpr::verify() {
-  Expr::verify();
-  if (astTag != E_NamedExpr) {
-    INT_FATAL(this, "Bad NamedExpr::astTag");
-  }
-  if (actual && actual->parentExpr != this)
-    INT_FATAL(this, "Bad NamedExpr::actual::parentExpr");
+  Expr::verify(E_NamedExpr);
+  verifyParent(actual);
   verifyNotOnList(actual);
 }
 
@@ -1686,50 +1098,52 @@ void NamedExpr::accept(AstVisitor* visitor) {
 
 bool
 get_int(Expr *e, int64_t *i) {
+  Immediate* imm = NULL;
   if (e) {
     if (SymExpr *l = toSymExpr(e)) {
-      if (VarSymbol *v = toVarSymbol(l->symbol())) {
-        if (v->immediate) {
-          if (v->immediate->const_kind == NUM_KIND_INT) {
-            *i = v->immediate->int_value();
-            return true;
-          }
-        }
-      }
+      imm = getSymbolImmediate(l->symbol());
     }
   }
+
+  if (imm && imm->const_kind == NUM_KIND_INT) {
+    *i = imm->int_value();
+    return true;
+  }
+
   return false;
 }
 
 bool
 get_uint(Expr *e, uint64_t *i) {
+  Immediate* imm = NULL;
   if (e) {
     if (SymExpr *l = toSymExpr(e)) {
-      if (VarSymbol *v = toVarSymbol(l->symbol())) {
-        if (v->immediate) {
-          if (v->immediate->const_kind == NUM_KIND_UINT) {
-            *i = v->immediate->uint_value();
-            return true;
-          }
-        }
-      }
+      imm = getSymbolImmediate(l->symbol());
     }
   }
+
+  if (imm && imm->const_kind == NUM_KIND_UINT) {
+    *i = imm->uint_value();
+    return true;
+  }
+
   return false;
 }
 
 bool
 get_string(Expr *e, const char **s) {
+  Immediate* imm = NULL;
   if (e) {
     if (SymExpr *l = toSymExpr(e)) {
-      if (VarSymbol *v = toVarSymbol(l->symbol())) {
-        if (v->immediate && v->immediate->const_kind == CONST_KIND_STRING) {
-          *s = v->immediate->v_string;
-          return true;
-        }
-      }
+      imm = getSymbolImmediate(l->symbol());
     }
   }
+
+  if (imm && imm->const_kind == CONST_KIND_STRING) {
+    *s = imm->v_string;
+    return true;
+  }
+
   return false;
 }
 
@@ -1739,79 +1153,6 @@ get_string(Expr* e) {
   if (!get_string(e, &s))
     INT_FATAL(e, "string literal expression expected");
   return s;
-}
-
-// This builds an allocation of enough space to hold a variable of the
-// given type.
-//
-// This function should be used *before* resolution
-CallExpr* callChplHereAlloc(Type *type, VarSymbol* md) {
-  INT_ASSERT(!resolved);
-  // Since the type is not necessarily known, resolution will fix up
-  // this sizeof() call to take the resolved type of s as an argument
-  CallExpr*  sizeExpr  = new CallExpr(PRIM_SIZEOF, new SymExpr(type->symbol));
-  VarSymbol* mdExpr    = (md != NULL) ? md : newMemDesc(type);
-  CallExpr*  allocExpr = new CallExpr("chpl_here_alloc", sizeExpr, mdExpr);
-  // Again, as we don't know the type yet, we leave it to resolution
-  // to put in the cast to the proper type
-  return allocExpr;
-}
-
-// This insert normalized call expressions for allocation of enough
-// space to hold a variable of the given type.
-//
-// This function should be used *after* resolution
-void insertChplHereAlloc(Expr *call, bool insertAfter, Symbol *sym,
-                         Type* t, VarSymbol* md) {
-  INT_ASSERT(resolved);
-  AggregateType* ct = toAggregateType(toTypeSymbol(t->symbol)->type);
-  Symbol* sizeTmp = newTemp("chpl_here_alloc_size", SIZE_TYPE);
-  CallExpr *sizeExpr = new CallExpr(PRIM_MOVE, sizeTmp,
-                                    new CallExpr(PRIM_SIZEOF,
-                                                 (ct != NULL) ?
-                                                 ct->symbol : t->symbol));
-  VarSymbol* mdExpr = (md != NULL) ? md : newMemDesc(t);
-  Symbol *allocTmp = newTemp("chpl_here_alloc_tmp", dtCVoidPtr);
-  CallExpr* allocExpr = new CallExpr(PRIM_MOVE, allocTmp,
-                                     new CallExpr(gChplHereAlloc,
-                                                  sizeTmp, mdExpr));
-  CallExpr* castExpr = new CallExpr(PRIM_MOVE, sym,
-                                    new CallExpr(PRIM_CAST,
-                                                 t->symbol, allocTmp));
-  if (insertAfter) {
-    call->insertAfter(castExpr);
-    call->insertAfter(allocExpr);
-    call->insertAfter(sizeExpr);
-    call->insertAfter(new DefExpr(allocTmp));
-    call->insertAfter(new DefExpr(sizeTmp));
-  } else {
-    call->insertBefore(new DefExpr(sizeTmp));
-    call->insertBefore(new DefExpr(allocTmp));
-    call->insertBefore(sizeExpr);
-    call->insertBefore(allocExpr);
-    call->insertBefore(castExpr);
-  }
-}
-
-
-// Similar to callChplHereAlloc(), above but this can be called any time
-CallExpr* callChplHereFree(BaseAST* p) {
-  // Don't have a good way to do the following?
-  //if (fNoMemoryFrees)
-  //  return;
-
-  if( p->typeInfo()->symbol->hasFlag(FLAG_DATA_CLASS))
-    INT_FATAL(p->typeInfo()->symbol, "cannot delete data class");
-
-  // Note: Prior to resolution, we do not have complete type info, and
-  // so resolution will fix up this cast operation if a dereference is
-  // needed
-  CallExpr* castExpr = new CallExpr(PRIM_CAST_TO_VOID_STAR, p);
-  if (!resolved)
-    return new CallExpr("chpl_here_free", castExpr);
-  else {
-    return new CallExpr(gChplHereFree, castExpr);
-  }
 }
 
 Expr* getNextExpr(Expr* expr) {

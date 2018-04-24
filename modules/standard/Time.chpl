@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -123,7 +123,7 @@ inline proc sleep(t: real, unit: TimeUnits = TimeUnits.seconds) : void {
   extern proc chpl_task_sleep(s:c_double) : void;
 
   if t < 0 {
-    stderr.writeln("Warning: sleep() called with negative time parameter");
+    try! stderr.writeln("Warning: sleep() called with negative time parameter");
     return;
   }
   chpl_task_sleep(_convert_to_seconds(unit, t:real):c_double);
@@ -137,6 +137,7 @@ inline proc sleep(t: real, unit: TimeUnits = TimeUnits.seconds) : void {
    A :record:`!Timer` is either running or stopped.
 */
 
+pragma "use default init"
 record Timer {
   pragma "no doc"
   var time:        _timevalue = chpl_null_timevalue();
@@ -146,11 +147,6 @@ record Timer {
 
   pragma "no doc"
   var running:     bool       = false;
-
-  pragma "no doc"
-  proc initialize() {
-    // does nothing.
-  }
 
   /*
      Clears the elapsed time. If the timer is running then it is restarted

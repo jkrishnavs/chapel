@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -22,6 +22,7 @@
 #include "AstVisitor.h"
 #include "build.h"
 #include "CForLoop.h"
+#include "driver.h"
 
 /************************************ | *************************************
 *                                                                           *
@@ -134,8 +135,8 @@ void WhileDoStmt::accept(AstVisitor* visitor)
     if (condExprGet() != 0)
       condExprGet()->accept(visitor);
 
-    if (modUses)
-      modUses->accept(visitor);
+    if (useList)
+      useList->accept(visitor);
 
     if (byrefVars)
       byrefVars->accept(visitor);

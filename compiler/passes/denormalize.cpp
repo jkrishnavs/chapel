@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -17,19 +17,22 @@
  * limitations under the License.
  */
 
+#include "passes.h"
+
+
 #include "astutil.h"
 #include "baseAST.h"
-#include "stlUtil.h"
+#include "CForLoop.h"
+#include "driver.h"
 #include "expr.h"
+#include "exprAnalysis.h"
+#include "LoopStmt.h"
+#include "optimizations.h"
+#include "stlUtil.h"
 #include "stmt.h"
 #include "symbol.h"
 #include "type.h"
-#include "LoopStmt.h"
-#include "CForLoop.h"
 #include "WhileStmt.h"
-#include "exprAnalysis.h"
-#include "optimizations.h"
-
 
 //helper datastructures/types
 typedef std::pair<Expr*, Type*> DefCastPair;
@@ -244,12 +247,37 @@ void findCandidatesInFunc(FnSymbol *fn, UseDefCastMap& udcMap,
   findCandidatesInFuncOnlySym(fn, symSet, udcMap, analysisData);
 }
 
+static bool isBadMove(CallExpr* ce) {
+  bool ret = false;
+
+  if (ce->isPrimitive(PRIM_MOVE)) {
+    Expr* lhs = ce->get(1);
+    Expr* rhs = ce->get(2);
+    if (lhs->typeInfo() != rhs->typeInfo()) {
+      // Possible for shorthand/convenience moves where codegen will transform
+      // it into something else. For example:
+      //   (move myWideClass myNarrowClass)
+      // will create a wide temporary for 'myNarrowClass' and assign it to
+      // 'myWideClass'.
+      ret = true;
+    } else if ((lhs->isWideRef() && rhs->isRef()) ||
+               (lhs->isRef() && rhs->isWideRef())) {
+      // another wide-temporary convenience pattern
+      ret = true;
+    } else if (isDerefMove(ce)) {
+      ret = true;
+    }
+  }
+
+  return ret;
+}
+
 bool isDenormalizable(Symbol* sym,
     SymExpr** useOut, Expr** defOut, Type** castTo,
     SafeExprAnalysis& analysisData) {
 
   if(sym && !(toFnSymbol(sym) || toArgSymbol(sym) || toTypeSymbol(sym))) {
-    if(strcmp(sym->name, "this") != 0) { //avoid issue with --baseline
+    if(sym->name != astrThis) { //avoid issue with --baseline
       SymExpr *use = NULL;
       Expr *usePar = NULL;
       Expr *def = NULL;
@@ -312,6 +340,7 @@ bool isDenormalizable(Symbol* sym,
           usePar = se->parentExpr;
           if(CallExpr* ce = toCallExpr(usePar)) {
             if( !(ce->isPrimitive(PRIM_ADDR_OF) ||
+                  ce->isPrimitive(PRIM_SET_REFERENCE) ||
                   // TODO: PRIM_SET_REFERENCE?
                   //
                   // TODO: BHARSH: I added PRIM_RETURN here after seeing a case
@@ -337,10 +366,8 @@ bool isDenormalizable(Symbol* sym,
                   ce->isPrimitive(PRIM_GET_MEMBER_VALUE) ||
                   ce->isPrimitive(PRIM_RETURN) ||
                   (ce->isPrimitive(PRIM_ARRAY_SHIFT_BASE_POINTER) && ce->get(1) == se) ||
-                  (ce->isPrimitive(PRIM_MOVE) &&
-                   ce->get(1)->typeInfo() !=
-                   ce->get(2)->typeInfo()) ||
-                   isFloatComparisonPrimitive(ce))) {
+                  isBadMove(ce) ||
+                  isFloatComparisonPrimitive(ce))) {
               use = se;
             }
           }
@@ -361,7 +388,7 @@ bool isDenormalizable(Symbol* sym,
         //safer/better/more general way of doing this check
         //
         //for reference test that caused this was:
-        //test/modules/standard/FileSystem/bharshbarg/filer
+        //test/library/standard/FileSystem/bharshbarg/filer
         //
         //The issue seemed to be yielding string from an iterator
         if(CallExpr* useParentCe = toCallExpr(usePar)) {

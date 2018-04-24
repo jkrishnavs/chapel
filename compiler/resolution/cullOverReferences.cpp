@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,9 +20,13 @@
 #include "passes.h"
 
 #include "astutil.h"
+#include "driver.h"
 #include "expr.h"
+#include "ForallStmt.h"
 #include "ForLoop.h"
 #include "iterator.h"
+#include "loopDetails.h"
+#include "postFold.h"
 #include "resolution.h"
 #include "stlUtil.h"
 #include "stmt.h"
@@ -81,13 +85,16 @@ static bool shouldTrace(Symbol* sym)
 
 typedef enum {
   USE_REF = 1,
-  USE_CONST_REF = 2,
-  USE_VALUE = 3
+  USE_CONST_REF,
+  USE_VALUE,
 } choose_type_t;
 
 static bool symExprIsSet(SymExpr* sym);
 static bool symbolIsUsedAsConstRef(Symbol* sym);
 static void lowerContextCall(ContextCallExpr* cc, choose_type_t which);
+static void lowerContextCallPreferRefConstRef(ContextCallExpr* cc);
+static void lowerContextCallPreferConstRefValue(ContextCallExpr* cc);
+static void lowerContextCallComputeConstRef(ContextCallExpr* cc, bool notConst, Symbol* lhsSymbol);
 static bool firstPassLowerContextCall(ContextCallExpr* cc);
 static void lateConstCheck(std::map<BaseAST*, BaseAST*> & reasonNotConst);
 
@@ -204,6 +211,13 @@ bool symExprIsUsedAsConstRef(SymExpr* use) {
       if (call->isPrimitive(PRIM_MOVE)) {
         SymExpr* lhs = toSymExpr(call->get(1));
         Symbol* lhsSymbol = lhs->symbol();
+
+        if (lhsSymbol->hasFlag(FLAG_REF_VAR)) {
+          // intended to handle 'const ref'
+          // it would be an error to reach this point if it is not const
+          INT_ASSERT(lhsSymbol->hasFlag(FLAG_CONST));
+          return true;
+        }
 
         if (lhs != use &&
             lhsSymbol->isRef() &&
@@ -516,532 +530,21 @@ void transitivelyMarkNotConst(GraphNode node, /* sym, index */
   }
 }
 
-static
-bool isChplIterOrLoopIterator(Symbol* sym, ForLoop*& loop)
-{
-  if (sym->hasFlag(FLAG_CHPL__ITER))
+static bool considerAllowRefCall(CallExpr* move, FnSymbol* calledFn) {
+  if (! calledFn->hasFlag(FLAG_ALLOW_REF) )
     return true;
 
-  Symbol* checkSym = sym;
-  Symbol* nextSym = NULL;
+  // Also allow _build_tuple_always_allow_ref into user index vars, ex.
+  //   forall tup in zip(A,B) ...
+  //   functions/ferguson/ref-pair/iterating-over-arrays.chpl
+  Symbol* lhs = toSymExpr(move->get(1))->symbol();
+  if (lhs->hasFlag(FLAG_INDEX_VAR) && !lhs->hasFlag(FLAG_TEMP))
+    return true;
 
-  while (checkSym) {
-    nextSym = NULL;
-
-    // Check if checkSym is used in a SymExpr in ForLoop
-    for_SymbolSymExprs(se, checkSym) {
-      if (ForLoop* forLoop = toForLoop(se->parentExpr))
-        if (forLoop->iteratorGet()->symbol() == checkSym) {
-          loop = forLoop;
-          return true;
-        }
-
-      if ((checkSym->hasFlag(FLAG_EXPR_TEMP) &&
-           checkSym->type->symbol->hasFlag(FLAG_TUPLE))
-          || checkSym->type->symbol->hasFlag(FLAG_ITERATOR_CLASS)) {
-        // Check for normalized form of this code
-        //   sym = build_tuple(...)
-        //   _iterator = _getIteratorZip( sym )
-        // or
-        //   sym = _getIterator(...)
-        //   _iterator = build_tuple( ... sym ... )
-        //
-        // in that case, we want to continue until we find the
-        // iterator variable.
-        if (CallExpr* parentCall = toCallExpr(se->parentExpr))
-          if (CallExpr* move = toCallExpr(parentCall->parentExpr))
-            if (move->isPrimitive(PRIM_MOVE))
-              if (SymExpr* lhs = toSymExpr(move->get(1)))
-                nextSym = lhs->symbol();
-      }
-    }
-    checkSym = nextSym;
-  }
-
+  // workaround for compiler-introduced
+  // _build_tuple_always_allow_ref calls
   return false;
 }
-
-// Get the non-fast-follower Follower
-static
-ForLoop* findFollowerForLoop(BlockStmt* block) {
-  ForLoop* ret = NULL;
-  Expr* e = block->body.first();
-  while (e) {
-    if (ForLoop* forLoop = toForLoop(e)) {
-      return forLoop;
-    }
-    if (BlockStmt* blk = toBlockStmt(e)) {
-      ret = findFollowerForLoop(blk);
-      if (ret) return ret;
-    }
-    if (CondStmt* cond = toCondStmt(e)) {
-      // Look in the else block to find the non-fast-follower
-      // in case it is decided at run-time whether fast
-      // followers can be used.
-      ret = findFollowerForLoop(cond->elseStmt);
-      if (ret) return ret;
-    }
-    e = e->next;
-  }
-  return NULL;
-}
-
-struct IteratorDetails {
-  Expr*     iterable;
-  int       iterableTupleElement; // if != 0, iterable(idx) is the iterable
-  Symbol*   index;
-  int       indexTupleElement; // if != 0, index(idx) is the index
-  Type*     iteratorClass;
-  FnSymbol* iterator;
-
-  IteratorDetails()
-    : iterable(NULL), iterableTupleElement(0),
-      index(NULL), indexTupleElement(0),
-      iteratorClass(NULL), iterator(NULL)
-  {
-  }
-};
-
-
-/* Collapse compiler-introduced copies of references
-   to variables marked "index var"
-   This handles chpl__saIdxCopy
- */
-static
-Symbol* collapseIndexVarReferences(Symbol* index)
-{
-  bool changed;
-  do {
-    changed = false;
-    for_SymbolSymExprs(se, index) {
-      if (CallExpr* move = toCallExpr(se->parentExpr)) {
-        if (move->isPrimitive(PRIM_MOVE)) {
-          SymExpr* lhs = toSymExpr(move->get(1));
-          SymExpr* rhs = toSymExpr(move->get(2));
-          INT_ASSERT(lhs && rhs); // or not normalized
-          if (lhs->symbol()->hasFlag(FLAG_INDEX_VAR) &&
-              rhs->symbol() == index) {
-            changed = true;
-            index = lhs->symbol();
-          }
-        }
-      }
-    }
-  } while (changed == true);
-
-  return index;
-}
-
-/* Sets detailsVector[i].index if possible
-   Handles syntactically unpacked tuples such as
-
-   for (a, b) in zip(A, B) { ... }
- */
-static
-void findZipperedIndexVariables(Symbol* index, std::vector<IteratorDetails>&
-    detailsVector)
-{
-  // Now, in a zippered-for, the index is actually
-  // a tuple (of references typically). We need to find the
-  // un-packed elements.
-
-  for_SymbolSymExprs(indexSe, index) {
-    if (CallExpr* indexSeParentCall =
-        toCallExpr(indexSe->parentExpr)) {
-      if (indexSeParentCall->isPrimitive(PRIM_GET_MEMBER) ||
-          indexSeParentCall->isPrimitive(PRIM_GET_MEMBER_VALUE)) {
-        AggregateType* tupleType = toAggregateType(index->type);
-
-        if (CallExpr* gpCall =
-            toCallExpr(indexSeParentCall->parentExpr)) {
-          if (gpCall->isPrimitive(PRIM_MOVE)) {
-            SymExpr* lhsSe = toSymExpr(gpCall->get(1));
-            if (lhsSe && lhsSe->symbol()->hasFlag(FLAG_INDEX_VAR)) {
-              SymExpr* gottenFieldSe = toSymExpr(indexSeParentCall->get(2));
-              int i = 0;
-              for_fields(field, tupleType) {
-                if (gottenFieldSe->symbol() == field) {
-                  // setting .index twice probably means we are working
-                  // with some new & different AST
-                  INT_ASSERT(!detailsVector[i].index);
-                  detailsVector[i].index = lhsSe->symbol();
-                }
-                i++;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Set any detailsVector[i].index we didn't figure out to
-  // the index variable's tuple element.
-  if (index->type->symbol->hasFlag(FLAG_TUPLE)) {
-    for(size_t i = 0; i < detailsVector.size(); i++) {
-      if (detailsVector[i].index == NULL) {
-        detailsVector[i].index = index;
-        detailsVector[i].indexTupleElement = i+1;
-      }
-    }
-  }
-}
-
-// TODO -- move this and related code to ForLoop.cpp
-
-/* Gather important information about a loop.
-
-leaderDetails is only relevant for leader/follower iterators
-              and in that case refers to details of the leader loop.
-followerForLoop is the follower ForLoop in leader/follower iteration.
-
-When considering zippered iteration, detailsVector contains details of
-the individually zippered iterations.
-
-When considering non-zippered iteration, detailsVector contains exactly
-one element. It stores information
-about the loop. In leader/follower loops, it contains information about
-the follower loop.
-
-Always uses the non-fast-follower version of the follower loop.
- */
-static
-void gatherLoopDetails(ForLoop*  forLoop,
-                       bool&     isForall,
-                       IteratorDetails& leaderDetails,
-                       ForLoop*& followerForLoop,
-                       std::vector<IteratorDetails>& detailsVector)
-{
-  Symbol* index = forLoop->indexGet()->symbol();
-
-  // TODO -- can we use flags for these?
-  bool isFollower = (0 == strcmp(index->name, "chpl__followIdx") ||
-                     0 == strcmp(index->name, "chpl__fastFollowIdx"));
-  bool isLeader = (0 == strcmp(index->name, "chpl__leadIdx"));
-
-  if (isFollower) {
-    // Find the leader loop and run the analysis on that.
-
-    Expr* inExpr = forLoop->parentExpr;
-    while (inExpr && !isForLoop(inExpr)) {
-      inExpr = inExpr->parentExpr;
-    }
-    INT_ASSERT(inExpr); // couldn't find leader ForLoop
-    gatherLoopDetails(toForLoop(inExpr),
-                      isForall, leaderDetails, followerForLoop, detailsVector);
-    return;
-  }
-
-
-  Symbol* iterator = forLoop->iteratorGet()->symbol();
-
-  // find the variable marked with "chpl__iter" variable
-  // in the loop header.
-  Symbol* chpl_iter = NULL;
-  {
-    Expr* e = forLoop;
-    while (e) {
-      if (DefExpr* d = toDefExpr(e)) {
-        Symbol* var = d->sym;
-        if (var->hasFlag(FLAG_CHPL__ITER)) {
-          chpl_iter = var;
-          break;
-        }
-      }
-      e = e->prev;
-    }
-  }
-
-  bool forall = (chpl_iter != NULL);
-  bool zippered = forLoop->zipperedGet() &&
-                  (iterator->type->symbol->hasFlag(FLAG_TUPLE) ||
-                   (chpl_iter != NULL &&
-                    chpl_iter->type->symbol->hasFlag(FLAG_TUPLE)));
-
-  isForall = forall;
-  detailsVector.clear();
-
-  if (!forall) {
-    // Handle for loops first
-    if (! zippered) {
-      // simple case of serial, non-zippered iteration
-      // i.e. a non-zippered for loop
-      // Find the PRIM_MOVE setting iterator
-      SymExpr* def = iterator->getSingleDef();
-      CallExpr* move = toCallExpr(def->parentExpr);
-      INT_ASSERT(move && move->isPrimitive(PRIM_MOVE));
-      CallExpr* getIteratorCall = toCallExpr(move->get(2));
-      INT_ASSERT(getIteratorCall);
-
-      // Collapse compiler-introduced copies of references
-      // to variables marked "index var"
-      // This handles chpl__saIdxCopy
-      index = collapseIndexVarReferences(index);
-
-      // The thing being iterated over is the argument to getIterator
-      Expr* iterable = getIteratorCall->get(1);
-      IteratorDetails details;
-      details.iterable = iterable;
-      details.index = index;
-      details.iteratorClass = iterator->type;
-      details.iterator = getTheIteratorFn(details.iteratorClass);
-
-      IteratorDetails emptyDetails;
-      leaderDetails = emptyDetails;
-      followerForLoop = NULL;
-      detailsVector.push_back(details);
-      return;
-    } else {
-      // serial, zippered iteration
-      // i.e. a zippered for loop
-      // Find the call to _build_tuple
-
-      // zippered serial iteration has this pattern:
-      //   call_tmp1 = _getIterator(a)
-      //   call_tmp2 = _getIterator(b)
-      //   _iterator = _build_tuple(call_tmp1, call_tmp2)
-      //
-      // but promoted iteration sometimes has this pattern:
-      //   call_tmp = build_tuple(a,b)
-      //   _iterator = _getIteratorZip(call_tmp)
-      //
-      // or
-      //
-      //   call_tmp = build_tuple(a, b)
-      //   p_followerIterator = _toFollowerZip(call_tmp)
-      //   _iterator = _getIteratorZip(p_followerIterator)
-
-      SymExpr* tupleIterator = NULL;
-      SymExpr* def = iterator->getSingleDef();
-      CallExpr* move = toCallExpr(def->parentExpr);
-      INT_ASSERT(move && move->isPrimitive(PRIM_MOVE));
-      CallExpr* call = toCallExpr(move->get(2));
-      INT_ASSERT(call);
-      FnSymbol* calledFn = call->resolvedFunction();
-      if (!calledFn->hasFlag(FLAG_BUILD_TUPLE)) {
-        // expecting call is e.g. _getIteratorZip
-        SymExpr* otherSe = toSymExpr(call->get(1));
-        INT_ASSERT(otherSe);
-        SymExpr* otherDef = otherSe->symbol()->getSingleDef();
-        if (otherDef) {
-          CallExpr* otherMove = toCallExpr(otherDef->parentExpr);
-          INT_ASSERT(otherMove && otherMove->isPrimitive(PRIM_MOVE));
-          call = toCallExpr(otherMove->get(2));
-
-          calledFn = call->resolvedFunction();
-          if (calledFn && !calledFn->hasFlag(FLAG_BUILD_TUPLE)) {
-            // expecting call is e.g. _toFollowerZip
-            SymExpr* anotherSe = toSymExpr(call->get(1));
-            INT_ASSERT(anotherSe);
-            SymExpr* anotherDef = anotherSe->symbol()->getSingleDef();
-            if (anotherDef) {
-              CallExpr* anotherMove = toCallExpr(anotherDef->parentExpr);
-              INT_ASSERT(anotherMove && anotherMove->isPrimitive(PRIM_MOVE));
-              call = toCallExpr(anotherMove->get(2));
-            } else {
-              call = NULL;
-              tupleIterator = otherSe;
-            }
-          }
-        } else {
-          call = NULL;
-          tupleIterator = otherSe;
-        }
-      }
-
-      CallExpr* buildTupleCall = call;
-      FnSymbol* buildTupleFn   = NULL;
-
-      if (buildTupleCall) {
-        buildTupleFn = buildTupleCall->resolvedFunction();
-      }
-
-      if (buildTupleFn && buildTupleFn->hasFlag(FLAG_BUILD_TUPLE)) {
-
-        // build up the detailsVector
-        for_actuals(actual, buildTupleCall) {
-          SymExpr* actualSe = toSymExpr(actual);
-          INT_ASSERT(actualSe); // otherwise not normalized
-          // Find the single definition of actualSe->var to find
-          // the call to _getIterator.
-          Expr* iterable = NULL;
-          if (actualSe->symbol()->hasFlag(FLAG_EXPR_TEMP)) {
-            Symbol* tmpStoringGetIterator = actualSe->symbol();
-            SymExpr* def = tmpStoringGetIterator->getSingleDef();
-            CallExpr* move = toCallExpr(def->parentExpr);
-            CallExpr* getIterator = toCallExpr(move->get(2));
-            // The argument to _getIterator is the iterable
-            iterable = getIterator->get(1);
-          } else {
-            iterable = actualSe;
-          }
-          IteratorDetails details;
-          details.iterable = iterable;
-
-          detailsVector.push_back(details);
-        }
-      } else {
-        INT_ASSERT(tupleIterator);
-        // Can't find build_tuple call, so fall back on
-        // storing tuple elements in iterator details.
-        AggregateType* tupleItType = toAggregateType(tupleIterator->typeInfo());
-        if (tupleItType->symbol->hasFlag(FLAG_TUPLE)) {
-          int i = 0;
-          for_fields(field, tupleItType) {
-            IteratorDetails details;
-            details.iterable = tupleIterator;
-            details.iterableTupleElement = i+1;
-            detailsVector.push_back(details);
-
-            i++;
-          }
-        }
-      }
-
-      // Figure out iterator class of zippered followers from
-      // the tuple type.
-      AggregateType* tupleType = toAggregateType(iterator->type);
-      int i = 0;
-      for_fields(field, tupleType) {
-        detailsVector[i].iteratorClass = field->type;
-        detailsVector[i].iterator =
-          getTheIteratorFn(detailsVector[i].iteratorClass);
-
-        i++;
-      }
-
-      // Now, in a zippered-for, the index is actually
-      // a tuple (of references typically). We need to find the
-      // un-packed elements.
-
-      findZipperedIndexVariables(index, detailsVector);
-
-      IteratorDetails emptyDetails;
-      leaderDetails = emptyDetails;
-      followerForLoop = NULL;
-      return;
-    }
-  } else {
-    // Handle forall loops
-
-    // It could be:
-    // standalone iterator that is not zippered
-    // leader-follower loop that is not zippered
-    // leader-follower loop that is zippered
-
-    if (!isLeader) {
-      // parallel, non-zippered standalone
-      // ie forall using standalone iterator
-      // Find the PRIM_MOVE setting iterator
-      SymExpr* def = chpl_iter->getSingleDef();
-      CallExpr* move = toCallExpr(def->parentExpr);
-      INT_ASSERT(move && move->isPrimitive(PRIM_MOVE));
-
-      Expr* iterable = move->get(2);
-
-      // If the preceding statement is a PRIM_MOVE setting
-      // moveAddr, use its argument as the iterable.
-      if (SymExpr* iterableSe = toSymExpr(iterable)) {
-        CallExpr* prev = toCallExpr(move->prev);
-        if (prev && prev->isPrimitive(PRIM_MOVE))
-          if (SymExpr* lhs = toSymExpr(move->get(1)))
-            if (lhs->symbol() == iterableSe->symbol())
-              if (CallExpr* addrOf = toCallExpr(prev->get(2)))
-                if (addrOf->isPrimitive(PRIM_ADDR_OF) ||
-                    addrOf->isPrimitive(PRIM_SET_REFERENCE))
-                iterable = addrOf->get(1);
-      }
-
-      INT_ASSERT(iterable);
-
-      // Collapse compiler-introduced copies of references
-      // to variables marked "index var"
-      // This handles chpl__saIdxCopy
-      index = collapseIndexVarReferences(index);
-
-      IteratorDetails details;
-      details.iterable = iterable;
-      details.index = index;
-      details.iteratorClass = iterator->type;
-      details.iterator = getTheIteratorFn(details.iteratorClass);
-
-      IteratorDetails emptyDetails;
-      leaderDetails = emptyDetails;
-      followerForLoop = NULL;
-      detailsVector.push_back(details);
-      return;
-    } else {
-
-      // Leader-follower iteration
-
-      // Find the iterables
-
-      SymExpr* def = chpl_iter->getSingleDef();
-      CallExpr* move = toCallExpr(def->parentExpr);
-      INT_ASSERT(move && move->isPrimitive(PRIM_MOVE));
-
-      if (!zippered) {
-        Expr* iterable = move->get(2);
-        INT_ASSERT(iterable);
-        // Comes up in non-zippered leader-follower iteration
-        IteratorDetails details;
-        details.iterable = iterable;
-        // Other details set below.
-        detailsVector.push_back(details);
-      } else {
-        CallExpr* buildTupleCall = toCallExpr(move->get(2));
-        INT_ASSERT(buildTupleCall);
-        // build up the detailsVector
-        for_actuals(actual, buildTupleCall) {
-          SymExpr* actualSe = toSymExpr(actual);
-          INT_ASSERT(actualSe); // otherwise not normalized
-          // actualSe is the iterable in this case
-          IteratorDetails details;
-          details.iterable = actualSe;
-          // Other details set below.
-          detailsVector.push_back(details);
-        }
-      }
-
-      leaderDetails.iterable = detailsVector[0].iterable;
-      leaderDetails.index = index;
-      leaderDetails.iteratorClass = iterator->typeInfo();
-      leaderDetails.iterator = getTheIteratorFn(leaderDetails.iteratorClass);
-
-      ForLoop* followerFor = findFollowerForLoop(forLoop);
-      INT_ASSERT(followerFor);
-      followerForLoop = followerFor;
-
-      // Set the detailsVector based upon the follower loop
-      Symbol* followerIndex = followerFor->indexGet()->symbol();
-      Symbol* followerIterator = followerFor->iteratorGet()->symbol();
-
-      if (!zippered) {
-        followerIndex = collapseIndexVarReferences(followerIndex);
-        detailsVector[0].index = followerIndex;
-        detailsVector[0].iteratorClass = followerIterator->typeInfo();
-        detailsVector[0].iterator = getTheIteratorFn(detailsVector[0].iteratorClass);
-      } else {
-        // Set detailsVector[i].index
-        findZipperedIndexVariables(followerIndex, detailsVector);
-
-        // Figure out iterator class of zippered followers from
-        // the tuple type.
-        AggregateType* tupleType = toAggregateType(followerIterator->type);
-        int i = 0;
-        for_fields(field, tupleType) {
-          detailsVector[i].iteratorClass = field->type;
-          detailsVector[i].iterator =
-            getTheIteratorFn(detailsVector[i].iteratorClass);
-
-          i++;
-        }
-      }
-      return;
-    }
-  }
-}
-
 
 static
 bool isRefOrTupleWithRef(Symbol* index, int tupleElement)
@@ -1245,12 +748,27 @@ void cullOverReferences() {
       // information to resolve. These can be added to the revisitGraph.
       if (CallExpr* call = toCallExpr(se->parentExpr)) {
 
+        bool foundLoop = false;
+        bool isForall = false;
+        IteratorDetails leaderDetails;
+        ForLoop* followerForLoop = NULL;
+        std::vector<IteratorDetails> detailsVector;
+
+        if (isForallIterExpr(call)) {
+          ForallStmt* pfs = toForallStmt(call->parentExpr);
+          gatherLoopDetails(pfs, isForall, leaderDetails,
+                            followerForLoop, detailsVector);
+          foundLoop = true;
+        }
+
+        // Otherwise, look for a ForLoop / old style forall
+
         // Check if sym is iterated over. In that case, what's the
         // index variable?
         //
         // It's important that this case run before the check
         // for build_tuple.
-        {
+        else {
           // Find enclosing PRIM_MOVE
           CallExpr* move = toCallExpr(se->parentExpr->getStmtExpr());
           if (!move->isPrimitive(PRIM_MOVE))
@@ -1261,6 +779,8 @@ void cullOverReferences() {
             SymExpr* lhs = toSymExpr(move->get(1));
             Symbol* iterator = lhs->symbol();
             ForLoop* forLoop = NULL;
+            ForallStmt*   fs = NULL;
+            // Todo expand isChplIterOrLoopIterator to watch for ForallStmt?
 
             // marked with chpl__iter or with type iterator class?
             if (isChplIterOrLoopIterator(iterator, forLoop)) {
@@ -1269,10 +789,13 @@ void cullOverReferences() {
 
               if (!forLoop) {
                 Expr* e = move;
-                while (e && !isForLoop(e)) {
+                while (e) {
+                  if ( (forLoop = toForLoop(e)) )
+                    break;
+                  if ( (fs = toForallStmt(e)) )
+                    break;
                   e = e->next;
                 }
-                forLoop = toForLoop(e);
               }
 
               if (forLoop) {
@@ -1280,22 +803,29 @@ void cullOverReferences() {
                 // correspondence between what was iterated over
                 // and the index variables.
 
-                bool isForall = false;
-                IteratorDetails leaderDetails;
-                ForLoop* followerForLoop = NULL;
-                std::vector<IteratorDetails> detailsVector;
-
                 /*
                 printf("print working on node %i %i\n",
                        node.variable->id, node.fieldIndex);
                 
                 printf("for iterator %i\n", iterator->id);
-
                 */
 
                 gatherLoopDetails(forLoop, isForall, leaderDetails,
                                   followerForLoop, detailsVector);
+                foundLoop = true;
+              }
+              else if (fs) {
+                // Ditto if it is a ForallStmt.
 
+                gatherLoopDetails(fs, isForall, leaderDetails,
+                                  followerForLoop, detailsVector);
+                foundLoop = true;
+              }
+            }
+          }
+        }
+
+        if (foundLoop) {
                 bool handled = false;
 
                 for (size_t i = 0; i < detailsVector.size(); i++) {
@@ -1307,6 +837,13 @@ void cullOverReferences() {
                   int indexTupleElement = detailsVector[i].indexTupleElement;
                   FnSymbol* iteratorFn  = detailsVector[i].iterator;
                   SymExpr* iterableSe = toSymExpr(iterable);
+
+                  // Also check if we are iterating using these() method
+                  // ex. functions/ferguson/ref-pair/const-error-iterated*
+                  if (!iterableSe)
+                    if (CallExpr* iterableCall = toCallExpr(iterable))
+                      if (iterableCall->isNamed("these"))
+                        iterableSe = toSymExpr(iterableCall->get(1));
 
                   /*
                   printf("  i %i\n", (int) i);
@@ -1323,7 +860,8 @@ void cullOverReferences() {
                   // and modifying the index variable should make us
                   // consider the array to be "set".
                   if (iteratorFn->isMethod() &&
-                      isArrayClass(iteratorFn->getFormal(1)->type))
+                      (isArrayClass(iteratorFn->getFormal(1)->type) ||
+                       iteratorFn->hasFlag(FLAG_REF_TO_CONST_WHEN_CONST_THIS)))
                       iteratorYieldsConstWhenConstThis = true;
 
                   // Note, if we wanted to use the return intent
@@ -1350,18 +888,13 @@ void cullOverReferences() {
 
                 if (handled)
                   continue; // continue outer loop
-              }
-            }
-          }
         }
 
         if (FnSymbol* calledFn = call->resolvedFunction()) {
           if (calledFn->hasFlag(FLAG_BUILD_TUPLE)) {
             if (CallExpr* move = toCallExpr(call->parentExpr)) {
               if (move->isPrimitive(PRIM_MOVE) &&
-                  // workaround for compiler-introduced
-                  // _build_tuple_always_allow_ref calls
-                  ! calledFn->hasFlag(FLAG_ALLOW_REF)) {
+                  considerAllowRefCall(move, calledFn)) {
                 SymExpr* lhs       = toSymExpr(move->get(1));
                 Symbol*  lhsSymbol = lhs->symbol();
                 int      j         = 1;
@@ -1678,31 +1211,24 @@ void cullOverReferences() {
   // Now, lower ContextCalls
   forv_Vec(ContextCallExpr, cc, gContextCallExprs) {
     // Some ContextCallExprs have already been removed above
-    if (cc->parentExpr == NULL)
+    if (!cc->inTree())
       continue;
 
     CallExpr* move = toCallExpr(cc->parentExpr);
 
-    choose_type_t which = USE_CONST_REF;
+    bool notConst = false;
+    Symbol* lhsSymbol = NULL;
 
     if (move) {
       SymExpr* lhs = toSymExpr(move->get(1));
-      Symbol* lhsSymbol = lhs->symbol();
+      lhsSymbol = lhs->symbol();
       Qualifier qual = lhsSymbol->qualType().getQual();
 
-      INT_ASSERT(qual == QUAL_REF || qual == QUAL_CONST_REF);
       if (qual == QUAL_REF)
-        which = USE_REF;
-      else {
-        // Check: should we use the const-ref or value version?
-        // Use value version if it's never passed/returned as const ref
-        which = USE_VALUE;
-        if (symbolIsUsedAsConstRef(lhsSymbol))
-          which = USE_CONST_REF;
-      }
+        notConst = true;
     }
 
-    lowerContextCall(cc, which);
+    lowerContextCallComputeConstRef(cc, notConst, lhsSymbol);
   }
 
   // We already changed INTENT_REF_MAYBE_CONST in
@@ -1717,15 +1243,20 @@ void cullOverReferences() {
 static
 bool firstPassLowerContextCall(ContextCallExpr* cc)
 {
-  CallExpr* refCall = cc->getRefCall();
-  CallExpr* valueCall = cc->getRValueCall();
+  CallExpr* refCall = NULL;
+  CallExpr* valueCall = NULL;
+  CallExpr* constRefCall = NULL;
 
-  INT_ASSERT(refCall && valueCall);
+  cc->getCalls(refCall, valueCall, constRefCall);
 
-  FnSymbol* refFn = refCall->resolvedFunction();
-  INT_ASSERT(refFn);
-  FnSymbol* valueFn = valueCall->resolvedFunction();
-  INT_ASSERT(valueFn);
+  INT_ASSERT(refCall || valueCall || constRefCall);
+
+  CallExpr* someCall = refCall;
+  if (someCall == NULL) someCall = constRefCall;
+  if (someCall == NULL) someCall = valueCall;
+
+  FnSymbol* fn = someCall->resolvedFunction();
+  INT_ASSERT(fn);
 
   CallExpr* move = NULL; // set if the call is in a PRIM_MOVE
   SymExpr* lhs = NULL; // lhs if call is in a PRIM_MOVE
@@ -1737,8 +1268,8 @@ bool firstPassLowerContextCall(ContextCallExpr* cc)
   //  would require specific support for iterators since yielding
   //  is not the same as returning.)
   move = toCallExpr(cc->parentExpr);
-  if (refFn->isIterator()) {
-    lowerContextCall(cc, USE_REF);
+  if (fn->isIterator()) {
+    lowerContextCallPreferRefConstRef(cc);
     return true;
   } else if (move) {
     INT_ASSERT(move->isPrimitive(PRIM_MOVE));
@@ -1752,11 +1283,87 @@ bool firstPassLowerContextCall(ContextCallExpr* cc)
     // should use 'getter'
     // MPF - note 2016-01: this code does not seem to be triggered
     // in the present compiler.
-    lowerContextCall(cc, USE_CONST_REF);
+    lowerContextCallPreferConstRefValue(cc);
     return true;
   }
 }
 
+static
+void lowerContextCallPreferRefConstRef(ContextCallExpr* cc)
+{
+  CallExpr* refCall = NULL;
+  CallExpr* valueCall = NULL;
+  CallExpr* constRefCall = NULL;
+  choose_type_t which;
+
+  cc->getCalls(refCall, valueCall, constRefCall);
+
+  if (refCall) {
+    which = USE_REF;
+  } else if(constRefCall) {
+    which = USE_CONST_REF;
+  } else {
+    which = USE_VALUE;
+    INT_ASSERT("lowering context call with only 1 option");
+  }
+
+  lowerContextCall(cc, which);
+}
+
+static
+void lowerContextCallPreferConstRefValue(ContextCallExpr* cc)
+{
+  CallExpr* refCall = NULL;
+  CallExpr* valueCall = NULL;
+  CallExpr* constRefCall = NULL;
+  choose_type_t which;
+
+  cc->getCalls(refCall, valueCall, constRefCall);
+
+  if(constRefCall) {
+    which = USE_CONST_REF;
+  } else if(valueCall) {
+    which = USE_VALUE;
+  } else {
+    which = USE_REF;
+    INT_ASSERT("lowering context call with only 1 option");
+  }
+
+  lowerContextCall(cc, which);
+}
+
+static
+void lowerContextCallComputeConstRef(ContextCallExpr* cc, bool notConst, Symbol* lhsSymbol)
+{
+  CallExpr* refCall = NULL;
+  CallExpr* valueCall = NULL;
+  CallExpr* constRefCall = NULL;
+  choose_type_t which = USE_CONST_REF;
+
+  cc->getCalls(refCall, valueCall, constRefCall);
+
+  if (notConst) {
+    which = USE_REF;
+    // it would be a program error if the ref version didn't exist
+  } else {
+    // Check: should we use the const-ref or value version?
+    // Use value version if it's never passed/returned as const ref
+    if (valueCall != NULL && constRefCall != NULL) {
+      if (lhsSymbol == NULL || symbolIsUsedAsConstRef(lhsSymbol))
+        which = USE_CONST_REF;
+      else
+        which = USE_VALUE;
+    } else {
+      // Use whichever value version we have.
+      if (constRefCall != NULL)
+        which = USE_CONST_REF;
+      else
+        which = USE_VALUE;
+    }
+  }
+
+  lowerContextCall(cc, which);
+}
 
 static
 void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
@@ -1767,10 +1374,22 @@ void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
 
   cc->getCalls(refCall, valueCall, constRefCall);
 
-  // For now, ref version is required for a ref-pair
-  INT_ASSERT(refCall);
-  FnSymbol* refFn = refCall->resolvedFunction();
-  INT_ASSERT(refFn);
+  // Check that whatever was selected is available.
+  if (which == USE_REF)
+    INT_ASSERT(refCall != NULL);
+  if (which == USE_CONST_REF)
+    INT_ASSERT(constRefCall != NULL);
+  if (which == USE_VALUE)
+    INT_ASSERT(valueCall != NULL);
+  
+  CallExpr* someCall = refCall;
+  if (someCall == NULL) someCall = constRefCall;
+  if (someCall == NULL) someCall = valueCall;
+
+  FnSymbol* fn = someCall->resolvedFunction();
+  INT_ASSERT(fn);
+
+  // TODO tidy up below based upon the above assumptions.
 
   bool useValueCall = (which == USE_VALUE || which == USE_CONST_REF);
   CallExpr* move = NULL; // set if the call is in a PRIM_MOVE
@@ -1783,9 +1402,10 @@ void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
   //  would require specific support for iterators since yielding
   //  is not the same as returning.)
   move = toCallExpr(cc->parentExpr);
-  if (refFn->isIterator())
+  if (fn->isIterator()) {
+    INT_ASSERT(which == USE_REF);
     useValueCall = false;
-  else if (move) {
+  } else if (move) {
     lhs = toSymExpr(move->get(1));
     // useValueCall set from useSetter argument to this function
   } else {
@@ -1795,9 +1415,10 @@ void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
     // MPF - note 2016-01: this code does not seem to be triggered
     // in the present compiler.
     useValueCall = true;
+    INT_ASSERT(which == USE_CONST_REF || which == USE_VALUE);
   }
 
-  refCall->remove();
+  if (refCall) refCall->remove();
   if (valueCall) valueCall->remove();
   if (constRefCall) constRefCall->remove();
 
@@ -1833,7 +1454,6 @@ void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
 
       if (requiresImplicitDestroy(useCall)) {
         if (isUserDefinedRecord(useFn->retType) == false) {
-          tmp->addFlag(FLAG_INSERT_AUTO_COPY);
           tmp->addFlag(FLAG_INSERT_AUTO_DESTROY);
         } else {
           tmp->addFlag(FLAG_INSERT_AUTO_DESTROY);
@@ -1874,7 +1494,8 @@ void lowerContextCall(ContextCallExpr* cc, choose_type_t which)
 
   } else {
     // Replace the ContextCallExpr with the ref call
-    cc->replace(refCall);
+    if (refCall) cc->replace(refCall);
+    else if(constRefCall) cc->replace(constRefCall);
   }
 }
 
@@ -2008,6 +1629,11 @@ static void lateConstCheck(std::map<BaseAST*, BaseAST*> & reasonNotConst)
 
         // Ignore errors in functions marked with FLAG_SUPPRESS_LVALUE_ERRORS.
         if (inFn->hasFlag(FLAG_SUPPRESS_LVALUE_ERRORS)) {
+          error = false;
+        }
+
+        // A 'const' record should be able to be initialized
+        if (calledFn->name == astrInit) {
           error = false;
         }
 

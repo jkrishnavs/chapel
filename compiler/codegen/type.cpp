@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,22 +21,29 @@
 
 #include "AstToText.h"
 #include "astutil.h"
+#include "AstVisitor.h"
 #include "build.h"
 #include "codegen.h"
 #include "docsDriver.h"
+#include "driver.h"
 #include "expr.h"
 #include "files.h"
 #include "intlimits.h"
 #include "ipe.h"
+#include "iterator.h"
+#include "LayeredValueTable.h"
+#include "llvmVer.h"
 #include "misc.h"
 #include "passes.h"
 #include "stringutil.h"
 #include "symbol.h"
 #include "vec.h"
+#include "wellknown.h"
 
-#include "iterator.h"
+#ifdef HAVE_LLVM
+#include "llvm/IR/Module.h"
+#endif
 
-#include "AstVisitor.h"
 
 GenRet Type::codegen() {
   if (this == dtUnknown) {
@@ -158,6 +165,7 @@ int EnumType::codegenStructure(FILE* outfile, const char* baseoffset) {
 // name the typedef for the struct itself.
 //
 const char* AggregateType::classStructName(bool standalone) {
+
   if (standalone) {
     const char* basename = symbol->cname;
     if (aggregateTag == AGGREGATE_CLASS) {
@@ -257,60 +265,47 @@ void AggregateType::codegenDef() {
     }
   } else {
     if( outfile ) {
-      if( symbol->hasEitherFlag(FLAG_WIDE_REF, FLAG_WIDE_CLASS) &&
-          (! widePointersStruct ) ) {
-        // Reach this branch when generating a wide/wide class as a
-        // global pointer!
-        Type* baseType = this->getField("addr")->type;
-        GenRet c = baseType;
+      fprintf(outfile, "typedef struct %s", this->classStructName(false));
+      if (aggregateTag == AGGREGATE_CLASS && dispatchParents.n > 0) {
+        /* Add a comment to class definitions listing super classes */
+        bool first = true;
+        fprintf(outfile, " /* : ");
 
-        // could use __attribute__(address_space(101))
-        //  if we wanted to emit packed pointers in a different AS with clang.
-        fprintf(outfile, "typedef %s * %s;\n",
-            baseType->symbol->codegen().c.c_str(),
-            this->classStructName(true));
-      } else {
-        fprintf(outfile, "typedef struct %s", this->classStructName(false));
-        if (aggregateTag == AGGREGATE_CLASS && dispatchParents.n > 0) {
-          /* Add a comment to class definitions listing super classes */
-          bool first = true;
-          fprintf(outfile, " /* : ");
-          forv_Vec(Type, parent, dispatchParents) {
-            if (parent) {
-              if (!first) {
-                fprintf(outfile, ", ");
-              }
-              fprintf(outfile, "%s", parent->symbol->codegen().c.c_str());
-              first = false;
+        forv_Vec(AggregateType, parent, dispatchParents) {
+          if (parent) {
+            if (!first) {
+              fprintf(outfile, ", ");
             }
-          }
-          fprintf(outfile, " */");
-        }
-        fprintf(outfile, " {\n");
-        if (symbol->hasFlag(FLAG_OBJECT_CLASS) && aggregateTag == AGGREGATE_CLASS) {
-          fprintf(outfile, "chpl__class_id chpl__cid;\n");
-        } else if (aggregateTag == AGGREGATE_UNION) {
-          fprintf(outfile, "int64_t _uid;\n");
-          if (this->fields.length != 0)
-            fprintf(outfile, "union {\n");
-        } else if (this->fields.length == 0) {
-          // TODO: remove and enforce at least 1 element in a union
-          fprintf(outfile, "uint8_t dummyFieldToAvoidWarning;\n");
-        }
-
-        if (this->fields.length != 0) {
-          for_fields(field, this) {
-            field->codegenDef();
+            fprintf(outfile, "%s", parent->symbol->codegen().c.c_str());
+            first = false;
           }
         }
-        flushStatements();
-
-        if (aggregateTag == AGGREGATE_UNION) {
-          if (this->fields.length != 0)
-            fprintf(outfile, "} _u;\n");
-        }
-        fprintf(outfile, "} %s;\n\n", this->classStructName(true));
+        fprintf(outfile, " */");
       }
+      fprintf(outfile, " {\n");
+      if (symbol->hasFlag(FLAG_OBJECT_CLASS) && aggregateTag == AGGREGATE_CLASS) {
+        fprintf(outfile, "chpl__class_id chpl__cid;\n");
+      } else if (aggregateTag == AGGREGATE_UNION) {
+        fprintf(outfile, "int64_t _uid;\n");
+        if (this->fields.length != 0)
+          fprintf(outfile, "union {\n");
+      } else if (this->fields.length == 0) {
+        // TODO: remove and enforce at least 1 element in a union
+        fprintf(outfile, "uint8_t dummyFieldToAvoidWarning;\n");
+      }
+
+      if (this->fields.length != 0) {
+        for_fields(field, this) {
+          field->codegenDef();
+        }
+      }
+      flushStatements();
+
+      if (aggregateTag == AGGREGATE_UNION) {
+        if (this->fields.length != 0)
+          fprintf(outfile, "} _u;\n");
+      }
+      fprintf(outfile, "} %s;\n\n", this->classStructName(true));
     } else {
 #ifdef HAVE_LLVM
       int paramID = 0;
@@ -334,7 +329,7 @@ void AggregateType::codegenDef() {
         for_fields(field, this) {
           llvm::Type* fieldType = field->type->symbol->codegen().type;
           INT_ASSERT(fieldType);
-          uint64_t fieldSize = info->targetData->getTypeStoreSize(fieldType);
+          uint64_t fieldSize = info->module->getDataLayout().getTypeStoreSize(fieldType);
 
           if(fieldSize > largestSize) {
             largestType = fieldType;
@@ -348,8 +343,15 @@ void AggregateType::codegenDef() {
 
         llvm::StructType * st;
         // handle an empty union.
-        if( largestType ) st = llvm::StructType::get(largestType, NULL);
-        else st = llvm::StructType::get(info->module->getContext());
+        if( largestType ) {
+          st = llvm::StructType::get(largestType
+#if HAVE_LLVM_VER < 50
+                                     , NULL
+#endif
+                                     );
+        } else {
+          st = llvm::StructType::get(info->module->getContext());
+        }
         params.push_back(st);
         GEPMap.insert(std::pair<std::string, int>("_u", paramID++));
       } else {
@@ -374,14 +376,12 @@ void AggregateType::codegenDef() {
       // Is it a class or a record?
       // if it's a record, we make the new type now.
       // if it's a class, we update the existing type.
-      if( symbol->hasEitherFlag(FLAG_WIDE_REF, FLAG_WIDE_CLASS) &&
-          (! widePointersStruct ) ) {
+      if( this->isWidePtrType() && fLLVMWideOpt ) {
         // Reach this branch when generating a wide/wide class as a
         // global pointer!
         unsigned globalAddressSpace = 0;
 
-        if( fLLVMWideOpt )
-          globalAddressSpace = info->globalToWideInfo.globalSpace;
+        globalAddressSpace = info->globalToWideInfo.globalSpace;
 
         Type* baseType = this->getField("addr")->type;
         llvm::Type* llBaseType = baseType->symbol->codegen().type;
@@ -399,7 +399,7 @@ void AggregateType::codegenDef() {
         if( fLLVMWideOpt ) {
           // These are here so that the types are generated during codegen..
           if( ! info->globalToWideInfo.localeIdType ) {
-            Type* localeType = LOCALE_ID_TYPE;
+            Type* localeType = dtLocaleID->typeInfo();
             info->globalToWideInfo.localeIdType = localeType->codegen().type;
           }
           if( ! info->globalToWideInfo.nodeIdType ) {
@@ -594,21 +594,28 @@ int AggregateType::getMemberGEP(const char *name) {
           return GEPIdx->second;
         }
 
-        forv_Vec(Type, parent, t->dispatchParents) {
-          if (parent)
-            next_p->set_add(parent);
+        if (AggregateType* at = toAggregateType(t)) {
+          forv_Vec(AggregateType, parent, at->dispatchParents) {
+            if (parent)
+              next_p->set_add(parent);
+          }
         }
       }
+
       Vec<Type*>* temp = next_p;
-      next_p = current_p;
+
+      next_p    = current_p;
       current_p = temp;
+
       next_p->clear();
     }
 
     const char *className = "<no name>";
+
     if (this->symbol) {
       className = this->symbol->name;
     }
+
     INT_FATAL(this, "no field '%s' in class '%s' in getField()",
               name, className);
   }

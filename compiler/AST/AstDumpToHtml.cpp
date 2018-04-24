@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -61,8 +61,8 @@ void AstDumpToHtml::init() {
   fprintf(sIndexFP, "<HTML>\n");
   fprintf(sIndexFP, "<HEAD>\n");
   fprintf(sIndexFP, "<TITLE> Compilation Dump </TITLE>\n");
-  fprintf(sIndexFP, "<SCRIPT SRC=\"http://chapel.cray.com/developer/mktree.js\" LANGUAGE=\"JavaScript\"></SCRIPT>");
-  fprintf(sIndexFP, "<LINK REL=\"stylesheet\" HREF=\"http://chapel.cray.com/developer/mktree.css\">");
+  fprintf(sIndexFP, "<SCRIPT SRC=\"https://chapel-lang.org/developer/mktree.js\" LANGUAGE=\"JavaScript\"></SCRIPT>");
+  fprintf(sIndexFP, "<LINK REL=\"stylesheet\" HREF=\"https://chapel-lang.org/developer/mktree.css\">");
   fprintf(sIndexFP, "</HEAD>\n");
   fprintf(sIndexFP, "<div style=\"text-align: center;\"><big><big><span style=\"font-weight: bold;\">");
   fprintf(sIndexFP, "Compilation Dump<br><br></span></big></big>\n");
@@ -122,8 +122,8 @@ bool AstDumpToHtml::open(ModuleSymbol* module, const char* passName) {
     fprintf(mFP, "<HTML>\n");
     fprintf(mFP, "<HEAD>\n");
     fprintf(mFP, "<TITLE> AST for Module %s after Pass %s </TITLE>\n", module->name, passName);
-    fprintf(mFP, "<SCRIPT SRC=\"http://chapel.cray.com/developer/mktree.js\" LANGUAGE=\"JavaScript\"></SCRIPT>\n");
-    fprintf(mFP, "<LINK REL=\"stylesheet\" HREF=\"http://chapel.cray.com/developer/mktree.css\">\n");
+    fprintf(mFP, "<SCRIPT SRC=\"https://chapel-lang.org/developer/mktree.js\" LANGUAGE=\"JavaScript\"></SCRIPT>\n");
+    fprintf(mFP, "<LINK REL=\"stylesheet\" HREF=\"https://chapel-lang.org/developer/mktree.css\">\n");
     fprintf(mFP, "</HEAD><BODY%s>\n",
            fdump_html_wrap_lines ? "" : " style=\"white-space: nowrap;\"");
 
@@ -441,7 +441,7 @@ void AstDumpToHtml::visitForallIntents(ForallIntents* clause) {
   for (int i = 0; i < clause->numVars(); i++) {
     if (i > 0) fprintf(mFP, ", ");
     if (clause->isReduce(i)) clause->riSpecs[i]->accept(this);
-    fprintf(mFP, "<B>%s</B> ", tfiTagDescrString(clause->fIntents[i]));
+    fprintf(mFP, "<B>%s</B> ", forallIntentTagDescription(clause->fIntents[i]));
     clause->fiVars[i]->accept(this);
   }
   fprintf(mFP, ")" );
@@ -625,6 +625,10 @@ bool AstDumpToHtml::enterGotoStmt(GotoStmt* node) {
     case GOTO_ERROR_HANDLING:
       fprintf(mFP, "<B>gotoErrorHandling</B> ");
       break;
+    case GOTO_BREAK_ERROR_HANDLING:
+      fprintf(mFP, "<B>gotoBreakErrorHandling</B> ");
+      break;
+
   }
 
   if (SymExpr* label = toSymExpr(node->label))

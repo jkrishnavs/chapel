@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -27,6 +27,7 @@
 //
 int chpl_run_utility1K(const char *command, char *const argv[],
                        char *outbuf, int outbuflen);
+int chpl_run_cmdstr(const char *commandStr, char *outbuf, int outbuflen);
 char **chpl_bundle_exec_args(int argc, char *const argv[],
                              int largc, char *const largv[]);
 int chpl_launch_using_fork_exec(const char* command, char * const argv1[],

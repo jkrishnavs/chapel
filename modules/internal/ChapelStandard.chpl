@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -27,6 +27,8 @@ module ChapelStandard {
   use CPtr;
   use CString;
   use String;
+  use OwnedObject;
+  use SharedObject;
   use ChapelDebugPrint;
   use ChapelEnv;
   use ChapelBase;
@@ -43,6 +45,7 @@ module ChapelStandard {
   use ChapelRange;
   use ChapelReduce;
   use ChapelSyncvar;
+  use ChapelTaskDataHelp;
   use LocaleModel;
   use ChapelLocale;
   use DefaultRectangular; // This might be able to go just after Atomics
@@ -60,6 +63,8 @@ module ChapelStandard {
   use ChapelUtil;
   use ChapelError;
   use ChapelDynDispHack;
+  use ChapelTaskData;
+  use ChapelSerializedBroadcast;
 
   // Standard modules.
   use Assert;

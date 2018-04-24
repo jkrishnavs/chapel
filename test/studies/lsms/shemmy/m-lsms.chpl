@@ -73,7 +73,7 @@ proc main() {
 
 	//initialize atom values
 	forall (i, atom) in zip(GridDist, atoms) {
-		local for param e in 1..nExtent do atom[e] = GridDist.indexOrder(i);
+		local do for param e in 1..nExtent do atom[e] = GridDist.indexOrder(i);
 	}
 	
 	t.start();
@@ -111,6 +111,9 @@ proc main() {
 
 	writeln("Success!");
 	if perfTest then writeln("Chapel time = ", t.elapsed(), " s");
+
+        forall cache in caches do
+          delete cache;
 }
 
 proc checkExpected(itr: int, atoms: [?AtomDom] AtomMatrix) {

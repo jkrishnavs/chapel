@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -86,12 +86,6 @@
     ProcIter_ITER
   };
 
-  struct IntentExpr {
-    Expr*     iVar;
-    IntentTag tfIntent; // undefined for a reduce intent
-    Expr*     riExp;    // non-NULL for a reduce intent
-  };
-
   struct OnlyRename {
     enum{SINGLE, DOUBLE} tag;
 
@@ -117,12 +111,12 @@
     BlockStmt*                pblockstmt;
     Type*                     ptype;
     EnumType*                 penumtype;
+    std::vector<DefExpr*>*    pvecOfDefs;
     FnSymbol*                 pfnsymbol;
     Flag                      flag;
     ProcIter                  procIter;
     FlagSet*                  flagSet;
-    IntentExpr                pIntentExpr;
-    ForallIntents*            pForallIntents;
+    ShadowVarSymbol*          pShadowVar;
     std::vector<OnlyRename*>* ponlylist;
   };
 
@@ -197,10 +191,13 @@
 %code {
   #include "build.h"
   #include "CatchStmt.h"
+  #include "DeferStmt.h"
   #include "DoWhileStmt.h"
   #include "driver.h"
   #include "flex-chapel.h"
+  #include "ForallStmt.h"
   #include "ForLoop.h"
+  #include "misc.h"
   #include "parser.h"
   #include "stmt.h"
   #include "stringutil.h"
@@ -233,10 +230,13 @@
   void yyerror(YYLTYPE*       ignored,
                ParserContext* context,
                const char*    str) {
+
+    // like USR_FATAL_CONT
+    setupError(__FILE__, __LINE__, 3);
+
     // TODO -- should this begin with error:
     if (!chplParseString) {
       const char* yyText = yyget_text(context->scanner);
-
       fprintf(stderr, "%s:%d: %s", yyfilename, chplLineno, str);
 
       if (strlen(yyText) > 0) {
@@ -251,8 +251,6 @@
     }
 
     fprintf(stderr, "\n");
-
-    clean_exit(1);
   }
 }
 
@@ -264,6 +262,10 @@
 
 %debug
 %verbose
+// These would print out expected token names, but that might just
+// add unnecessary complexity for someone new to the language ...
+//%define parse.lac full
+//%define parse.error verbose
 
 %locations
 %define api.pure
@@ -289,17 +291,17 @@
 //
 %token TALIGN TAS TATOMIC TBEGIN TBREAK TBY TCATCH
 %token TCLASS TCOBEGIN TCOFORALL TCONFIG TCONST TCONTINUE
-%token TDELETE TDMAPPED TDO TDOMAIN
+%token TDEFER TDELETE TDMAPPED TDO TDOMAIN
 %token TELSE TENUM TEXCEPT TEXPORT TEXTERN
 %token TFOR TFORALL TFORWARDING
 %token TIF TIN TINDEX TINLINE TINOUT TITER
 %token TLABEL TLAMBDA TLET TLOCAL TMINUSMINUS TMODULE
-%token TNEW TNIL TNOINIT TON TONLY TOTHERWISE TOUT
-%token TPARAM TPLUSPLUS TPRAGMA TPRIMITIVE TPRIVATE TPROC TPUBLIC
+%token TNEW TNIL TNOINIT TON TONLY TOTHERWISE TOUT TOWNED
+%token TPARAM TPLUSPLUS TPRAGMA TPRIMITIVE TPRIVATE TPROC TPROTOTYPE TPUBLIC
 %token TRECORD TREDUCE TREF TREQUIRE TRETURN
-%token TSCAN TSELECT TSERIAL TSINGLE TSPARSE TSUBDOMAIN
+%token TSCAN TSELECT TSERIAL TSHARED TSINGLE TSPARSE TSUBDOMAIN
 %token TSYNC TTHEN TTHROW TTHROWS TTRY TTRYBANG TTYPE TUNDERSCORE
-%token TUNION TUSE TVAR TWHEN TWHERE TWHILE TWITH TYIELD TZIP
+%token TUNION TUNMANAGED TUSE TVAR TWHEN TWHERE TWHILE TWITH TYIELD TZIP
 
 //
 // operators and punctuation (alphabetical)
@@ -325,6 +327,7 @@
 %left TELSE
 %left TCOMMA
 %left TFOR TFORALL TIF TATOMIC TSYNC TSINGLE
+// %left TOWNED TUNMANAGED TSHARED
 %left TIN
 %left TALIGN TBY THASH
 %left TOR
@@ -343,12 +346,14 @@
 %left TREDUCE TSCAN TDMAPPED
 %right TEXP
 %left TCOLON
+%left TOWNED TUNMANAGED TSHARED
 %right TNEW
 %left TDOT TLP TRSBR TLCBR
 %nonassoc TPRAGMA
 
 %type <flag> opt_config
 %type <b> access_control
+%type <b> opt_prototype
 %type <b> opt_throws_error
 
 %type <pt> required_intent_tag opt_intent_tag opt_this_intent_tag
@@ -385,6 +390,7 @@
 %type <pblockstmt> forwarding_stmt
 %type <pblockstmt> extern_block_stmt
 %type <pblockstmt> return_stmt
+%type <pblockstmt> defer_stmt
 %type <pblockstmt> try_stmt
 %type <pblockstmt> throw_stmt
 %type <pblockstmt> catch_stmt_ls
@@ -404,8 +410,8 @@
 
 %type <pcallexpr> array_type
 %type <pexpr> opt_type opt_formal_type formal_array_type opt_formal_array_elt_type lambda_decl_expr
-%type <pexpr> opt_reindex_expr
-%type <penumtype> enum_ls
+%type <penumtype> enum_header
+%type <pvecOfDefs> enum_ls
 
 %type <pcallexpr> zippered_iterator
 %type <pexpr> fun_expr call_expr dot_expr lhs_expr unary_op_expr binary_op_expr
@@ -413,21 +419,23 @@
 %type <pexpr> literal_expr opt_where_part
 %type <pexpr> stmt_level_expr type_level_expr
 %type <pexpr> ident_expr for_expr cond_expr nil_expr io_expr new_expr let_expr
-%type <pexpr> reduce_expr scan_expr reduce_scan_op_expr opt_init_expr opt_init_type var_arg_expr
+%type <pexpr> reduce_expr scan_expr reduce_scan_op_expr opt_init_expr
+%type <pexpr> opt_init_type var_arg_expr
+%type <pexpr> opt_try_expr
 %type <pexpr> tuple_component tuple_var_decl_component
 %type <pdefexpr> formal enum_item
 %type <pdefexpr> query_expr opt_query_expr
 
-%type <pcallexpr> opt_inherit expr_ls assoc_expr_ls tuple_expr_ls
+%type <pcallexpr> opt_inherit simple_expr_ls expr_ls assoc_expr_ls tuple_expr_ls
 %type <pcallexpr> opt_actual_ls actual_ls
 %type <pcallexpr> opt_task_intent_ls task_intent_ls task_intent_clause
-%type <pForallIntents> forall_intent_clause forall_intent_ls
+%type <pcallexpr> forall_intent_clause forall_intent_ls
 
 %type <pfnsymbol> fn_decl_stmt_inner formal_ls opt_formal_ls req_formal_ls
 %type <pexpr> fn_decl_receiver_expr
 %type <procIter> proc_or_iter
 %type <pfnsymbol> linkage_spec
-%type <pIntentExpr> intent_expr
+%type <pShadowVar> intent_expr
 
 %%
 
@@ -466,6 +474,7 @@ stmt:
 | if_stmt
 | loop_stmt
 | select_stmt
+| defer_stmt
 | try_stmt
 | throw_stmt
 | return_stmt
@@ -475,22 +484,27 @@ stmt:
 | TBREAK opt_ident TSEMI               { $$ = buildGotoStmt(GOTO_BREAK, $2); }
 | TCOBEGIN opt_task_intent_ls block_stmt { $$ = buildCobeginStmt($2, $3);  }
 | TCONTINUE opt_ident TSEMI            { $$ = buildGotoStmt(GOTO_CONTINUE, $2); }
-| TDELETE expr TSEMI                   { $$ = buildPrimitiveStmt(PRIM_DELETE, $2); }
+| TDELETE simple_expr_ls TSEMI         { $$ = buildDeleteStmt($2); }
 | TLABEL ident stmt                    { $$ = buildLabelStmt($2, $3); }
-| TLOCAL stmt                          { $$ = buildLocalStmt($2); }
+| TLOCAL expr do_stmt                  { $$ = buildLocalStmt($2, $3); }
+| TLOCAL do_stmt                       { $$ = buildLocalStmt($2); }
 | TON expr do_stmt                     { $$ = buildOnStmt($2, $3); }
 | TSERIAL expr do_stmt                 { $$ = buildSerialStmt($2, $3); }
 | TSERIAL do_stmt                      { $$ = buildSerialStmt(new SymExpr(gTrue), $2); }
 | TSYNC stmt                           { $$ = buildSyncStmt($2); }
 | TYIELD expr TSEMI                    { $$ = buildPrimitiveStmt(PRIM_YIELD, $2); }
-| error                                { printf("syntax error"); clean_exit(1); }
+| error TSEMI                          { $$ = buildErrorStandin(); }
 ;
 
 module_decl_stmt:
-  access_control TMODULE ident TLCBR TRCBR
-    { $$ = buildChapelStmt(new DefExpr(buildModule($3, currentModuleType, new BlockStmt(), yyfilename, $1, @1.comment))); }
-| access_control TMODULE ident TLCBR stmt_ls TRCBR
-    { $$ = buildChapelStmt(new DefExpr(buildModule($3, currentModuleType, $5, yyfilename, $1, @1.comment))); }
+  access_control opt_prototype TMODULE ident TLCBR TRCBR
+    { $$ = buildChapelStmt(new DefExpr(buildModule($4, currentModuleType,
+    new BlockStmt(), yyfilename, $1, $2, @1.comment))); }
+| access_control opt_prototype TMODULE ident TLCBR stmt_ls TRCBR
+    { $$ = buildChapelStmt(new DefExpr(buildModule($4, currentModuleType, $6, yyfilename, $1, $2, @1.comment))); }
+| access_control opt_prototype TMODULE ident TLCBR error TRCBR
+    {$$ = buildChapelStmt(new DefExpr(buildModule($4, currentModuleType,
+        buildErrorStandin(), yyfilename, $1, $2, @1.comment))); }
 ;
 
 access_control:
@@ -499,7 +513,10 @@ access_control:
 | TPRIVATE { $$ = true; @$.comment = context->latestComment; context->latestComment = NULL; } // private
 ;
 
-
+opt_prototype:
+             { $$ = false; }
+| TPROTOTYPE { $$ = true;  }
+;
 
 /* Grouping of statements into blocks.
 
@@ -513,6 +530,7 @@ access_control:
 block_stmt:
   TLCBR         TRCBR                  { $$ = new BlockStmt(); }
 | TLCBR stmt_ls TRCBR                  { $$ = $2;              }
+| TLCBR error   TRCBR                  { $$ = buildErrorStandin(); }
 ;
 
 // Sequence of toplevel_stmts
@@ -572,22 +590,38 @@ require_stmt:
 ;
 
 assignment_stmt:
-  lhs_expr TASSIGN         expr TSEMI  { $$ = buildAssignment($1, $3, "=");   }
-| lhs_expr TASSIGNPLUS     expr TSEMI  { $$ = buildAssignment($1, $3, "+=");  }
-| lhs_expr TASSIGNMINUS    expr TSEMI  { $$ = buildAssignment($1, $3, "-=");  }
-| lhs_expr TASSIGNMULTIPLY expr TSEMI  { $$ = buildAssignment($1, $3, "*=");  }
-| lhs_expr TASSIGNDIVIDE   expr TSEMI  { $$ = buildAssignment($1, $3, "/=");  }
-| lhs_expr TASSIGNMOD      expr TSEMI  { $$ = buildAssignment($1, $3, "%=");  }
-| lhs_expr TASSIGNEXP      expr TSEMI  { $$ = buildAssignment($1, $3, "**="); }
-| lhs_expr TASSIGNBAND     expr TSEMI  { $$ = buildAssignment($1, $3, "&=");  }
-| lhs_expr TASSIGNBOR      expr TSEMI  { $$ = buildAssignment($1, $3, "|=");  }
-| lhs_expr TASSIGNBXOR     expr TSEMI  { $$ = buildAssignment($1, $3, "^=");  }
-| lhs_expr TASSIGNSR       expr TSEMI  { $$ = buildAssignment($1, $3, ">>="); }
-| lhs_expr TASSIGNSL       expr TSEMI  { $$ = buildAssignment($1, $3, "<<="); }
-| lhs_expr TSWAP           expr TSEMI  { $$ = buildAssignment($1, $3, "<=>"); }
-| lhs_expr TASSIGNREDUCE   expr TSEMI  { $$ = buildAssignment($1, $3, PRIM_REDUCE_ASSIGN); }
-| lhs_expr TASSIGNLAND     expr TSEMI  { $$ = buildLAndAssignment($1, $3);    }
-| lhs_expr TASSIGNLOR      expr TSEMI  { $$ = buildLOrAssignment($1, $3);     }
+  lhs_expr TASSIGN         opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "=");   }
+| lhs_expr TASSIGNPLUS     opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "+=");  }
+| lhs_expr TASSIGNMINUS    opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "-=");  }
+| lhs_expr TASSIGNMULTIPLY opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "*=");  }
+| lhs_expr TASSIGNDIVIDE   opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "/=");  }
+| lhs_expr TASSIGNMOD      opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "%=");  }
+| lhs_expr TASSIGNEXP      opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "**="); }
+| lhs_expr TASSIGNBAND     opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "&=");  }
+| lhs_expr TASSIGNBOR      opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "|=");  }
+| lhs_expr TASSIGNBXOR     opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "^=");  }
+| lhs_expr TASSIGNSR       opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, ">>="); }
+| lhs_expr TASSIGNSL       opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "<<="); }
+| lhs_expr TSWAP           opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, "<=>"); }
+| lhs_expr TASSIGNREDUCE   opt_try_expr TSEMI
+    { $$ = buildAssignment($1, $3, PRIM_REDUCE_ASSIGN); }
+| lhs_expr TASSIGNLAND     opt_try_expr TSEMI
+    { $$ = buildLAndAssignment($1, $3);    }
+| lhs_expr TASSIGNLOR      opt_try_expr TSEMI
+    { $$ = buildLOrAssignment($1, $3);     }
 ;
 
 opt_ident:
@@ -610,8 +644,8 @@ do_stmt:
 ;
 
 return_stmt:
-  TRETURN TSEMI       { $$ = buildPrimitiveStmt(PRIM_RETURN, new SymExpr(gVoid)); }
-| TRETURN expr TSEMI  { $$ = buildPrimitiveStmt(PRIM_RETURN, $2); }
+  TRETURN TSEMI               { $$ = buildPrimitiveStmt(PRIM_RETURN); }
+| TRETURN opt_try_expr TSEMI  { $$ = buildPrimitiveStmt(PRIM_RETURN, $2); }
 ;
 
 class_level_stmt:
@@ -663,49 +697,49 @@ loop_stmt:
 | TFOR expr do_stmt                             { $$ = ForLoop::buildForLoop(NULL, $2, $3, false, false); }
 | TFOR zippered_iterator do_stmt                { $$ = ForLoop::buildForLoop(NULL, $2, $3, false,  true); }
 | TFOR TPARAM ident TIN expr do_stmt            { $$ = buildParamForLoopStmt($3, $5, $6); }
-| TFORALL expr TIN expr                                 do_stmt    { $$ = buildForallLoopStmt($2, $4, NULL, $5); }
-| TFORALL expr TIN expr            forall_intent_clause do_stmt    { $$ = buildForallLoopStmt($2, $4, $5,   $6); }
-| TFORALL expr TIN zippered_iterator                    do_stmt    { $$ = buildForallLoopStmt($2, zipToTuple($4), NULL, $5, true); }
-| TFORALL expr TIN zippered_iterator forall_intent_clause do_stmt  { $$ = buildForallLoopStmt($2, zipToTuple($4), $5,   $6, true); }
-| TFORALL expr                                          do_stmt    { $$ = buildForallLoopStmt(NULL, $2, NULL, $3); }
-| TFORALL expr                     forall_intent_clause do_stmt    { $$ = buildForallLoopStmt(NULL, $2, $3,   $4); }
+| TFORALL expr TIN expr                                 do_stmt    { $$ = ForallStmt::build($2, $4, NULL, $5); }
+| TFORALL expr TIN expr            forall_intent_clause do_stmt    { $$ = ForallStmt::build($2, $4, $5,   $6); }
+| TFORALL expr TIN zippered_iterator                    do_stmt    { $$ = ForallStmt::build($2, $4, NULL, $5, true); }
+| TFORALL expr TIN zippered_iterator forall_intent_clause do_stmt  { $$ = ForallStmt::build($2, $4, $5,   $6, true); }
+| TFORALL expr                                          do_stmt    { $$ = ForallStmt::build(NULL, $2, NULL, $3); }
+| TFORALL expr                     forall_intent_clause do_stmt    { $$ = ForallStmt::build(NULL, $2, $3,   $4); }
 | TLSBR expr_ls TIN expr TRSBR stmt
     {
       if ($2->argList.length != 1)
         USR_FATAL($4, "invalid index expression");
-      $$ = buildForallLoopStmt($2->get(1)->remove(), $4, NULL, new BlockStmt($6));
+      $$ = ForallStmt::build($2->get(1)->remove(), $4, NULL, new BlockStmt($6));
     }
 | TLSBR expr_ls TIN expr forall_intent_clause TRSBR stmt
     {
       if ($2->argList.length != 1)
         USR_FATAL($4, "invalid index expression");
-      $$ = buildForallLoopStmt($2->get(1)->remove(), $4, $5,   new BlockStmt($7));
+      $$ = ForallStmt::build($2->get(1)->remove(), $4, $5,   new BlockStmt($7));
     }
 | TLSBR expr_ls TIN zippered_iterator TRSBR stmt
     {
       if ($2->argList.length != 1)
         USR_FATAL($4, "invalid index expression");
-      $$ = buildForallLoopStmt($2->get(1)->remove(), zipToTuple($4), NULL, new BlockStmt($6), true);
+      $$ = ForallStmt::build($2->get(1)->remove(), $4, NULL, new BlockStmt($6), true);
     }
 | TLSBR expr_ls TIN zippered_iterator forall_intent_clause TRSBR stmt
     {
       if ($2->argList.length != 1)
         USR_FATAL($4, "invalid index expression");
-      $$ = buildForallLoopStmt($2->get(1)->remove(), zipToTuple($4), $5,   new BlockStmt($7), true);
+      $$ = ForallStmt::build($2->get(1)->remove(), $4, $5,   new BlockStmt($7), true);
     }
 | TLSBR expr_ls TRSBR stmt
     {
       if ($2->argList.length > 1)
-        $$ = buildForallLoopStmt(NULL, new CallExpr("chpl__ensureDomainExpr", $2), NULL, new BlockStmt($4));
+        $$ = ForallStmt::build(NULL, new CallExpr("chpl__ensureDomainExpr", $2), NULL, new BlockStmt($4));
       else
-        $$ = buildForallLoopStmt(NULL, $2->get(1)->remove(), NULL, new BlockStmt($4));
+        $$ = ForallStmt::build(NULL, $2->get(1)->remove(), NULL, new BlockStmt($4));
     }
 | TLSBR expr_ls forall_intent_clause TRSBR stmt
     {
       if ($2->argList.length > 1)
-        $$ = buildForallLoopStmt(NULL, new CallExpr("chpl__ensureDomainExpr", $2), $3,   new BlockStmt($5));
+        $$ = ForallStmt::build(NULL, new CallExpr("chpl__ensureDomainExpr", $2), $3,   new BlockStmt($5));
       else
-        $$ = buildForallLoopStmt(NULL, $2->get(1)->remove(), $3,   new BlockStmt($5));
+        $$ = ForallStmt::build(NULL, $2->get(1)->remove(), $3,   new BlockStmt($5));
     }
 ;
 
@@ -718,7 +752,18 @@ if_stmt:
 | TIF expr block_stmt %prec TNOELSE  { $$ = buildIfStmt($2, $3); }
 | TIF expr TTHEN stmt TELSE stmt     { $$ = buildIfStmt($2, $4, $6); }
 | TIF expr block_stmt TELSE stmt     { $$ = buildIfStmt($2, $3, $5); }
+| TIF expr assignop_ident expr TTHEN stmt %prec TNOELSE  {
+$$ = buildIfStmt(convertAssignmentAndWarn($2,$3,$4), $6); }
+| TIF expr assignop_ident expr block_stmt %prec TNOELSE  {
+$$ = buildIfStmt(convertAssignmentAndWarn($2,$3,$4), $5); }
+| TIF expr assignop_ident expr TTHEN stmt TELSE stmt     {
+$$ = buildIfStmt(convertAssignmentAndWarn($2,$3,$4), $6, $8); }
+| TIF expr assignop_ident expr block_stmt TELSE stmt     {
+$$ = buildIfStmt(convertAssignmentAndWarn($2,$3,$4), $5, $7); }
 ;
+
+defer_stmt:
+  TDEFER stmt             { $$ = DeferStmt::build($2); }
 
 try_stmt:
   TTRY     expr            TSEMI         { $$ = TryStmt::build(false, $2); }
@@ -751,6 +796,8 @@ throw_stmt:
 select_stmt:
   TSELECT expr TLCBR when_stmt_ls TRCBR
     { $$ = buildChapelStmt(buildSelectStmt($2, $4)); }
+| TSELECT expr TLCBR error TRCBR
+    { $$ = buildErrorStandin(); }
 ;
 
 when_stmt_ls:
@@ -790,6 +837,26 @@ class_decl_stmt:
                                              FLAG_EXTERN,
                                              @3.comment));
     }
+| class_tag ident opt_inherit TLCBR error TRCBR
+    {
+      $$ = buildChapelStmt(buildClassDefExpr($2,
+                                             NULL,
+                                             $1,
+                                             $3,
+                                             new BlockStmt(),
+                                             FLAG_UNKNOWN,
+                                             @1.comment));
+    }
+| TEXTERN opt_ident_or_string class_tag ident opt_inherit TLCBR error TRCBR
+    {
+      $$ = buildChapelStmt(buildClassDefExpr($4,
+                                             $2,
+                                             $3,
+                                             $5,
+                                             new BlockStmt(),
+                                             FLAG_EXTERN,
+                                             @3.comment));
+    }
 ;
 
 class_tag:
@@ -825,24 +892,45 @@ class_level_stmt_ls:
 ;
 
 enum_decl_stmt:
-  TENUM ident TLCBR enum_ls TRCBR
+  enum_header ident TLCBR enum_ls TRCBR
     {
-      EnumType* pdt = $4;
+      EnumType* pdt = $1;
+      for_vector(DefExpr, ec, *$4) {
+        ec->sym->type = pdt;
+        pdt->constants.insertAtTail(ec);
+        if (pdt->defaultValue == NULL) {
+          pdt->defaultValue = ec->sym;
+        }
+      }
+      delete $4;
+      pdt->doc = @1.comment;
       TypeSymbol* pst = new TypeSymbol($2, pdt);
-      $4->symbol = pst;
+      $1->symbol = pst;
       $$ = buildChapelStmt(new DefExpr(pst));
+    }
+| enum_header ident TLCBR error TRCBR
+    {
+      $$ = buildErrorStandin();
+    }
+;
+
+enum_header:
+  TENUM
+    {
+      $$ = new EnumType();
+      @$.comment = context->latestComment;
+      context->latestComment = NULL;
     }
 ;
 
 enum_ls:
   enum_item
     {
-      $$ = new EnumType();
-      $1->sym->type = $$;
-      $$->constants.insertAtTail($1);
-      $$->defaultValue = $1->sym;
-      $$->doc = context->latestComment;
-      context->latestComment = NULL;
+      $$ = new std::vector<DefExpr*>();
+      $$->push_back($1);
+      //$$->doc = context->latestComment;
+      // start here for enabling documentation of enum constants
+      //context->latestComment = NULL;
     }
 | enum_ls TCOMMA
     {
@@ -850,8 +938,7 @@ enum_ls:
     }
 | enum_ls TCOMMA enum_item
     {
-      $1->constants.insertAtTail($3);
-      $3->sym->type = $1;
+      $1->push_back($3);
     }
 ;
 
@@ -1238,13 +1325,6 @@ var_decl_stmt_inner_ls:
 var_decl_stmt_inner:
   ident opt_type opt_init_expr
     { $$ = buildChapelStmt(new DefExpr(new VarSymbol($1), $3, $2)); }
-| ident opt_reindex_expr TALIAS expr
-    {
-      VarSymbol* var = new VarSymbol($1);
-      var->addFlag(FLAG_ARRAY_ALIAS);
-      USR_WARN(var, "support for '=>' to alias arrays is deprecated as of chpl version 1.15.  Use a 'ref' declaration instead.");
-      $$ = buildChapelStmt(new DefExpr(var, $4, $2));
-    }
 | TLP tuple_var_decl_stmt_inner_ls TRP opt_type opt_init_expr
     { $$ = buildTupleVarDeclStmt($2, $4, $5); }
 ;
@@ -1270,22 +1350,16 @@ tuple_var_decl_stmt_inner_ls:
 /** TYPES ********************************************************************/
 
 opt_init_expr:
-                { $$ = NULL; }
-| TASSIGN TNOINIT { $$ = new SymExpr(gNoInit); }
-| TASSIGN expr  { $$ = $2; }
-;
-
-opt_reindex_expr:
-    { $$ = NULL; }
-| TCOLON TLSBR expr_ls TRSBR
-    { $$ = new CallExpr("chpl__ensureDomainExpr", $3); }
+                        { $$ = NULL; }
+| TASSIGN TNOINIT       { $$ = new SymExpr(gNoInit); }
+| TASSIGN opt_try_expr  { $$ = $2; }
 ;
 
 opt_type:
                           { $$ = NULL; }
 | TCOLON type_level_expr  { $$ = $2; }
 | TCOLON array_type       { $$ = $2; }
-| error {printf("bad type specification"); }
+| error                   { $$ = NULL; }
 ;
 
 /* NOTE: Some things about the following rule concern me (blc), but I
@@ -1321,7 +1395,10 @@ array_type:
              new CallExpr("chpl__ensureDomainExpr", $4), $6, $2->get(1)->remove(),
              new CallExpr("chpl__ensureDomainExpr", $4->copy()));
     }
-| error  {printf("bad array type specification"); clean_exit(1); }
+| TLSBR error TRSBR
+    {
+      $$ = new CallExpr(PRIM_ERROR);
+    }
 ;
 
 opt_formal_array_elt_type:
@@ -1354,6 +1431,9 @@ opt_formal_type:
 | TCOLON TDOMAIN            { $$ = new UnresolvedSymExpr("_domain"); }
 | TCOLON TSINGLE            { $$ = new UnresolvedSymExpr( "_singlevar"); }
 | TCOLON TSYNC              { $$ = new UnresolvedSymExpr( "_syncvar"); }
+| TCOLON TOWNED             { $$ = new UnresolvedSymExpr( "_owned"); }
+| TCOLON TUNMANAGED         { $$ = new UnresolvedSymExpr( "_unmanaged"); }
+| TCOLON TSHARED            { $$ = new UnresolvedSymExpr( "_shared"); }
 | TCOLON formal_array_type  { $$ = $2; }
 ;
 
@@ -1366,9 +1446,14 @@ expr_ls:
 | expr_ls TCOMMA query_expr  { $1->insertAtTail($3); }
 ;
 
+simple_expr_ls:
+  expr                             { $$ = new CallExpr(PRIM_ACTUALS_LIST, $1);}
+| simple_expr_ls TCOMMA expr       { $1->insertAtTail($3); }
+;
+
 tuple_component:
   TUNDERSCORE   { $$ = new UnresolvedSymExpr("chpl__tuple_blank"); }
-| expr          { $$ = $1; }
+| opt_try_expr  { $$ = $1; }
 | query_expr    { $$ = $1; }
 ;
 
@@ -1388,11 +1473,10 @@ actual_ls:
 ;
 
 actual_expr:
-  ident TASSIGN query_expr  { $$ = buildNamedActual($1, $3); }
-| ident TASSIGN expr        { $$ = buildNamedActual($1, $3); }
-| ident TALIAS expr         { $$ = buildNamedAliasActual($1, $3); }
-| query_expr                { $$ = $1; }
-| expr
+  ident TASSIGN query_expr   { $$ = buildNamedActual($1, $3); }
+| ident TASSIGN opt_try_expr { $$ = buildNamedActual($1, $3); }
+| query_expr                 { $$ = $1; }
+| opt_try_expr               { $$ = $1; }
 ;
 
 ident_expr:
@@ -1426,6 +1510,12 @@ type_level_expr:
     { $$ = new CallExpr("chpl__atomicType", $2); }
 | TSYNC expr
     { $$ = new CallExpr( "_syncvar", $2); }
+| TOWNED expr
+    { $$ = new CallExpr( "_owned", $2); }
+| TUNMANAGED expr
+    { $$ = new CallExpr( "_to_unmanaged", $2); }
+| TSHARED expr
+    { $$ = new CallExpr( "_shared", $2); }
 ;
 
 for_expr:
@@ -1490,7 +1580,9 @@ cond_expr:
   TIF expr TTHEN expr TELSE expr
     { $$ = new CallExpr(new DefExpr(buildIfExpr($2, $4, $6))); }
 /* MPF: it would be nice to match TIF expr TTHEN expr but
-  the obvious solution there leads to shift-reduce conflicts.
+   the attempt below leads to reduce-reduce conflicts:
+      TIF expr TTHEN expr %prec TNOELSE
+   with for_expr.
  */
 ;
 
@@ -1523,35 +1615,36 @@ task_intent_clause:
   TWITH TLP task_intent_ls TRP  { $$ = $3; }
 ;
 
-// Keep in sync with forall_intent_ls.
 task_intent_ls:
   intent_expr
     { $$ = new CallExpr(PRIM_ACTUALS_LIST);
-      addTaskIntent($$, $1.iVar, $1.tfIntent, $1.riExp); }
+      addTaskIntent($$, $1); }
 | task_intent_ls TCOMMA intent_expr
-    { addTaskIntent($1, $3.iVar, $3.tfIntent, $3.riExp); }
+    { addTaskIntent($1, $3); }
 ;
 
 forall_intent_clause:
   TWITH TLP forall_intent_ls TRP  { $$ = $3; }
 ;
 
-// A clone of task_intent_ls to use ForallIntents instead of PRIM_ACTUALS_LIST.
 forall_intent_ls:
   intent_expr
-    { $$ = new ForallIntents();
-      addForallIntent($$, $1.iVar, $1.tfIntent, $1.riExp); }
+    { $$ = new CallExpr(PRIM_ACTUALS_LIST);
+      addForallIntent($$, $1); }
 | forall_intent_ls TCOMMA intent_expr
-    { addForallIntent($1, $3.iVar, $3.tfIntent, $3.riExp); }
+    { addForallIntent($1, $3); }
 ;
 
 intent_expr:
-  required_intent_tag ident_expr
-    {
-      $$.tfIntent = $1; $$.iVar = $2; $$.riExp = NULL;
+  required_intent_tag ident_expr  {
+      $$ = ShadowVarSymbol::buildFromArgIntent($1, $2);
     }
-| expr                TREDUCE ident_expr  { $$.riExp = $1, $$.iVar = $3; }
-| reduce_scan_op_expr TREDUCE ident_expr  { $$.riExp = $1, $$.iVar = $3; }
+| expr                TREDUCE ident_expr  {
+      $$ = ShadowVarSymbol::buildFromReduceIntent($3, $1);
+    }
+| reduce_scan_op_expr TREDUCE ident_expr  {
+      $$ = ShadowVarSymbol::buildFromReduceIntent($3, $1);
+    }
 ;
 
 io_expr:
@@ -1595,6 +1688,11 @@ expr:
 | TDOTDOT
     { $$ = new CallExpr("chpl_build_unbounded_range"); }
 ;
+
+opt_try_expr:
+  TTRY expr       { $$ = tryExpr($2); }
+| TTRYBANG expr   { $$ = tryBangExpr($2); }
+| expr            { $$ = $1; }
 
 lhs_expr:
   ident_expr

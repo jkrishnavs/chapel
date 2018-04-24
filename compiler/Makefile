@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -61,8 +61,9 @@ endif
 BUILD_VERSION_FILE = $(COMPILER_ROOT)/main/BUILD_VERSION
 # configured prefix file
 CONFIGURED_PREFIX_FILE = $(COMPILER_ROOT)/main/CONFIGURED_PREFIX
-
-
+# file storing the names of clang, clang++ for CHPL_LLVM=system
+# also stores the clang-sysroot-arguments
+CLANG_SETTINGS_FILE = $(COMPILER_ROOT)/main/CLANG_SETTINGS
 
 #
 # include source subdirectories here
@@ -99,9 +100,19 @@ CHPL_OBJS = \
 
 EXECS = $(CHPL) $(CHPLDOC) $(CHPLIPE)
 
-PRETARGETS = $(BUILD_VERSION_FILE) $(CONFIGURED_PREFIX_FILE) llvm
+PRETARGETS = $(BUILD_VERSION_FILE) $(CONFIGURED_PREFIX_FILE) llvm $(CLANG_SETTINGS_FILE)
 TARGETS = $(CHPL)
 
+# Set up variables representing paths that will be installed
+# and how to fix them (for CLANG_SETTINGS).
+# So far, this only needs to fix CHPL_THIRD_PARTY/CHPL_HOME.
+ifndef CHPL_MAKE_THIRD_PARTY
+CHPL_MAKE_THIRD_PARTY = $(CHPL_MAKE_HOME)/third-party
+endif
+
+FIXPATH_CMD := $(CHPL_MAKE_HOME)/util/config/replace-paths.py \
+                  --fixpath '$$CHPL_THIRD_PARTY' $(CHPL_MAKE_THIRD_PARTY) \
+                  --fixpath '$$CHPL_HOME' $(CHPL_MAKE_HOME)
 
 #
 # main rules
@@ -120,8 +131,10 @@ CHPL_CONFIG_CHECK = $(CHPL_CONFIG_CHECK_DIR)/built-for
 
 UPDATE_BUILD_VERSION = $(CHPL_MAKE_HOME)/util/devel/updateBuildVersion
 
+CLEAN_TARGS += $(CLANG_SETTINGS_FILE)
+
 $(BUILD_VERSION_FILE): FORCE
-	@({ test -x $(CHPL_MAKE_HOME)/.git ; } && \
+	@({ test -e $(CHPL_MAKE_HOME)/.git ; } && \
 	test -x $(UPDATE_BUILD_VERSION) && $(UPDATE_BUILD_VERSION) $@) || \
 	test -r $(BUILD_VERSION_FILE) || (echo '"0"' > $@);
 
@@ -130,6 +143,9 @@ $(CHPL_MAKE_HOME)/configured-prefix:
 
 $(CONFIGURED_PREFIX_FILE): $(CHPL_MAKE_HOME)/configured-prefix
 	echo '"'`cat $(CHPL_MAKE_HOME)/configured-prefix`'"' \ > $(CONFIGURED_PREFIX_FILE)
+
+$(CLANG_SETTINGS_FILE):
+	echo '{"'$(CLANG_CC)'","'$(CLANG_CXX)'","'`$(CHPL_MAKE_HOME)/util/config/gather-clang-sysroot-arguments $(CLANG_CC)`'"}' | $(FIXPATH_CMD) > $(CLANG_SETTINGS_FILE)
 
 $(CHPL_CONFIG_CHECK): | $(CHPL_BIN_DIR)
 	rm -rf $(CHPL_CONFIG_CHECK_PREFIX)

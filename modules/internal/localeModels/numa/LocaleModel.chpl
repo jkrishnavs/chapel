@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -63,13 +63,13 @@ module LocaleModel {
     }
     proc chpl_name() return ndName;
 
-    proc NumaDomain() {
+    proc init() {
     }
 
-    proc NumaDomain(_sid, _parent) {
+    proc init(_sid, _parent) {
+      super.init(_parent);
       sid = _sid;
       ndName = "ND"+sid;
-      parent = _parent;
     }
 
     proc writeThis(f) {
@@ -85,14 +85,10 @@ module LocaleModel {
     proc addChild(loc:locale) { halt("Cannot add children to this locale type."); }
     proc getChild(idx:int) : locale { return nil; }
 
-    // This is commented out b/c it leads to an internal error during
-    // the resolveIntents pass.  See
-    // test/functions/iterators/sungeun/iterInClass.future
-    //
-    // iter getChildren() : locale {
-    //  halt("No children to iterate over.");
-    //  yield nil;
-    // }
+    iter getChildren() : locale {
+      halt("No children to iterate over.");
+      yield nil;
+    }
   }
 
   //
@@ -100,9 +96,9 @@ module LocaleModel {
   //
   class LocaleModel : AbstractLocaleModel {
     const _node_id : int;
-    const local_name : string;
+    var local_name : string; // should never be modified after first assignment
 
-    const numSublocales: int;
+    var numSublocales: int; // should never be modified after first assignment
     var childSpace: domain(1);
     var childLocales: [childSpace] NumaDomain;
 
@@ -110,18 +106,27 @@ module LocaleModel {
     // that it is intended to represent.  This trick is used
     // to establish the equivalence the "locale" field of the locale object
     // and the node ID portion of any wide pointer referring to it.
-    proc LocaleModel() {
+    proc init() {
       if doneCreatingLocales {
         halt("Cannot create additional LocaleModel instances");
       }
+      _node_id = chpl_nodeID: int;
+
+      this.complete();
+
       setup();
     }
 
-    proc LocaleModel(parent_loc : locale) {
+    proc init(parent_loc : locale) {
       if doneCreatingLocales {
         halt("Cannot create additional LocaleModel instances");
       }
-      parent = parent_loc;
+      super.init(parent_loc);
+
+      _node_id = chpl_nodeID: int;
+
+      this.complete();
+
       setup();
     }
 
@@ -190,11 +195,14 @@ module LocaleModel {
     //- Implementation (private)
     //-
     proc setup() {
-      _node_id = chpl_nodeID: int;
-
       helpSetupLocaleNUMA(this, local_name, numSublocales);
     }
     //------------------------------------------------------------------------}
+
+    proc deinit() {
+      for loc in childLocales do
+        delete loc;
+    }
  }
 
   //
@@ -209,8 +217,8 @@ module LocaleModel {
     const myLocaleSpace: domain(1) = {0..numLocales-1};
     var myLocales: [myLocaleSpace] locale;
 
-    proc RootLocale() {
-      parent = nil;
+    proc init() {
+      super.init(nil);
       nPUsPhysAcc = 0;
       nPUsPhysAll = 0;
       nPUsLogAcc = 0;
@@ -262,10 +270,19 @@ module LocaleModel {
     proc localeIDtoLocale(id : chpl_localeID_t) {
       const node = chpl_nodeFromLocaleID(id);
       const subloc = chpl_sublocFromLocaleID(id);
-      if (subloc == c_sublocid_none) || (subloc == c_sublocid_any) then
-        return (myLocales[node:int]):locale;
-      else
+      if chpl_isActualSublocID(subloc) then
         return (myLocales[node:int].getChild(subloc:int)):locale;
+      else
+        return (myLocales[node:int]):locale;
+    }
+
+    proc deinit() {
+      for loc in myLocales {
+        on loc {
+          rootLocaleInitialized = false;
+          delete loc;
+        }
+      }
     }
   }
 }

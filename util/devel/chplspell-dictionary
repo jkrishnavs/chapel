@@ -235,6 +235,7 @@ denest
 desttype
 dgettext
 diffbytes
+diglobalvariableexpression
 dinline
 dirent
 direntptr
@@ -598,6 +599,7 @@ llapi
 lldb
 llsubmit
 llvmaggregateglobalops
+llvmdumpir
 llvmglobaltowide
 llvmutil
 lnot
@@ -800,6 +802,7 @@ ntasks
 ntddk
 ntifs
 ntokens
+nullptr
 numberof
 numbytes
 numcores
@@ -993,6 +996,7 @@ sbrk
 scache
 schar
 sdata
+sdot
 seekdata
 seekfunction
 segbcast
@@ -1005,6 +1009,7 @@ sendto
 seqcat
 seqloopexpr
 seqn
+sequals
 sessionid
 setaffinity
 setc
@@ -1110,6 +1115,7 @@ subminor
 subobject
 subparts
 substring
+subtarget
 subtask
 suppresswarnings
 suseconds
@@ -1283,6 +1289,7 @@ wordlength
 wordv
 workdir
 worklist
+wout
 wrapon
 writeable
 writeback
@@ -2064,7 +2071,6 @@ leftjustify
 legendre
 lenread
 lentmp
-lfftw
 lgamma
 lgammaf
 libevent
@@ -2533,6 +2539,7 @@ seealso
 toctree
 versionadded
 versionchanged
+whitespaces
 
 FILETYPE: man pages; .1
 aqdocs
@@ -2636,6 +2643,8 @@ yystartlineno
 
 FILEID: 5a669f74-1d80-11e6-a3a6-10ddb1d4c3d5
 aargv
+nodashes
+usearg
 
 FILEID: 613bf236-1d80-11e6-a3a6-10ddb1d4c3d5
 rungdb
@@ -2647,6 +2656,7 @@ passlist
 
 FILEID: 4171383e-1d81-11e6-a3a6-10ddb1d4c3d5
 bink
+copyprop
 nbbs
 norp
 ravailable
@@ -2671,6 +2681,7 @@ pnext
 rnext
 
 FILEID: 2d19bb3e-1d83-11e6-a3a6-10ddb1d4c3d5
+wkfn
 yylloc
 yyparse
 
@@ -2702,6 +2713,7 @@ hashset
 outervar
 urse
 wout
+yret
 
 FILEID: 0fdc1a0c-1d84-11e6-a3a6-10ddb1d4c3d5
 ppne
@@ -2713,29 +2725,55 @@ atmp
 FILEID: 8983f3ac-1d84-11e6-a3a6-10ddb1d4c3d5
 angeles
 cfns
+cref
 eturn
 fock
 forexpr
 iact
 icts
+intpart
 multipledestructor
 otharrs
 replmt
 rhsv
 shetag
+ures
 urse
 
 FILEID: 4f065520-1d85-11e6-a3a6-10ddb1d4c3d5
+fivec
+intented
 orse
+shadowvar
+ssvar
+tupcom
+ytemp
 
 FILEID: 803ee256-1d85-11e6-a3a6-10ddb1d4c3d5
+dbaadab
+newresult
 rauto
 
 FILEID: fe909ee2-1d85-11e6-a3a6-10ddb1d4c3d5
+casttype
+ffast
+fsyntax
+infs
+inparens
+ipra
 maino
+mcpu
+qunused
+reassoc
+thunderx
+tlii
+wmissing
+wstrict
+wwrite
 
 FILEID: 4f8f1724-1d86-11e6-a3a6-10ddb1d4c3d5
 sroa
+widecast
 
 FILEID: 606babf2-1d86-11e6-a3a6-10ddb1d4c3d5
 xfloat
@@ -2810,6 +2848,8 @@ ssub
 swhole
 
 FILEID: 55c3384c-1e48-11e6-a3a6-10ddb1d4c3d5
+fhello
+fprogram
 smessage
 
 FILEID: a892ed32-1e49-11e6-a3a6-10ddb1d4c3d5
@@ -2854,6 +2894,7 @@ FILEID: 3efba760-1f11-11e6-a3a6-10ddb1d4c3d5
 arepl
 drepl
 neednl
+origloc
 parenthesesless
 
 FILEID: 610c0354-1f11-11e6-a3a6-10ddb1d4c3d5
@@ -2888,9 +2929,6 @@ sbac
 
 FILEID: 101dbad0-1f18-11e6-a3a6-10ddb1d4c3d5
 bxor
-
-FILEID: 9c75ae66-1f18-11e6-a3a6-10ddb1d4c3d5
-bdomains
 
 FILEID: f8a06e7e-1f18-11e6-a3a6-10ddb1d4c3d5
 arowi
@@ -2984,12 +3022,14 @@ bxor
 cartdim
 coords
 displs
+envval
 errhandler
 errorclass
 errorcode
 gatherv
 graphdims
 hindexed
+hpcrdm
 hvector
 ibsend
 iindex
@@ -3202,6 +3242,7 @@ umiacs
 univie
 
 FILEID: 515baeda-2ada-11e6-a3a6-10ddb1d4c3d5
+algebralib
 binarytrees
 chpldocumentation
 circularities
@@ -3212,6 +3253,7 @@ illumos
 librt
 memkind
 nomail
+parentlocid
 pshm
 stdinredirect
 structors
@@ -3500,46 +3542,11 @@ ztrmv
 ztrsm
 ztrsv
 
-FILEID: 86ba5826-4400-11e6-907f-843835579daa
-fanns
-
-FILEID: a70ca160-4400-11e6-907f-843835579daa
-ntide
-
-FILEID: a88fa2a8-4400-11e6-907f-843835579daa
-cagtgagccgagatcgcgccactgcactccagcctgg
-gagttcgagaccagcctggccaacatggtgaaacccc
-gcgacagagcgagactccgtctcaaaaa
-ggcaggagaatcgcttgaacccgggaggcggaggttg
-ggccgggcgcggtggctcacgcctgtaatcccagcac
-ggcgcgcgcctgtaatcccagctactcgggaggctga
-gtctctactaaaaatacaaaaattagccgggcgtggt
-tttgggaggccgaggcgggcggatcacctgaggtcag
-
 FILEID: c6909e2e-4400-11e6-907f-843835579daa
 ggta
 ggtatt
 ggtattttaatt
 ggtattttaatttatagt
-
-FILEID: dfd55fc8-4400-11e6-907f-843835579daa
-bytex
-
-FILEID: e19084d2-4400-11e6-907f-843835579daa
-bytex
-
-FILEID: e28376ba-4400-11e6-907f-843835579daa
-bytex
-
-FILEID: 07b07cbc-4401-11e6-907f-843835579daa
-cursos
-javaopt
-recursos
-ufcg
-
-FILEID: 262b888a-4401-11e6-907f-843835579daa
-piececell
-piecelist
 
 FILEID: 4bfc193a-4401-11e6-907f-843835579daa
 accct
@@ -3563,9 +3570,7 @@ tttaccct
 
 FILEID: 560979a4-4401-11e6-907f-843835579daa
 atcggctauamkrywwssyrkmvbhddhbvnn
-
-FILEID: 73d37e6c-4401-11e6-907f-843835579daa
-partred
+brubeck
 
 FILEID: d86303d0-4d88-11e6-907f-843835579daa
 ribution
@@ -3580,6 +3585,8 @@ ttag
 
 FILEID: 390fbcc4-4e3c-11e6-907f-843835579daa
 chpluserobj
+libmvec
+tofix
 
 FILEID: 22f875dc-4e3e-11e6-907f-843835579daa
 parenthesesless
@@ -3592,16 +3599,13 @@ adaptative
 binarytrees
 chapcs
 kace
+paircount
+regexdnaredux
 timecomp
+twopt
 
 FILEID: b4905dc4-5f88-11e6-90f0-10ddb1d4c3d5
 synccls
-
-FILEID: 5655c140-644c-11e6-90f0-10ddb1d4c3d5
-binarytrees
-fastaredux
-regexredux
-threadring
 
 FILEID: 59041530-69c5-11e6-90f0-10ddb1d4c3d5
 asize
@@ -3646,6 +3650,7 @@ FILEID: 24a5f32a-792f-11e6-807a-843835579daa
 eterm
 intvl
 lzmq
+pyzmq
 rcvhwm
 rcvmore
 rcvtimeo
@@ -3675,16 +3680,6 @@ writerange
 FILEID: eb31abc0-8068-11e6-ab60-00a0cc3ee663
 taskparallel
 
-FILEID: 0c6ba076-814e-11e6-b915-843835579daa
-inds
-itermethod
-
-FILEID: 7e50173a-814e-11e6-b915-843835579daa
-dout
-
-FILEID: 058f379e-814f-11e6-b915-843835579daa
-strt
-
 FILEID: 5094b6c0-8220-11e6-b915-843835579daa
 taskparallel
 
@@ -3694,12 +3689,6 @@ haxx
 jobtracker
 namenode
 tasktracker
-
-FILEID: e296667a-8222-11e6-b915-843835579daa
-testu
-
-FILEID: 9f42cc46-8223-11e6-b915-843835579daa
-testu
 
 FILEID: b557a264-8ab5-11e6-b915-843835579daa
 chpldocumentation
@@ -3778,16 +3767,6 @@ FILEID: 80fcfaee-ad3f-11e6-91b8-10ddb1d4c3d5
 disubprogram
 optos
 toctree
-
-FILEID: 329ba602-b6bd-11e6-9740-843835579daa
-dedup
-ingroup
-lasthash
-lastid
-lastpath
-lcrypto
-lssl
-openssl
 
 FILEID: fcd32732-b78b-11e6-9740-843835579daa
 entrantly
@@ -4170,11 +4149,17 @@ scspell
 ukacd
 
 FILEID: 726887c4-bc39-11e6-9740-843835579daa
+knowledgecenter
+liaat
+liaattunproctop
+linuxonibm
 ncpu
 oldact
+vmstat
 
 FILEID: 847163aa-bc39-11e6-9740-843835579daa
 bptr
+exittimeout
 
 FILEID: a717e780-d45d-11e6-b38c-acbc32c4f96b
 bigvec
@@ -4222,9 +4207,6 @@ ddatas
 FILEID: cc606fa4-fd7e-11e6-980e-10ddb1d4c3d5
 taskfn
 
-FILEID: 44484c44-fd7f-11e6-980e-10ddb1d4c3d5
-nucls
-
 FILEID: 12c3b64e-0c12-11e7-980e-10ddb1d4c3d5
 toktext
 
@@ -4235,9 +4217,12 @@ FILEID: 9e8a4742-0c12-11e7-980e-10ddb1d4c3d5
 nbobjs
 
 FILEID: aa0e6b5c-0c12-11e7-980e-10ddb1d4c3d5
+adrerr
 blockhere
+cmps
 cmpval
 cqmode
+critsec
 cswap
 dbgf
 dbgsf
@@ -4253,11 +4238,26 @@ fxor
 gdata
 iadd
 iptag
+kpage
+lenbits
+lenmask
+mdhs
+mrtl
 nbdi
 nbdp
 nopnd
 opnd
+ppdescs
+ppdi
+psvv
+pszm
 rfdpp
+sigact
+tdiff
+telapsed
+tget
+themself
+tstamp
 xchgval
 
 FILEID: c0254978-0c13-11e7-980e-10ddb1d4c3d5
@@ -4309,12 +4309,31 @@ rview
 
 FILEID: 40d00fe6-1a82-11e7-980e-10ddb1d4c3d5
 adom
+arange
 atype
+azero
 bdom
+brange
+bulu
+bzero
+cdom
+cplx
+csrmatmat
+csrmatvec
+czero
+eigvals
+geev
 gemm
 gemv
+indptr
 matmat
+nzcur
+nznew
 pinv
+potrf
+smmp
+vlcplx
+vrcplx
 xdom
 ydom
 
@@ -4333,7 +4352,10 @@ FILEID: e44e8ee8-2015-11e7-980e-10ddb1d4c3d5
 rhsv
 
 FILEID: e95fef8a-2015-11e7-980e-10ddb1d4c3d5
+cthis
 icts
+parg
+pthis
 
 FILEID: f8d1f5e4-2015-11e7-980e-10ddb1d4c3d5
 cfns
@@ -4343,6 +4365,198 @@ replmt
 FILEID: 01f4f6a8-2016-11e7-980e-10ddb1d4c3d5
 fock
 iact
+
+FILEID: c16e02ce-36bc-11e7-96a7-10ddb1d4c3d5
+sealedabstract
+
+FILEID: d7761e16-36bd-11e7-96a7-10ddb1d4c3d5
+replmt
+
+FILEID: 0196aa72-62e1-11e7-88ba-10ddb1d4c3d5
+wkfn
+
+FILEID: 45fe4b8e-62e1-11e7-88ba-10ddb1d4c3d5
+cmac
+digestbyname
+libgcrypt
+libsodium
+libtomcrypt
+saru
+tinypic
+uhvb
+
+FILEID: 554af092-652a-11e7-88ba-10ddb1d4c3d5
+arglist
+compiletime
+helloworld
+simt
+targetlocale
+vectorizeable
+workgroupsize
+
+FILEID: 26cda7c8-69e9-11e7-88ba-10ddb1d4c3d5
+rtmp
+
+FILEID: ad56c506-780b-11e7-88ba-10ddb1d4c3d5
+constup
+svdef
+wmikanik
+
+FILEID: 3b5ef8a0-780c-11e7-88ba-10ddb1d4c3d5
+fieldtag
+linetokens
+ptrhold
+tablename
+tblname
+tblpath
+tokenlist
+
+FILEID: 6f2ab8ea-83ce-11e7-ad1f-10ddb1d4c3d5
+curnext
+getcid
+subnext
+todelete
+
+FILEID: a4c82866-83ce-11e7-ad1f-10ddb1d4c3d5
+multipledestructor
+
+FILEID: 733029d2-8aba-11e7-b3f1-10ddb1d4c3d5
+deadcode
+
+FILEID: 838b0068-8aba-11e7-b3f1-10ddb1d4c3d5
+mpmc
+
+FILEID: f81d91a2-8aba-11e7-b3f1-10ddb1d4c3d5
+ivrs
+
+FILEID: 081f50fc-91e8-11e7-b3f1-10ddb1d4c3d5
+cabsf
+cabsl
+cimag
+cimagf
+cimagl
+conjf
+conjl
+creal
+crealf
+creall
+sqrtl
+
+FILEID: 527abebe-9db6-11e7-a204-10ddb1d4c3d5
+ciphertext
+csprng
+digestbyname
+hmac
+keylen
+lcrypto
+lssl
+manmaster
+mbits
+npubk
+outx
+passlen
+pbkdf
+pkcs
+pkey
+ppkey
+pubk
+ripemd
+saltlen
+
+FILEID: e9a3e440-9db7-11e7-a204-10ddb1d4c3d5
+stddev
+
+FILEID: cd28f34a-a1b9-11e7-a204-10ddb1d4c3d5
+cmake
+
+FILEID: d45846e8-a1b9-11e7-a204-10ddb1d4c3d5
+eliben
+fnints
+pycparser
+
+FILEID: c4a256e8-ad6d-11e7-a204-10ddb1d4c3d5
+agoid
+agomask
+
+FILEID: cd80a742-ad6d-11e7-a204-10ddb1d4c3d5
+intented
+
+FILEID: da2ea3b8-ad6d-11e7-a204-10ddb1d4c3d5
+adom
+bdom
+cblas
+cdom
+lblas
+
+FILEID: c756642a-c5e5-11e7-82fe-10ddb1d4c3d5
+numlocalesval
+pshm
+
+FILEID: 5bfd40ae-ca86-11e7-8b8c-10ddb1d4c3d5
+atemp
+centry
+cntx
+cval
+extd
+icontext
+iinfo
+mponent
+rsvar
+shadowvar
+tupcom
+
+FILEID: dbbd3434-ca86-11e7-8b8c-10ddb1d4c3d5
+ovse
+
+FILEID: de79f068-ca86-11e7-8b8c-10ddb1d4c3d5
+llvmver
+
+FILEID: e1293828-ca86-11e7-8b8c-10ddb1d4c3d5
+extd
+
+FILEID: ebe3ea10-ca86-11e7-8b8c-10ddb1d4c3d5
+skind
+
+FILEID: c09c5496-ff1f-11e7-bed3-10ddb1d4c3d5
+lrint
+strfy
+
+FILEID: f2c0b4da-07e9-11e8-bed3-10ddb1d4c3d5
+addrvec
+allocinfo
+appnum
+cqes
+etoosmall
+freeinfo
+lcpus
+ofichkerr
+ofichkret
+pmichkret
+pmichksuccess
+procid
+rbuf
+rbufs
+tostr
+
+FILEID: 0502b256-07ea-11e8-bed3-10ddb1d4c3d5
+ctxs
+readfrom
+
+FILEID: 1873381c-2cbe-11e8-aa67-10ddb1d4c3d5
+detemp
+detemps
+
+FILEID: 7626c32a-2f20-11e8-aa67-10ddb1d4c3d5
+condtest
+
+FILEID: 79b61d92-2f20-11e8-aa67-10ddb1d4c3d5
+mywriteln
+
+FILEID: 80066972-2f20-11e8-aa67-10ddb1d4c3d5
+writehalf
+
+FILEID: 84377626-2f20-11e8-aa67-10ddb1d4c3d5
+testmain
 
 NATURAL:
 abcd
@@ -4367,6 +4581,7 @@ albert
 alberto
 albrecht
 alexey
+algebralib
 algol
 aliasee
 alice
@@ -4409,6 +4624,7 @@ aries
 aristotle
 arity
 armenian
+arounds
 arpa
 arrayness
 asciiz
@@ -4441,6 +4657,7 @@ backquotes
 backticks
 backtics
 backtraces
+balancer
 balensiefer
 balinese
 bandaid
@@ -4459,6 +4676,7 @@ benhavns
 berkeley
 bernstein
 bertolacci
+bessel
 betweenness
 bharshbarg
 bharshbarger
@@ -4486,6 +4704,7 @@ blockreport
 blocksize
 blockstmt
 blog
+blowfish
 bocchino
 boink
 boisvert
@@ -4507,6 +4726,7 @@ brandon
 brandt
 branimir
 briggs
+broadcasted
 broadwell
 bruce
 bsouth
@@ -4611,9 +4831,11 @@ cleanall
 cleanfiles
 cleanloop
 clearbit
+cleison
 cloexec
 closefile
 clrbit
+cmdstr
 cmpabs
 cmpxchg
 cmsg
@@ -4622,6 +4844,7 @@ cnselect
 cntrl
 cobegin
 cobegins
+codebook
 codegened
 codegenned
 codegenning
@@ -4632,6 +4855,7 @@ cohen
 colorado
 colostate
 combit
+commid
 comparetype
 compenv
 compileline
@@ -4651,16 +4875,20 @@ coordfmt
 coords
 copenhagen
 coptic
+copyleft
 copyout
 copypostfields
 cory
 coverity
+cppflags
 cppreference
 cproj
+cpuaffinity
 cpubind
 cpus
 cpuset
 cpython
+craig
 craype
 crays
 creoleparser
@@ -4668,6 +4896,7 @@ crlf
 crlfile
 crout
 crufty
+cryptosystems
 cspawn
 cstdlib
 ctags
@@ -4716,6 +4945,7 @@ debugprint
 december
 decls
 declspecs
+decrementer
 deepak
 defexpr
 defn
@@ -4732,6 +4962,7 @@ deinits
 deitz
 delaney
 delims
+demangle
 denests
 dennis
 denny
@@ -4746,13 +4977,21 @@ densify
 deprioritized
 deps
 dequeue
+dequeuer
+dequeues
 dereference
 dereferenced
 dereferences
 dereferencing
+derefs
+deregister
+deregistration
 descs
 deseret
 deserialization
+deserialize
+deserialized
+deserializer
 destructors
 destructure
 destructured
@@ -4787,6 +5026,7 @@ divceilpos
 divexact
 divfloor
 divfloorpos
+dlang
 dlmalloc
 dmapped
 dmitry
@@ -4796,6 +5036,7 @@ doinit
 dokey
 dominator
 dominators
+dompid
 doms
 donald
 dontroute
@@ -4805,7 +5046,13 @@ doren
 dotfile
 dotfiles
 dotnl
+douglas
+downarr
 downcasts
+downdist
+downdom
+downdomclass
+downdomtype
 downloadable
 doxygen
 dropdown
@@ -4924,9 +5171,12 @@ enotsup
 enotty
 enotuniq
 enqueue
+enqueuer
+enqueues
 enums
 enumsymbol
 enumtype
+envp
 enxio
 eopnotsupp
 eoverflow
@@ -4979,6 +5229,7 @@ executables
 exfull
 expm
 exponentiate
+exprlist
 exprs
 externs
 facebook
@@ -4990,6 +5241,7 @@ fannkuchredux
 fasta
 fastaredux
 faux
+fbody
 fcntl
 fdflag
 fdiv
@@ -4998,6 +5250,7 @@ ferguson
 fflush
 fftw
 fibonacci
+fieldno
 fieldnum
 fieldwise
 figueroa
@@ -5055,6 +5308,7 @@ fstab
 fstatfs
 fstream
 fsync
+ftable
 ftest
 ftpport
 ftpsslauth
@@ -5076,8 +5330,11 @@ gcov
 gdbinit
 gemini
 genericity
+gentemp
 george
 georgian
+geronimo
+geronimoanderson
 getaddrinfo
 getchunk
 getcontext
@@ -5099,7 +5356,9 @@ gettimeofday
 gettimer
 getvalid
 gflop
+gilbert
 github
+gitignore
 glagolitic
 glibc
 globalattr
@@ -5128,6 +5387,7 @@ greprt
 greptestoutputs
 greyscale
 groupsize
+gsoc
 gssapi
 guckin
 gujarati
@@ -5137,15 +5397,18 @@ gurmukhi
 hacky
 hadoop
 hamdist
+hamidouche
 hangul
 hannah
 hanunoo
 hardcode
 hargrove
 harshbarger
+hasher
 hashtable
 haskell
 haswell
+haverford
 hayashi
 hdfs
 hdrincl
@@ -5183,6 +5446,7 @@ hoser
 hostname
 hostnames
 hotpar
+howto
 hpcc
 hpcs
 hpcx
@@ -5200,6 +5464,7 @@ hwriter
 hyderabad
 hyperthreading
 hyperthreads
+iakovlev
 ibarrier
 icfp
 iclass
@@ -5218,16 +5483,21 @@ immediates
 immmediately
 implementors
 inbox
+incrementer
 incrs
+indexable
 indexx
 indiana
 indirecting
+inds
+indvars
 inet
 infile
 infilesize
 infiniband
 infinitum
 initcopy
+initdone
 initialise
 initializer
 initializers
@@ -5262,6 +5532,7 @@ iolittle
 iomode
 iomodes
 ionative
+iostream
 iostringformat
 iostringstyle
 iostyle
@@ -5269,6 +5540,7 @@ iovec
 ipart
 ipproto
 ipresolve
+iprev
 iprint
 irecord
 irgrp
@@ -5304,6 +5576,7 @@ iterfunction
 itermethod
 iters
 iuorio
+ivdef
 ivdep
 iview
 ivybridge
@@ -5365,6 +5638,7 @@ keepintvl
 kelly
 kenjiro
 kerberos
+keshav
 kevin
 keydata
 keyfile
@@ -5372,6 +5646,7 @@ keygen
 keypair
 keypasswd
 keytype
+khaled
 kharoshthi
 khatri
 khmer
@@ -5386,6 +5661,7 @@ knuth
 koenig
 konstantina
 korn
+krishna
 kristina
 kronecker
 kumar
@@ -5398,6 +5674,7 @@ langer
 lapack
 laplace
 larrosa
+lastcookie
 lastentry
 lastexecopts
 lastresult
@@ -5425,13 +5702,16 @@ lentz
 lepcha
 lewis
 lexer
+lfftw
 lflags
 lfoo
 lgamma
 lgfortran
 lgmp
+lgpl
 lhdfs
 libclang
+libcrypto
 libcurl
 libedit
 libexec
@@ -5493,6 +5773,7 @@ lookups
 lopez
 lossless
 lossy
+louis
 lowell
 lowlevel
 lseek
@@ -5528,10 +5809,12 @@ malayalam
 malloc
 maltzahn
 mandelbrot
+mannari
 manpage
 manpath
 mantevo
 mapreduce
+marcos
 marenostrum
 markhill
 martha
@@ -5578,6 +5861,7 @@ memmaps
 memmove
 memoize
 memreg
+mergeable
 mersenne
 mfac
 mferguson
@@ -5589,6 +5873,7 @@ miniapp
 minint
 minlen
 minloc
+minnesota
 misassumption
 misdistributed
 mitre
@@ -5597,6 +5882,7 @@ mkdir
 mkerror
 mklroot
 mkswap
+mllvm
 mmap
 mmread
 mmreadsp
@@ -5611,6 +5897,7 @@ moler
 monday
 mongolian
 monoid
+monomorphization
 monte
 monthstr
 morecore
@@ -5627,6 +5914,7 @@ mppf
 mprotect
 mreg
 mregs
+msgs
 mtarun
 muchnick
 multicast
@@ -5636,6 +5924,7 @@ multilocale
 multiloop
 multiprecision
 multirealm
+multiset
 multithreaded
 multithreading
 munge
@@ -5643,6 +5932,7 @@ munged
 munges
 munging
 munmap
+munshi
 muxed
 myaccountid
 myanmar
@@ -5674,6 +5964,7 @@ namespaces
 namespacing
 nanox
 napierian
+nareas
 narratively
 natively
 navarro
@@ -5702,6 +5993,7 @@ newcolor
 newdom
 newfd
 newname
+newstyle
 nextinc
 nextint
 nextprime
@@ -5720,6 +6012,7 @@ noctty
 nodeid
 nodelay
 nodelist
+nodename
 nodepara
 nodesets
 noexec
@@ -5745,11 +6038,13 @@ nonsequential
 nonsingular
 nonstridable
 nonterminals
+nontree
 nonvoid
 nonwide
 nonzeroes
 nonzeros
 noop
+noprint
 noprobe
 noprogress
 nopromote
@@ -5757,14 +6052,17 @@ noproxy
 nopt
 nordlund
 noref
+noreturn
 nosignal
 nostdincs
 notest
 notre
 november
+npadmana
 nprint
 nrank
 nrows
+nsecs
 nsync
 nthreads
 numa
@@ -5787,7 +6085,9 @@ nupdate
 nuses
 nvidia
 nview
+objs
 october
+ofile
 ogham
 ohio
 okey
@@ -5795,6 +6095,7 @@ oldfd
 oldname
 oldnnz
 olson
+omnipath
 onetest
 onlinedocs
 onlinepubs
@@ -5811,6 +6112,7 @@ openreader
 opensocketdata
 opensocketfunction
 opensource
+openssl
 opentmp
 openwriter
 optimizable
@@ -5826,12 +6128,16 @@ ourself
 outfd
 outfile
 outputfile
+overcommitted
 overlining
+overloadable
 overridable
+overrideable
 oversubscription
 padmanabhan
 pageview
 panagiotopoulou
+panzone
 paolo
 parallelization
 parallelize
@@ -5843,6 +6149,7 @@ paratest
 parens
 parenthesization
 parsable
+partee
 passlist
 passname
 passwordless
@@ -5869,6 +6176,8 @@ phong
 physmem
 pidigits
 pids
+pipermail
+pittsburgh
 pkgs
 pktinfo
 planckian
@@ -5883,6 +6192,8 @@ postblit
 postfields
 postfieldsize
 postfixed
+postinit
+postinits
 postorder
 postprocess
 postquote
@@ -5891,6 +6202,7 @@ pouchet
 powerof
 powm
 pozo
+prabhanjan
 pragmas
 prasun
 preadv
@@ -5900,6 +6212,7 @@ precomputing
 prediff
 preexec
 prefixscan
+preformatted
 preorder
 prepended
 prepending
@@ -5931,6 +6244,7 @@ proxyport
 proxytype
 proxyusername
 proxyuserpwd
+prvbundle
 przemys
 psahabu
 pseudocode
@@ -5951,6 +6265,7 @@ pychapel
 pydoc
 pygments
 qioerr
+qsbr
 qsub
 qthreads
 queueing
@@ -5964,6 +6279,7 @@ raii
 ralph
 randclear
 randinit
+randolph
 randseed
 randstate
 randstream
@@ -5978,6 +6294,7 @@ rcvd
 rdma
 rdonly
 rdwr
+reachability
 reacqs
 readahead
 readargsfrom
@@ -6005,7 +6322,9 @@ recverr
 recvopts
 recvtos
 recvttl
+redomclass
 redux
+reentrant
 refactored
 refactoring
 refactorings
@@ -6019,6 +6338,7 @@ refpair
 refvar
 regexdna
 regexp
+registerable
 reindexed
 reindexes
 reindexing
@@ -6052,6 +6372,7 @@ rfind
 rfork
 richard
 riemann
+rijndael
 rint
 rlimit
 roald
@@ -6080,6 +6401,7 @@ rtype
 runcmd
 runtest
 rvalue
+rvalues
 sadayappan
 safecasts
 sagar
@@ -6090,8 +6412,10 @@ salloc
 samuel
 sandia
 sandybridge
+santana
 sanz
 sapiens
+sarthak
 sassert
 saturday
 saurashtra
@@ -6100,6 +6424,7 @@ sbatch
 scanf
 schar
 scheurich
+schneier
 schubert
 schur
 sclean
@@ -6130,8 +6455,10 @@ sendmsg
 sendto
 september
 seqpacket
+serghei
 serializability
 serializable
+serializers
 serverkey
 sessionid
 setbit
@@ -6151,21 +6478,25 @@ sherwood
 shetag
 shmem
 shortlog
+shortname
 showplus
 showpoint
 showpointzero
 sidelnik
 siek
 sigabrt
+sigaddset
 sigalrm
 sigbus
 sigchld
 sigcont
+sigemptyset
 sigfpe
 sighup
 sigill
 sigint
 sigkill
+sigmask
 signum
 sigpipe
 sigplan
@@ -6173,6 +6504,7 @@ sigpoll
 sigprof
 sigquit
 sigsegv
+sigset
 sigstop
 sigsys
 sigterm
@@ -6185,6 +6517,8 @@ sigusr
 sigvtalrm
 sigxcpu
 sigxfsz
+silva
+simd
 singh
 singlecls
 singlevar
@@ -6216,6 +6550,7 @@ solaris
 somesuch
 sourceforge
 souza
+spartee
 spawner
 spawnfn
 spawnshell
@@ -6225,6 +6560,7 @@ spectralnorm
 sphinxcontrib
 spincount
 spinlock
+spinlocks
 spmd
 springfield
 sprintf
@@ -6371,6 +6707,7 @@ telnet
 telugu
 tempdata
 templated
+testcase
 testfile
 testname
 testrun
@@ -6380,6 +6717,7 @@ tfmt
 tfout
 tftp
 tgamma
+tgts
 thaana
 thai
 theodore
@@ -6387,6 +6725,7 @@ thomas
 thomasvandoren
 thorat
 thursday
+thusly
 tibetan
 tifinagh
 tilera
@@ -6407,6 +6746,7 @@ tmpdirname
 tmpvar
 tochar
 toctou
+toctree
 todo
 todos
 toend
@@ -6416,6 +6756,7 @@ tokyo
 toml
 tommy
 tonum
+toolchain
 tooltip
 toordinal
 topdown
@@ -6427,6 +6768,7 @@ transfertext
 travis
 tridiagonal
 trigraphs
+trybang
 tsiombikas
 tskyield
 tstbit
@@ -6434,6 +6776,7 @@ tuesday
 tupled
 tuples
 tupling
+twofish
 typdef
 typecheck
 typedefed
@@ -6464,6 +6807,7 @@ underrun
 unescape
 unescaped
 unexecuted
+unexported
 unfactored
 unfragmented
 ungreedy
@@ -6473,6 +6817,7 @@ uninserted
 uninstall
 uninstantiated
 uniprocessor
+uniquified
 uniquify
 universidad
 universitet
@@ -6483,6 +6828,7 @@ unnormalize
 unnormalized
 unpadded
 unparenthesized
+unpatented
 unpivoted
 unrelatedly
 unresolveds
@@ -6498,6 +6844,7 @@ unwidenable
 unwinder
 unwindonsignal
 upcraft
+updom
 urandomb
 urandomm
 uranus
@@ -6525,7 +6872,9 @@ varname
 varsymbol
 vassily
 vdebug
+vecs
 vectorizable
+vectorizer
 vectorizes
 vectorizing
 venv
@@ -6558,6 +6907,8 @@ webpages
 webserver
 wednesday
 weil
+wellknown
+werror
 westen
 westmere
 whipkey
@@ -6580,6 +6931,7 @@ workgroup
 workgroups
 workitem
 workitems
+wpointer
 wrappee
 writeable
 writebacks
@@ -6602,6 +6954,7 @@ xcode
 xcodebuild
 xdigit
 xeon
+xfer
 xhtml
 xopen
 xterm

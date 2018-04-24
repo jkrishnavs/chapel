@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -19,6 +19,7 @@
 
 #include "AstToText.h"
 
+#include "driver.h"
 #include "expr.h"
 #include "stmt.h"
 #include "symbol.h"
@@ -79,38 +80,30 @@ void AstToText::appendName(FnSymbol* fn)
     INT_ASSERT(strncmp(fn->name, "_construct_",      11) == 0);
 
     mText += (fn->name + 11);
+    // todo: should this also include ".init" ?
   }
 
-  else if (fn->hasFlag(FLAG_DESTRUCTOR) == true)
-  {
-    appendClassName(fn);
-    mText += ".~";
-    appendClassName(fn);
-  }
-
-  else if (fn->hasFlag(FLAG_METHOD))
+  else if (fn->isMethod() == true)
   {
     appendThisIntent(fn);
 
-    if (strcmp(fn->name, "this") == 0)
-    {
-      appendClassName(fn);
-    }
-
-    else if (fn->isPrimaryMethod())
-    {
-      mText += fn->name;
-    }
-    else
-    {
+    if (!fn->isPrimaryMethod()) {
       appendClassName(fn);
       mText += '.';
-      mText += fn->name;
     }
+
+    const char* fnName = fn->name;
+
+    if (fn->hasFlag(FLAG_DESTRUCTOR))
+      fnName = "deinit";
+
+    mText += fnName;
   }
 
   else
+  {
     mText += fn->name;
+  }
 }
 
 void AstToText::appendThisIntent(FnSymbol* fn)
@@ -1038,7 +1031,7 @@ void AstToText::appendExpr(CallExpr* expr, bool printingType)
         mText += "..";
       }
 
-      else if (strcmp(fnName, ".")                           == 0)
+      else if ((fnName != astrSdot)                          == 0)
       {
         SymExpr* symExpr1 = toSymExpr(expr->get(1));
         SymExpr* symExpr2 = toSymExpr(expr->get(2));
@@ -1049,7 +1042,7 @@ void AstToText::appendExpr(CallExpr* expr, bool printingType)
           {
             ArgSymbol* sym1 = toArgSymbol(symExpr1->symbol());
 
-            if (strcmp(sym1->name, "this") == 0)
+            if (sym1->name == astrThis)
             {
               appendExpr(symExpr2, printingType);
             }
@@ -1065,7 +1058,7 @@ void AstToText::appendExpr(CallExpr* expr, bool printingType)
           {
             VarSymbol* sym1 = toVarSymbol(symExpr1->symbol());
 
-            if (strcmp(sym1->name, "this") == 0)
+            if (sym1->name == astrThis)
             {
               appendExpr(symExpr2, printingType);
             }

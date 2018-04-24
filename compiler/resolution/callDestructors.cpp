@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,13 +21,17 @@
 
 #include "addAutoDestroyCalls.h"
 #include "astutil.h"
-#include "expr.h"
+#include "errorHandling.h"
+#include "ForallStmt.h"
+#include "iterator.h"
+#include "lifetime.h"
+#include "UnmanagedClassType.h"
+#include "postFold.h"
 #include "resolution.h"
+#include "resolveFunction.h"
 #include "resolveIntents.h"
 #include "stlUtil.h"
-#include "stmt.h"
 #include "stringutil.h"
-#include "symbol.h"
 #include "virtualDispatch.h"
 
 /************************************* | **************************************
@@ -69,14 +73,20 @@ public:
 
 private:
   typedef std::map<int, ReturnByRef*> RefMap;
+  typedef std::set<FnSymbol*>         FnSet;
+  typedef enum {
+    TF_NONE,  // do not transform
+    TF_FULL,  // transform fully
+    TF_ASGN   // run only updateAssignments()
+  } TransformationKind;  // how to transform a function
 
-  static void             returnByRefCollectCalls(RefMap& calls);
-  static FnSymbol*        theTransformableFunction(CallExpr* call);
-  static bool             isTransformableFunction(FnSymbol* fn);
+  static void             returnByRefCollectCalls(RefMap& calls, FnSet& fns);
+  static TransformationKind transformableFunctionKind(FnSymbol* fn);
   static void             transformFunction(FnSymbol* fn);
   static ArgSymbol*       addFormal(FnSymbol* fn);
   static void             insertAssignmentToFormal(FnSymbol*  fn,
                                                    ArgSymbol* formal);
+  static void             updateAssignments(FnSymbol* fn);
   static void             updateAssignmentsFromRefArgToValue(FnSymbol* fn);
   static void             updateAssignmentsFromRefTypeToValue(FnSymbol* fn);
   static void             updateAssignmentsFromModuleLevelValue(FnSymbol* fn);
@@ -104,11 +114,15 @@ void ReturnByRef::apply()
 {
   RefMap           map;
   RefMap::iterator iter;
+  FnSet            asgnUpdates;
 
-  returnByRefCollectCalls(map);
+  returnByRefCollectCalls(map, asgnUpdates);
 
   for (iter = map.begin(); iter != map.end(); iter++)
     iter->second->transform();
+
+  for_set(FnSymbol, fn, asgnUpdates)
+    updateAssignments(fn);
 
   for (int i = 0; i < virtualMethodTable.n; i++)
   {
@@ -119,9 +133,12 @@ void ReturnByRef::apply()
       for (int j = 0; j < numFns; j++)
       {
         FnSymbol* fn = virtualMethodTable.v[i].value->v[j];
+        TransformationKind tfKind = transformableFunctionKind(fn);
 
-        if (isTransformableFunction(fn))
+        if (tfKind == TF_FULL)
           transformFunction(fn);
+        else if (tfKind == TF_ASGN)
+          updateAssignments(fn);
       }
     }
   }
@@ -132,58 +149,170 @@ void ReturnByRef::apply()
 // and all calls to these functions.
 //
 
-void ReturnByRef::returnByRefCollectCalls(RefMap& calls)
+void ReturnByRef::returnByRefCollectCalls(RefMap& calls, FnSet& fns)
 {
   RefMap::iterator iter;
 
   forv_Vec(CallExpr, call, gCallExprs)
   {
-    if (FnSymbol* fn = theTransformableFunction(call))
-    {
-      RefMap::iterator iter = calls.find(fn->id);
-      ReturnByRef*     info = NULL;
+    // Only transform calls that are still in the AST tree
+    // (defer statement bodies have been removed at this point
+    //  in this pass)
+    if (call->inTree()) {
 
-      if (iter == calls.end())
-      {
-        info          = new ReturnByRef(fn);
-        calls[fn->id] = info;
-      }
-      else
-      {
-        info          = iter->second;
-      }
+      // Only transform calls to transformable functions
+      // The common case is a user-level call to a resolved function
+      // Also handle the PRIMOP for a virtual method call
+      if (FnSymbol* fn = call->resolvedOrVirtualFunction()) {
+       TransformationKind tfKind = transformableFunctionKind(fn);
+       if (tfKind == TF_FULL)
+       {
+        RefMap::iterator iter = calls.find(fn->id);
+        ReturnByRef*     info = NULL;
 
-      info->addCall(call);
+        if (iter == calls.end())
+        {
+          info          = new ReturnByRef(fn);
+          calls[fn->id] = info;
+        }
+        else
+        {
+          info          = iter->second;
+        }
+
+        info->addCall(call);
+       }
+       else if (tfKind == TF_ASGN)
+       {
+         fns.insert(fn);
+       }
+      }
     }
   }
 }
 
-FnSymbol* ReturnByRef::theTransformableFunction(CallExpr* call)
-{
-  // The common case of a user-level call to a resolved function
-  FnSymbol* theCall = call->resolvedFunction();
+static inline bool isParIterOrForwarder(FnSymbol* fn) {
+  if (fn->hasFlag(FLAG_ITERATOR_FN))
+    // This is an iterator. Is it parallel?
+    return fn->hasFlag(FLAG_INLINE_ITERATOR);
 
-  // Also handle the PRIMOP for a virtual method call
-  if (theCall == NULL)
+  if (fn->retType->symbol->hasFlag(FLAG_ITERATOR_RECORD))
+    // This is a forwarder. Query the iterator itself.
+    return getTheIteratorFnFromIteratorRec(fn->retType)
+             ->hasFlag(FLAG_INLINE_ITERATOR);
+
+  // Otherwise, no.
+  return false;
+}
+
+static CallExpr* callingExpr(SymExpr* targetSE) {
+  if (CallExpr* call = toCallExpr(targetSE->parentExpr))
+    if (targetSE == call->baseExpr)
+      return call;
+  return NULL;
+}
+
+// Does 'fn' return the result of a call to 'se' ?
+static bool isReturnedValue(FnSymbol* fn, SymExpr* se) {
+  Symbol* currSym  = fn->getReturnSymbol();
+
+  // Traverse the chain of moves. Like in stripReturnScaffolding().
+  while (true) {
+    if (SymExpr* defSE = currSym->getSingleDef())
+      if (CallExpr* defMove = toCallExpr(defSE->parentExpr))
+        if (defMove->isPrimitive(PRIM_MOVE)) {
+          Expr* defSrc = defMove->get(2);
+
+          if (CallExpr* srcCall = toCallExpr(defSrc))
+            if (srcCall->baseExpr == se)
+              return true;  // found it
+
+          if (SymExpr* srcSE = toSymExpr(defSrc)) {
+            currSym = srcSE->symbol();
+            continue;  // continue traversing the chain of moves
+          }
+        }
+    // The chain of moves is over. Return false.
+    break;
+  }
+  return false;
+}
+
+static bool feedsIntoForallIterableExpr(FnSymbol* fn, SymExpr* use) {
+  if (CallExpr* call = callingExpr(use))
   {
-    if (call->isPrimitive(PRIM_VIRTUAL_METHOD_CALL) == true)
-    {
-      SymExpr* arg1 = toSymExpr(call->get(1));
+    if (isForallIterExpr(call))
+      return true;
 
-      theCall = toFnSymbol(arg1->symbol());
-    }
+    if (FnSymbol* useFn = toFnSymbol(use->parentSymbol))
+      // Does 'useFn' return the value of 'use' ?
+      if (useFn->retType == fn->retType &&
+          isReturnedValue(useFn, use))
+      {
+        bool forForall = false;
+        bool otherUse  = false;
+        for_SymbolSymExprs(use2, useFn) {
+          CallExpr* call2 = callingExpr(use2);
+          if (isForallIterExpr(call2)) forForall = true;
+          else                          otherUse = true;
+        }
+
+        INT_ASSERT(!(forForall && otherUse));
+        return forForall;
+      }
   }
 
-  return (theCall && isTransformableFunction(theCall)) ? theCall : NULL;
+  // Otherwise, no.
+  return false;
 }
 
-//
-// In this first effort, only functions that return strings
-//
+/*
+If the only uses of the parallel iterator are as the iterable expression
+in ForallStmts, it will be inlined.
+Its return value, which is an iterator record, is irrelevant.
+The return-by-ref transformation adds clutter, so skip it in this case.
 
-bool ReturnByRef::isTransformableFunction(FnSymbol* fn)
+A parallel iterator can also be used in a for-loop.
+Such a for-loop is converted into a forall during resolution using
+replaceEflopiWithForall() - only if the loop body contains a yield statement.
+Otherwise it remains a for-loop. (Todo: convert in this case as well?)
+
+Another double-use scenario is in an _iterator_for_loopexprNN via _toLeader.
+Todo: replace _iterator_for_loopexprNN with a ForallStmt.
+
+When the same parallel iterator is used both ways,
+we need to split the uses into two so that each category
+is treated appropriately.
+*/
+static void detectParIterUses(FnSymbol* fn, bool& forForall, bool& otherUse) {
+  for_SymbolSymExprs(use, fn) {
+    if (feedsIntoForallIterableExpr(fn, use))
+      forForall = true;
+    else
+      otherUse = true;
+  }
+}
+
+// Redirect uses of 'fn' in ForallStmts to fn's clone
+// so it does not undergo the ReturnByRef transformation.
+static void splitParIterUses(FnSymbol* fn) {
+  SET_LINENO(fn);
+  FnSymbol* clone = fn->copy();
+  fn->defPoint->insertAfter(new DefExpr(clone));
+
+  for_SymbolSymExprs(use, fn)
+    if (feedsIntoForallIterableExpr(fn, use)) {
+      // go ahead redirect
+      SET_LINENO(use);
+      use->replace(new SymExpr(clone));
+    }
+}
+
+ReturnByRef::TransformationKind
+ReturnByRef::transformableFunctionKind(FnSymbol* fn)
 {
   bool retval = false;
+  bool asgn   = false;
 
   if (AggregateType* type = toAggregateType(fn->retType))
   {
@@ -193,7 +322,8 @@ bool ReturnByRef::isTransformableFunction(FnSymbol* fn)
     else if (fn->hasFlag(FLAG_AUTO_COPY_FN) == true)
       retval = false;
 
-    // Function is an iterator "helper"
+    // Function is an iterator "helper", e.g. getValue
+    // lowerIterators should make sure that getValue returns an "owned" record.
     else if (fn->hasFlag(FLAG_AUTO_II)      == true)
       retval = false;
 
@@ -209,19 +339,53 @@ bool ReturnByRef::isTransformableFunction(FnSymbol* fn)
       retval = false;
   }
 
-  return retval;
+  // Task functions within iterators can yield and so also need
+  // this transformation.
+  // Reasonable alternative: update insertYieldTemps to handle
+  // yielding a PRIM_DEREF or yielding a reference argument.
+  if (fn->hasFlag(FLAG_TASK_FN_FROM_ITERATOR_FN)) {
+    if (isUserDefinedRecord(fn->iteratorInfo->yieldedType))
+      retval = true;
+  }
+
+  if (retval && isParIterOrForwarder(fn)) {
+    bool forForall = false;
+    bool otherUses = false;
+    // compute forForall and otherUses
+    detectParIterUses(fn, forForall, otherUses);
+
+    if (forForall && otherUses)
+      splitParIterUses(fn);
+
+    if (!otherUses)
+      // Do not transform the returns.
+      asgn = true;
+  }
+
+  if (asgn)
+    return TF_ASGN;
+  else if (retval)
+    return TF_FULL;
+  else
+    return TF_NONE;
 }
 
 void ReturnByRef::transformFunction(FnSymbol* fn)
 {
-  ArgSymbol* formal = addFormal(fn);
+  ArgSymbol* formal = NULL;
 
-  insertAssignmentToFormal(fn, formal);
-  updateAssignmentsFromRefArgToValue(fn);
-  updateAssignmentsFromRefTypeToValue(fn);
-  updateAssignmentsFromModuleLevelValue(fn);
-  updateReturnStatement(fn);
-  updateReturnType(fn);
+  if (fn->hasFlag(FLAG_TASK_FN_FROM_ITERATOR_FN) == false) {
+    formal = addFormal(fn);
+  }
+
+  if (fn->hasFlag(FLAG_ITERATOR_FN) == false && formal != NULL) {
+    insertAssignmentToFormal(fn, formal);
+  }
+  updateAssignments(fn);
+  if (formal != NULL) {
+    updateReturnStatement(fn);
+    updateReturnType(fn);
+  }
 }
 
 ArgSymbol* ReturnByRef::addFormal(FnSymbol* fn)
@@ -279,6 +443,12 @@ void ReturnByRef::insertAssignmentToFormal(FnSymbol* fn, ArgSymbol* formal)
   returnOrFirstAutoDestroy->insertBefore(moveExpr);
 }
 
+void ReturnByRef::updateAssignments(FnSymbol* fn) {
+  updateAssignmentsFromRefArgToValue(fn);
+  updateAssignmentsFromRefTypeToValue(fn);
+  updateAssignmentsFromModuleLevelValue(fn);
+}
+
 //
 // Consider a function that takes a formal of type Record by const ref
 // and that returns that value from the function.  The compiler inserts
@@ -311,9 +481,13 @@ void ReturnByRef::updateAssignmentsFromRefArgToValue(FnSymbol* fn)
           if (isUserDefinedRecord(symLhs->type) == true &&
               symRhs->type                      == symLhs->type)
           {
+            bool fromInIntent =
+              (symRhs->originalIntent == INTENT_IN ||
+               symRhs->originalIntent == INTENT_CONST_IN);
+
             if (symLhs->hasFlag(FLAG_ARG_THIS)   == false &&
                 symLhs->hasFlag(FLAG_NO_COPY)    == false &&
-                symLhs->hasFlag(FLAG_CHPL__ITER) == false &&
+                !fromInIntent &&
                 (symRhs->intent == INTENT_REF ||
                  symRhs->intent == INTENT_CONST_REF))
             {
@@ -364,17 +538,14 @@ void ReturnByRef::updateAssignmentsFromRefTypeToValue(FnSymbol* fn)
       if (symLhs && callRhs && callRhs->isPrimitive(PRIM_DEREF))
       {
         VarSymbol* varLhs = toVarSymbol(symLhs->symbol());
-        SymExpr*   symRhs = toSymExpr(callRhs->get(1));
-        VarSymbol* varRhs = toVarSymbol(symRhs->symbol());
+        SymExpr*  exprRhs = toSymExpr(callRhs->get(1));
+        Symbol*    symRhs = exprRhs->symbol();
 
-        // MPF 2016-10-02: It seems to me that this code should also handle the
-        // case that symRhs is an ArgSymbol, but adding that caused problems
-        // in the handling of out argument intents.
-
-        if (varLhs != NULL && varRhs != NULL)
+        if (varLhs != NULL && symRhs != NULL)
         {
+          INT_ASSERT(varLhs->isRef() == false && symRhs->isRef());
           if (isUserDefinedRecord(varLhs->type) == true &&
-              varRhs->type                      == varLhs->type->refType)
+              !varLhs->hasFlag(FLAG_NO_COPY))
           {
 
             // HARSHBARGER 2015-12-11:
@@ -401,13 +572,11 @@ void ReturnByRef::updateAssignmentsFromRefTypeToValue(FnSymbol* fn)
             if (!isCopied) {
               SET_LINENO(move);
 
-              SymExpr*  lhsCopy0 = symLhs->copy();
-              SymExpr*  lhsCopy1 = symLhs->copy();
-              FnSymbol* autoCopy = getAutoCopyForType(varLhs->type);
-              CallExpr* copyExpr = new CallExpr(autoCopy, lhsCopy0);
-              CallExpr* moveExpr = new CallExpr(PRIM_MOVE,lhsCopy1, copyExpr);
+              FnSymbol* copyFn = getAutoCopyForType(varLhs->type);
 
-              move->insertAfter(moveExpr);
+              callRhs->remove();
+              CallExpr* copyCall = new CallExpr(copyFn, exprRhs);
+              move->insertAtTail(copyCall);
             }
           }
         }
@@ -445,6 +614,7 @@ void ReturnByRef::updateAssignmentsFromModuleLevelValue(FnSymbol* fn)
         if (symLhs != NULL && symRhs != NULL)
         {
           if (isUserDefinedRecord(symLhs->type) == true &&
+              symLhs->hasFlag(FLAG_NO_COPY)     == false &&
               symRhs->type                      == symLhs->type)
           {
             DefExpr* def = symRhs->defPoint;
@@ -512,13 +682,9 @@ void ReturnByRef::transform()
     }
     else
     {
-      FnSymbol* calledFn = call->resolvedFunction();
-
-      if (!calledFn->hasFlag(FLAG_NEW_ALIAS_FN)) {
-        // fixupNewAlias removes some - but not all - calls
-        // to the newAlias function from the tree.
-        INT_ASSERT(false);
-      }
+      // task functions within iterators can yield
+      // but technically return void
+      //INT_ASSERT(false);
     }
   }
 
@@ -579,6 +745,12 @@ void ReturnByRef::transformMove(CallExpr* moveExpr)
   FnSymbol* fn        = callExpr->resolvedFunction();
 
   Expr*     nextExpr  = moveExpr->next;
+
+  // Ignore a CondStmt containing a PRIM_CHECK_ERROR
+  // so that we can still detect initCopy after a call that can throw
+  if (isCheckErrorStmt(nextExpr))
+      nextExpr = nextExpr->next;
+
   CallExpr* copyExpr  = NULL;
 
   Symbol*   useLhs    = toSymExpr(lhs)->symbol();
@@ -677,6 +849,77 @@ void ReturnByRef::transformMove(CallExpr* moveExpr)
   }
 }
 
+static
+bool isLocalVariable(Expr* initFrom) {
+  if (SymExpr* se = toSymExpr(initFrom)) {
+    Symbol* sym = se->symbol();
+    // is it local?
+    if (sym->defPoint->getFunction() == initFrom->getFunction())
+      // is it value (not ref) ?
+      if (!sym->isRef())
+        return true;
+
+  }
+
+  return false;
+}
+
+static
+bool isCallExprTemporary(Expr* initFrom) {
+  SymExpr* fromSe = toSymExpr(initFrom);
+  INT_ASSERT(fromSe);
+  Symbol* fromSym = fromSe->symbol();
+  if (fromSym->hasFlag(FLAG_EXPR_TEMP)) {
+    // It's from an auto-destroyed value that is an expression temporary
+    // storing the result of a function call.
+    return true;
+  }
+
+  return false;
+}
+
+bool doesCopyInitializationRequireCopy(Expr* initFrom) {
+  if (isUserDefinedRecord(initFrom->getValType())) {
+    // RHS is a reference, need a copy
+    if (initFrom->isRef())
+      return true;
+    // Past here, it's a value.
+
+    // Is it the result of a call returning by value?
+    if (isCallExprTemporary(initFrom))
+      return false;
+
+    // Is it a local variable? Or a global? or an outer?
+    // Need a copy in any of these cases for variable initialization.
+    return true;
+  }
+
+  return false;
+}
+
+bool doesValueReturnRequireCopy(Expr* initFrom) {
+  if (isUserDefinedRecord(initFrom->getValType())) {
+    // RHS is a reference, need a copy
+    if (initFrom->isRef())
+      return true;
+    // Past here, it's a value.
+
+    // Is it the result of a call returning by value?
+    if (isCallExprTemporary(initFrom))
+      return false;
+
+    // Is it a local variable?
+    if (isLocalVariable(initFrom))
+      return false;
+
+    // Or a global? or an outer?
+    // Need a copy in any of these cases for return.
+    return true;
+  }
+
+  return false;
+}
+
 /************************************* | **************************************
 *                                                                             *
 * Code to implement original style of return record by ref formal             *
@@ -692,317 +935,13 @@ void ReturnByRef::transformMove(CallExpr* moveExpr)
 //
 static Map<FnSymbol*,Vec<FnSymbol*>*> retToArgCache;
 
-// Helper method for changeRetToArgAndClone, assisting in symbol replacement
-//
-// This method takes in the current call which we are replacing around
-// (focalPt), the VarSymbol we are trying to replace (oldSym), the symbol we are
-// replacing it with (newSym), and the function that was called in the first
-// use of oldSym in the callee, to replace oldSym with newSym without breaking
-// the AST.
-inline static void replacementHelper(CallExpr*  focalPt,
-                                     VarSymbol* oldSym,
-                                     Symbol*    newSym,
-                                     FnSymbol* useFn) {
-  focalPt->insertAfter(new CallExpr(PRIM_ASSIGN,
-                                    newSym,
-                                    new CallExpr(useFn, oldSym)));
-}
-
-
-// Clone fn, add a ref arg to the end of the argument list, remove the return
-// primitive and change the return type of the function to void.
-// In the body of the clone, replace updates to the return value variable with
-// calls to the useFn in the calling context.
-//
-// This effectively replaces return-by-value from the given function into
-// return-by-reference through the new argument.  It allows the result to be
-// written directly into space allocated in the caller, thus avoiding a
-// verbatim copy.
-//
-static FnSymbol*
-createClonedFnWithRetArg(FnSymbol* fn, FnSymbol* useFn)
-{
-  SET_LINENO(fn);
-
-  FnSymbol*  newFn = fn->copy();
-  // Note: other code does strcmps against the name _retArg
-  ArgSymbol* arg   = new ArgSymbol(INTENT_REF,
-                                   "_retArg",
-                                   useFn->retType->refType);
-
-  arg->addFlag(FLAG_RETARG);
-
-  newFn->insertFormalAtTail(arg);
-  newFn->addFlag(FLAG_FN_RETARG);
-
-  VarSymbol* ret = toVarSymbol(newFn->getReturnSymbol());
-
-  INT_ASSERT(ret);
-
-  Expr* returnPrim = newFn->body->body.tail;
-
-  returnPrim->replace(new CallExpr(PRIM_RETURN, gVoid));
-
-  newFn->retType = dtVoid;
-
-  fn->defPoint->insertBefore(new DefExpr(newFn));
-
-  std::vector<SymExpr*> symExprs;
-
-  collectSymExprs(newFn, symExprs);
-
-  // In the body of the function, replace references to the original
-  // ret symbol with copies of the return value reference.  A local
-  // deref temp is inserted if needed.  The result is fed through a
-  // call to the useFn -- effectively sucking the use function call
-  // inside the clone function.
-  for_vector(SymExpr, se, symExprs) {
-    if (se->symbol() == ret) {
-      CallExpr* move = toCallExpr(se->parentExpr);
-
-      if (move && move->isPrimitive(PRIM_MOVE) && move->get(1) == se) {
-        SET_LINENO(move);
-        replacementHelper(move, ret, arg, useFn);
-      } else {
-        // Any other call or primitive.
-        FnSymbol* calledFn = move->resolvedFunction();
-        CallExpr* parent   = toCallExpr(move->parentExpr);
-
-        if (calledFn                    != NULL &&
-            strcmp(calledFn->name, "=") ==    0 &&
-            // Filter out case handled above.
-            (!parent || !parent->isPrimitive(PRIM_MOVE))) {
-          replacementHelper(move, ret, arg, useFn);
-
-        } else {
-          Symbol*   tmp   = newTemp("ret_to_arg_tmp_", useFn->retType);
-          CallExpr* deref = new CallExpr(PRIM_DEREF, arg);
-          CallExpr* move  = new CallExpr(PRIM_MOVE, tmp, deref);
-
-          se->getStmtExpr()->insertBefore(new DefExpr(tmp));
-          se->getStmtExpr()->insertBefore(move);
-
-          se->setSymbol(tmp);
-        }
-      }
-    }
-  }
-
-  return newFn;
-}
-
-
-static void replaceRemainingUses(Vec<SymExpr*>& use,
-                                 SymExpr*       firstUse,
-                                 Symbol*        actual) {
-  // for each remaining use "se"
-  //   replace se with deref of the actual return value argument,
-  //   unless parent is accessing its address
-  forv_Vec(SymExpr, se, use) {
-    // Because we've already handled the first use
-    if (se != firstUse) {
-      CallExpr* parent = toCallExpr(se->parentExpr);
-
-      if (parent) {
-        SET_LINENO(parent);
-
-        if (parent->isPrimitive(PRIM_ADDR_OF)) {
-          parent->replace(new SymExpr(actual));
-        } else {
-          FnSymbol* parentFn = parent->resolvedFunction();
-
-          if (!(parentFn->hasFlag(FLAG_AUTO_COPY_FN) ||
-                parentFn->hasFlag(FLAG_INIT_COPY_FN))) {
-            // Leave the auto copies/inits in, we'll need them for
-            // moving information back to us.
-
-            // Copy the information we currently have into the temp
-            CallExpr* deref = new CallExpr(PRIM_DEREF, actual);
-            CallExpr* move  = new CallExpr(PRIM_MOVE, se->symbol(), deref);
-
-            se->getStmtExpr()->insertBefore(move);
-          }
-        }
-      }
-    }
-  }
-}
-
-
-// Create a copy of the called function, replacing
-// the return statement in that function with a copy of the call which uses
-// the result of the above call to that function.  Maybe a picture would
-// help.
-//   ('move' lhs    (fn args ...))
-//   . . .
-//   ('move' useLhs (useFn lhs))
-// gets converted to
-//   (newFn args ... useLhs)
-//   . . .
-//   <removed>
-// where a call to useFn replaces the return that used to be at the end of
-// newFn.  The use function is expected to be assignment, initCopy or
-// autoCopy.  All other cases are ignored.
-static void replaceUsesOfFnResultInCaller(CallExpr*      move,
-                                          CallExpr*      call,
-                                          Vec<SymExpr*>& use,
-                                          FnSymbol*      fn) {
-  SymExpr* firstUse = use.v[0];
-
-  // If this isn't a call expression, we've got problems.
-  if (CallExpr* useCall = toCallExpr(firstUse->parentExpr)) {
-    if (FnSymbol* useFn = useCall->resolvedFunction()) {
-      if ((strcmp(useFn->name, "=") == 0 && firstUse == useCall->get(2)) ||
-          useFn->hasFlag(FLAG_AUTO_COPY_FN)                              ||
-          useFn->hasFlag(FLAG_INIT_COPY_FN)) {
-        Symbol*   actual = NULL;
-        FnSymbol* newFn  = NULL;
-
-        //
-        // check cache for new function
-        //
-        if (Vec<FnSymbol*>* vfn = retToArgCache.get(fn)) {
-          for (int i = 0; i < vfn->n; i++) {
-            if (vfn->v[i] == useFn) {
-              newFn = vfn->v[i+1];
-            }
-          }
-        }
-
-        if (!newFn) {
-          newFn = createClonedFnWithRetArg(fn, useFn);
-
-          //
-          // add new function to cache
-          //
-          Vec<FnSymbol*>* vfn = retToArgCache.get(fn);
-
-          if (!vfn) {
-            vfn = new Vec<FnSymbol*>();
-          }
-
-          vfn->add(useFn);
-          vfn->add(newFn);
-
-          retToArgCache.put(fn, vfn);
-        }
-
-        SET_LINENO(call);
-        call->baseExpr->replace(new SymExpr(newFn));
-
-        if (CallExpr* useMove = toCallExpr(useCall->parentExpr)) {
-          INT_ASSERT(isMoveOrAssign(useMove));
-
-          Symbol* useLhs = toSymExpr(useMove->get(1))->symbol();
-
-          if (useLhs->isRef() == false) {
-            Expr*     lhs    = useMove->get(1)->remove();
-            CallExpr* addrOf = new CallExpr(PRIM_ADDR_OF, lhs);
-
-            useLhs = newTemp("ret_to_arg_ref_tmp_", useFn->retType->refType);
-
-            move->insertBefore(new DefExpr(useLhs));
-            move->insertBefore(new CallExpr(PRIM_MOVE, useLhs, addrOf));
-          }
-
-          move->replace(call->remove());
-
-          useMove->remove();
-
-          call->insertAtTail(useLhs);
-
-          actual = useLhs;
-
-        } else {
-          // We assume the useFn is an assignment.
-          if (strcmp(useFn->name, "=") != 0) {
-            INT_FATAL(useFn, "should be an assignment function");
-            return;
-          } else {
-
-            // We expect that the used symbol is the second actual passed to
-            // the "=".  That is, it is an assignment from the result of the
-            // call to fn to useLhs.
-            INT_ASSERT(firstUse == useCall->get(2));
-
-            Symbol* useLhs = toSymExpr(useCall->get(1))->symbol();
-
-            move->replace(call->remove());
-            call->insertAtTail(useLhs);
-
-            actual = useLhs;
-          }
-        }
-
-        if (actual) {
-          replaceRemainingUses(use, firstUse, actual);
-        }
-      }
-    }
-  }
-}
-
-
-static void
-changeRetToArgAndClone(CallExpr* move,
-                       Symbol*   lhs,
-                       CallExpr* call,
-                       FnSymbol* fn) {
-  // Here are some relations between the arguments that can be relied upon.
-  INT_ASSERT(call->parentExpr         == move);
-  INT_ASSERT(call->resolvedFunction() == fn);
-
-  // In the suffix of the containing function, look for uses of the lhs of the
-  // move containing the call to fn.
-  Vec<SymExpr*> use;
-
-  if (SymExpr* singleUse = lhs->getSingleUse()) {
-    use.add(singleUse);
-  } else {
-    for (Expr* stmt = move->next; stmt; stmt = stmt->next) {
-      std::vector<SymExpr*> symExprs;
-
-      collectSymExprs(stmt, symExprs);
-
-      for_vector(SymExpr, se, symExprs) {
-        if (se->symbol() == lhs) {
-          use.add(se);
-        }
-      }
-    }
-  }
-
-  // If such a use is found, create a copy of the called function, replacing
-  // the return statement in that function with a copy of the call which uses
-  // the result of the above call to that function.
-  if (use.n > 0) {
-    replaceUsesOfFnResultInCaller(move, call, use, fn);
-  }
-}
-
-
-static void
-returnRecordsByReferenceArguments() {
-  forv_Vec(CallExpr, call, gCallExprs) {
-    if (call->parentSymbol) {
-      if (FnSymbol* fn = requiresImplicitDestroy(call)) {
-        if (fn->hasFlag(FLAG_EXTERN))
-          continue;
-        CallExpr* move = toCallExpr(call->parentExpr);
-        INT_ASSERT(move->isPrimitive(PRIM_MOVE) ||
-                   move->isPrimitive(PRIM_ASSIGN));
-        SymExpr* lhs = toSymExpr(move->get(1));
-        INT_ASSERT(!lhs->symbol()->hasFlag(FLAG_TYPE_VARIABLE));
-        changeRetToArgAndClone(move, lhs->symbol(), call, fn);
-      }
-    }
-  }
-}
-
 static void
 fixupDestructors() {
   forv_Vec(FnSymbol, fn, gFnSymbols) {
     if (fn->hasFlag(FLAG_DESTRUCTOR)) {
+      if (fn->_this == NULL) {
+        continue;
+      }
       AggregateType* ct = toAggregateType(fn->_this->getValType());
       INT_ASSERT(ct);
 
@@ -1011,27 +950,40 @@ fixupDestructors() {
       //
       for_fields_backward(field, ct) {
         SET_LINENO(field);
-        if (field->type->destructor) {
+
+        if (field->type->hasDestructor() == true) {
           AggregateType* fct = toAggregateType(field->type);
+
           INT_ASSERT(fct);
+
           if (!isClass(fct)) {
-            bool useRefType = !isRecordWrappedType(fct);
-            VarSymbol* tmp = newTemp("_field_destructor_tmp_", useRefType ? fct->refType : fct);
+            bool       useRefType = !isRecordWrappedType(fct);
+            VarSymbol* tmp        = newTemp("_field_destructor_tmp_",
+                                            useRefType ? fct->refType : fct);
+
             fn->insertIntoEpilogue(new DefExpr(tmp));
+
             fn->insertIntoEpilogue(new CallExpr(PRIM_MOVE, tmp,
               new CallExpr(useRefType ? PRIM_GET_MEMBER : PRIM_GET_MEMBER_VALUE, fn->_this, field)));
+
             FnSymbol* autoDestroyFn = autoDestroyMap.get(field->type);
-            if (autoDestroyFn && autoDestroyFn->hasFlag(FLAG_REMOVABLE_AUTO_DESTROY))
+
+            if (autoDestroyFn &&
+                autoDestroyFn->hasFlag(FLAG_REMOVABLE_AUTO_DESTROY)) {
               fn->insertIntoEpilogue(new CallExpr(autoDestroyFn, tmp));
-            else
-              fn->insertIntoEpilogue(new CallExpr(field->type->destructor, tmp));
+            } else {
+              fn->insertIntoEpilogue(new CallExpr(field->type->getDestructor(),
+                                                  tmp));
+            }
           }
+
         } else if (FnSymbol* autoDestroyFn = autoDestroyMap.get(field->type)) {
           VarSymbol* tmp = newTemp("_field_destructor_tmp_", field->type);
+
           fn->insertIntoEpilogue(new DefExpr(tmp));
-          fn->insertIntoEpilogue(
-                new CallExpr(PRIM_MOVE, tmp,
-                  new CallExpr(PRIM_GET_MEMBER_VALUE, fn->_this, field)));
+          fn->insertIntoEpilogue(new CallExpr(PRIM_MOVE,
+                                              tmp,
+                                              new CallExpr(PRIM_GET_MEMBER_VALUE, fn->_this, field)));
           fn->insertIntoEpilogue(new CallExpr(autoDestroyFn, tmp));
         }
       }
@@ -1040,17 +992,20 @@ fixupDestructors() {
       // insert call to parent destructor
       //
       INT_ASSERT(ct->dispatchParents.n <= 1);
-      if (ct->dispatchParents.n >= 1 && isClass(ct)) {
-        // avoid destroying record fields more than once
-        if (FnSymbol* parentDestructor = ct->dispatchParents.v[0]->destructor) {
+
+      if (ct->dispatchParents.n == 1 && isClass(ct) == true) {
+        AggregateType* parType = ct->dispatchParents.v[0];
+
+        if (FnSymbol* parDestructor = parType->getDestructor()) {
           SET_LINENO(fn);
-          Type* tmpType = isClass(ct) ?
-            ct->dispatchParents.v[0] : ct->dispatchParents.v[0]->refType;
-          VarSymbol* tmp = newTemp("_parent_destructor_tmp_", tmpType);
+
+          VarSymbol* tmp   = newTemp("_parent_destructor_tmp_", parType);
+          Symbol*    _this = fn->_this;
+          CallExpr*  cast  = new CallExpr(PRIM_CAST, parType->symbol, _this);
+
           fn->insertIntoEpilogue(new DefExpr(tmp));
-          fn->insertIntoEpilogue(new CallExpr(PRIM_MOVE, tmp,
-            new CallExpr(PRIM_CAST, tmpType->symbol, fn->_this)));
-          fn->insertIntoEpilogue(new CallExpr(parentDestructor, tmp));
+          fn->insertIntoEpilogue(new CallExpr(PRIM_MOVE,     tmp, cast));
+          fn->insertIntoEpilogue(new CallExpr(parDestructor, tmp));
         }
       }
     }
@@ -1063,12 +1018,17 @@ static void ensureModuleDeinitFnAnchor(ModuleSymbol* mod, Expr*& anchor) {
     return;
 
   SET_LINENO(mod);
+
   FnSymbol* deinitFn = mod->deinitFn;
+
   if (!deinitFn) {
     deinitFn = new FnSymbol(astr("chpl__deinit_", mod->name));
+
     mod->block->insertAtTail(new DefExpr(deinitFn));
+
     normalize(deinitFn);
-    resolveFns(deinitFn);
+    resolveFunction(deinitFn);
+
     mod->deinitFn = deinitFn;
   }
 
@@ -1084,26 +1044,31 @@ static void cleanupModuleDeinitAnchor(Expr*& anchor) {
 }
 
 static void insertGlobalAutoDestroyCalls() {
-  // --ipe does not build chpl_gen_main
-  if (chpl_gen_main == NULL)
-    return;
-
-  forv_Vec(ModuleSymbol, mod, gModuleSymbols)
+  forv_Vec(ModuleSymbol, mod, gModuleSymbols) {
     if (isAlive(mod)) {
       Expr* anchor = NULL;
-      for_alist(expr, mod->block->body)
-        if (DefExpr* def = toDefExpr(expr))
-          if (VarSymbol* var = toVarSymbol(def->sym))
-            if (!var->isParameter() && !var->isType())
-              if (!var->hasFlag(FLAG_NO_AUTO_DESTROY))
+
+      for_alist(expr, mod->block->body) {
+        if (DefExpr* def = toDefExpr(expr)) {
+          if (VarSymbol* var = toVarSymbol(def->sym)) {
+            if (!var->isParameter() && !var->isType()) {
+              if (!var->hasFlag(FLAG_NO_AUTO_DESTROY)) {
                 if (FnSymbol* autoDestroy = autoDestroyMap.get(var->type)) {
                   SET_LINENO(var);
+
                   ensureModuleDeinitFnAnchor(mod, anchor);
+
                   // destroys go after anchor in reverse order of decls
                   anchor->insertAfter(new CallExpr(autoDestroy, var));
                 }
+              }
+            }
+          }
+        }
+      }
       cleanupModuleDeinitAnchor(anchor);
     }
+  }
 }
 
 
@@ -1111,135 +1076,36 @@ static void insertDestructorCalls() {
   forv_Vec(CallExpr, call, gCallExprs) {
     if (call->isPrimitive(PRIM_CALL_DESTRUCTOR)) {
       Type* type = call->get(1)->typeInfo();
-      if (!type->destructor) {
+
+      if (type->hasDestructor() == false) {
         call->remove();
       } else {
         SET_LINENO(call);
-        call->replace(new CallExpr(type->destructor, call->get(1)->remove()));
+
+        call->replace(new CallExpr(type->getDestructor(),
+                                   call->get(1)->remove()));
       }
     }
   }
 }
-
-/* For a variable marked with FLAG_INSERT_AUTO_COPY,
-   call autoCopy when there is a MOVE to that variable
-   from another expression (variable or call).
-
-   Note that FLAG_INSERT_AUTO_COPY is only ever set for
-   lhs variables in moves such as
-      move lhs, someCall()
-   where requiresImplicitDestroy(someCall). requiresImplicitDestroy is
-   described as checking "if the function requires an implicit
-   destroy of its returned value (i.e. reference count)".
-
-   The code checks:
-    - not in a "donor fn" (auto copy fn)
-    - called function returns a record or ref-counted type by ref
-    - called function does not have FLAG_NO_IMPLICIT_COPY (getter fn)
-    - called function is not an iterator
-    - called function is not returning a runtime type value
-    - called function is not a "donor fn" (autocopy fns in modules)
-    - called function is not init copy
-    - called function is not =
-    - called function is not _defaultOf
-    - called function does not have FLAG_AUTO_II
-    - called function is not a constructor
-    - called function is not a type constructor
-
-   Relevant commits are
-     3788ee34fa created
-     70d5ea4040 bug fix/workarounds
-     93d5338f8a switch to using flags
-     57a13e7c22 fix compiler warning
-     c27afd6b4f adds FLAG_NO_IMPLICIT_COPY == FLAG_RETURN_VALUE_IS_NOT_OWNED?
-     adfb566b00 FLAG_ITERATOR_FN -> isIterator
-     a43758e6aa adds check for defaultOf, "fixes 4 test failures"
-     61db88b637 flag cleanups
-
-
-   Anyway, insertAutoCopyTemps does the following:
-
-   when x has FLAG_INSERT_AUTO_COPY
-
-   move x, y
-   ->
-   move atmp, y
-   move x, autoCopy(atmp)
-
-   or
-
-   move x, someCall()      (where requiresImplicitDestroy(someCall))
-   ->
-   move atmp, someCall()
-   move x, autoCopy(atmp)
-
- */
-static void insertAutoCopyTemps() {
-  forv_Vec(VarSymbol, sym, gVarSymbols) {
-    if (sym->hasFlag(FLAG_INSERT_AUTO_COPY)) {
-      CallExpr* move = NULL;
-      for_SymbolDefs(def, sym) {
-        CallExpr* defCall = toCallExpr(def->parentExpr);
-        if (defCall->isPrimitive(PRIM_MOVE)) {
-          CallExpr* rhs = toCallExpr(defCall->get(2));
-          if (!rhs || !rhs->isNamed("=")) {
-            // We enter this block if:
-            // - rhs is a variable (!rhs), or
-            // - rhs is a call but not to =
-            //
-            // I think that calls to = no longer appear
-            // in PRIM_MOVE in the AST, so I think that
-            // this is actually if (!rhs || rhs)
-            // since = used to return a value but no longer does.
-
-            // This check ensures that there is only a single PRIM_MOVE
-            // definition of a variable marked with FLAG_INSERT_AUTO_COPY.
-            INT_ASSERT(!move);
-            move = defCall;
-          }
-        }
-      }
-
-      // 2015/01/21 hilde: Workaround for incomplete implementation of
-      // SymExpr::remove() in the context of a ForLoop (as its mIndex field).
-      // This operation is required by the early operation of
-      // deadBlockElimination().
-
-      // In that case, the DefExpr for the symbol should no longer exist, so we
-      // would never reach here.  Given that it is never defined and we *do*
-      // reach here, there is no harm in not creating the autoCopy temp.  This
-      // code will probably all be deprecated when the new AMM story comes
-      // online anyway, so it would be a waste of time trying to "do things
-      // right" in this routine.
-      if (! move)
-        continue;
-
-      INT_ASSERT(move);
-      SET_LINENO(move);
-
-      // MPF 2016-10-02. This code should no longer be necessary
-      // but it is currently being run. See the comment near the call
-      // to requiresImplicitDestroy in functionResolution and the test
-      // call-expr-tmp.chpl.
-
-      Symbol* tmp = newTemp("_autoCopy_tmp_", sym->type);
-
-      move->insertBefore(new DefExpr(tmp));
-      move->insertAfter(new CallExpr(PRIM_MOVE,
-                                     sym,
-                                     new CallExpr(getAutoCopyForType(sym->type),
-                                                  tmp)));
-      move->get(1)->replace(new SymExpr(tmp));
-    }
-  }
-}
-
 
 // This routine inserts autoCopy calls ahead of yield statements as necessary,
-// so the calling routine "owns" the returned value.
-// The copy is necessary for yielded values of record type returned by value.
-// In the current implementation, types marked as "iterator record" and
-// "runtime type value" are excluded.
+// so the calling routine "owns" the yielded value.
+// The copy is necessary when an iterator yields a variable (rather than an
+// expression temporary).
+//
+// For example
+//
+// iter ex1() {
+//   var x:SomeRecord;
+//   yield x;  //  should yield a copy of x
+// }
+// iter ex2() {
+//   yield returnsSomeRecord();  // no need to copy
+// }
+//
+// Note that for parallel iterators, yields can occur in task
+// functions (that aren't iterators themselves).
 static void insertYieldTemps()
 {
   // Examine all calls.
@@ -1254,29 +1120,48 @@ static void insertYieldTemps()
       continue;
 
     // This is the symbol passed back in the yield.
-    SymExpr* yieldExpr = toSymExpr(call->get(1));
+    SymExpr* yieldedSe = toSymExpr(call->get(1));
+    Symbol* yieldedSym = yieldedSe->symbol();
 
-    // The transformation is applied only if is has a normal record type
-    // (passed by value).
-    Type* type = yieldExpr->symbol()->type;
+    FnSymbol* inFn = toFnSymbol(call->parentSymbol);
+    IteratorInfo* ii = inFn->iteratorInfo;
 
-    if (isRecord(type) &&
-        !type->symbol->hasFlag(FLAG_ITERATOR_RECORD) &&
-        !type->symbol->hasFlag(FLAG_RUNTIME_TYPE_VALUE))
-    {
-      SET_LINENO(call);
+    // coforall functions in iterators don't seem to have ii
+    RetTag iteratorRetTag = RET_VALUE;
+    if (ii)
+      iteratorRetTag = ii->iteratorRetTag;
 
-      // Replace:
-      //   yield <yieldExpr>
-      // with:
-      //   (def _yield_expr_tmp_:type)
-      //   (move _yield_expr_tmp_ ("chpl__autoCopy" <yieldExpr>))
-      //   yield _yield_expr_tmp_
-      Symbol* tmp = newTemp("_yield_expr_tmp_", type);
-      Expr* stmt = call->getStmtExpr();
-      stmt->insertBefore(new DefExpr(tmp));
-      stmt->insertBefore(new CallExpr(PRIM_MOVE, tmp, new CallExpr(getAutoCopyForType(type), yieldExpr->remove())));
-      call->insertAtHead(new SymExpr(tmp)); // New first argument.
+
+    // If the yielded symbol is subject to auto-copy/destroy discipline
+    // and it's returned by value (not by reference)
+    // and the yielded value is not an expression temporary
+    //  (e.g. for yield someCall(), the result of someCall() doesn't need copy)
+    // then we need to copy initialize into the yielded value.
+    if (isUserDefinedRecord(yieldedSym->getValType()) &&
+        iteratorRetTag == RET_VALUE) {
+
+      SymExpr* foundSe = findSourceOfYield(call);
+
+      // Now foundSe is in the last simple PRIM_MOVE that set some
+      // chain of symbols (leading to yield) and in particular it
+      // is the RHS of that move.
+      //
+      // Or foundSe is the argument to PRIM_YIELD.
+
+      // TODO - is the check for FLAG_INSERT_AUTO_DESTROY
+      // necessary here? Could this use doesValueReturnRequireCopy?
+      if (foundSe->symbol()->hasFlag(FLAG_INSERT_AUTO_DESTROY) &&
+          !foundSe->symbol()->hasFlag(FLAG_EXPR_TEMP)) {
+        // Add an auto-copy here.
+        SET_LINENO(call);
+        Type* type = foundSe->symbol()->getValType();
+        Symbol* tmp = newTemp("_yield_expr_tmp_", type);
+        Expr* stmt = foundSe->getStmtExpr();
+        stmt->insertBefore(new DefExpr(tmp));
+        stmt->insertBefore(new CallExpr(PRIM_MOVE, tmp, new CallExpr(getAutoCopyForType(type), foundSe->copy())));
+
+        foundSe->replace(new SymExpr(tmp));
+      }
     }
   }
 }
@@ -1290,7 +1175,7 @@ static void insertYieldTemps()
 static void insertReferenceTemps() {
   forv_Vec(CallExpr, call, gCallExprs) {
     // Is call in the tree?
-    if (call->parentSymbol != NULL) {
+    if (call->inTree()) {
       if (call->isResolved() || call->isPrimitive(PRIM_VIRTUAL_METHOD_CALL)) {
         insertReferenceTemps(call);
       }
@@ -1324,90 +1209,6 @@ void insertReferenceTemps(CallExpr* call) {
 *                                                                             *
 ************************************** | *************************************/
 
-// code like
-//    var x => GlobalArray[1..10]; // create a slice
-//    return x;
-// or
-//    var GlobalAlias => GlobalArray[1..10];
-//
-// poses problems because the call_tmp for the slice expression
-// (GlobalArray[1..10] in these examples) is destroyed at the end
-// of the current function. Instead, it should be used to initialize
-// the slice.
-//
-// For similar reasons, code like
-//
-//     class C {
-//      var A: [1..2] int;
-//    }
-//    var GA: [1..5] int = [i in 1..5] i;
-//    var c2 = new C(A=>GA[1..2]);  // <- note A=>GA here
-//
-// also needs special treatment.
-//
-static
-void fixupNewAlias(void) {
-
-  std::vector<CallExpr*> newAliasCalls;
-  std::vector<CallExpr*> hasAliasArgInCtor;
-  const char* lookForAliasField = "chpl__aliasField_";
-  size_t lookForAliasFieldLen = strlen(lookForAliasField);
-
-  forv_Vec(CallExpr, call, gCallExprs) {
-    FnSymbol* calledFn = call->resolvedFunction();
-    if (calledFn && calledFn->hasFlag(FLAG_NEW_ALIAS_FN)) {
-        newAliasCalls.push_back(call);
-    }
-    if (calledFn && calledFn->hasFlag(FLAG_DEFAULT_CONSTRUCTOR)) {
-      // Does the calledFn have a formal that starts with
-      // chpl__aliasField_ ?
-
-      // TODO -- could this use a flag?
-      for_formals(formal, calledFn) {
-        if (0 == strncmp(formal->name, lookForAliasField, lookForAliasFieldLen))
-          hasAliasArgInCtor.push_back(call);
-      }
-    }
-  }
-
-  for_vector(CallExpr, call, newAliasCalls) {
-    SymExpr* se = toSymExpr(call->get(1));
-    if (se->symbol()->hasFlag(FLAG_TEMP) &&
-        se->isRef() == false) {
-      // Note: these flags are added in functionResolution's postFold
-      se->symbol()->removeFlag(FLAG_INSERT_AUTO_COPY);
-      se->symbol()->removeFlag(FLAG_INSERT_AUTO_DESTROY);
-      call->replace(se->remove());
-    }
-  }
-
-  for_vector(CallExpr, ctorCall, hasAliasArgInCtor) {
-    FnSymbol* fn = ctorCall->resolvedFunction();
-
-    for_formals_actuals(formal, actual, ctorCall) {
-
-      // TODO -- could this use a flag?
-      bool isArrayAliasField = false;
-      const char* aliasFieldArg = astr("chpl__aliasField_", formal->name);
-      for_formals(fml, fn)
-        if (fml->name == aliasFieldArg)
-          isArrayAliasField = true;
-
-      if (isArrayAliasField) {
-        SymExpr* se = toSymExpr(actual);
-        bool isTemp = se->symbol()->hasFlag(FLAG_TEMP);
-        bool isAlias = se->symbol()->hasFlag(FLAG_ARRAY_ALIAS);
-        if ((isTemp || isAlias) &&
-             se->isRef() == false) {
-          se->symbol()->removeFlag(FLAG_INSERT_AUTO_COPY);
-          se->symbol()->removeFlag(FLAG_INSERT_AUTO_DESTROY);
-        }
-      }
-    }
-  }
-}
-
-
 // Function resolution adds "dummy" initCopy functions for types
 // that cannot be copied. These "dummy" initCopy functions are marked
 // with the flag FLAG_ERRONEOUS_INITCOPY. This pattern enables
@@ -1417,27 +1218,146 @@ void fixupNewAlias(void) {
 //
 // This function simply checks that no function marked with that
 // flag is ever called and raises an error if so.
-static
-void checkForErroneousInitCopies() {
+static void checkForErroneousInitCopies() {
+
+  // Mark initCopy/autoCopy functions calling functions marked with
+  // FLAG_ERRONEOUS_INITCOPY/FLAG_ERRONEOUS_AUTOCOPY with the same
+  // flag. This situation can come up with the compiler-generated
+  // tuple copy functions.
+  bool changed;
+  do {
+    changed = false;
+    forv_Vec(FnSymbol, fn, gFnSymbols) {
+      if (fn->hasFlag(FLAG_ERRONEOUS_INITCOPY)) {
+        for_SymbolSymExprs(se, fn) {
+          if (FnSymbol* callInFn = se->getFunction()) {
+            if (callInFn->hasFlag(FLAG_INIT_COPY_FN) &&
+                !callInFn->hasFlag(FLAG_ERRONEOUS_INITCOPY)) {
+              callInFn->addFlag(FLAG_ERRONEOUS_INITCOPY);
+              changed = true;
+            }
+          }
+        }
+      }
+
+      if (fn->hasFlag(FLAG_ERRONEOUS_AUTOCOPY)) {
+        for_SymbolSymExprs(se, fn) {
+          if (FnSymbol* callInFn = se->getFunction()) {
+            if (callInFn->hasFlag(FLAG_AUTO_COPY_FN) &&
+                !callInFn->hasFlag(FLAG_ERRONEOUS_AUTOCOPY)) {
+              callInFn->addFlag(FLAG_ERRONEOUS_AUTOCOPY);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  } while(changed);
 
   forv_Vec(FnSymbol, fn, gFnSymbols) {
     if (fn->hasFlag(FLAG_ERRONEOUS_INITCOPY)) {
       // Error on each call site
       for_SymbolSymExprs(se, fn) {
-        USR_FATAL_CONT(se, "copy-initialization invoked for a type"
-                           " that does not have a copy initializer");
+        if (FnSymbol* callInFn = se->getFunction()) {
+          if (!callInFn->hasFlag(FLAG_INIT_COPY_FN)) {
+            USR_FATAL_CONT(se,
+                           "copy-initialization invoked for a type "
+                           "that does not have a copy initializer");
+          } else {
+            // Should have been propagated above
+            INT_ASSERT(callInFn->hasFlag(FLAG_ERRONEOUS_INITCOPY));
+          }
+        }
       }
     }
+
     if (fn->hasFlag(FLAG_ERRONEOUS_AUTOCOPY)) {
       // Error on each call site
       for_SymbolSymExprs(se, fn) {
-        USR_FATAL_CONT(se, "implicit copy-initialization invoked for a type"
-                           " that does not allow it");
+        if (FnSymbol* callInFn = se->getFunction()) {
+          if (!callInFn->hasFlag(FLAG_AUTO_COPY_FN)) {
+            USR_FATAL_CONT(se,
+                           "implicit copy-initialization invoked for a type "
+                           "that does not allow it");
+          } else {
+            // Should have been propagated above
+            INT_ASSERT(callInFn->hasFlag(FLAG_ERRONEOUS_AUTOCOPY));
+          }
+        }
       }
     }
   }
 }
 
+/*
+
+ A coforall index variable should transfer ownership of a
+ yielded record from the iterator's yielded value to the
+ task function.
+
+ However, normal record memory management strategies would
+ lead the coforall index variable to be destroyed in the loop
+ creating tasks.
+
+ This function moves the destruction of the coforall index
+ variable to the end of the task body (which is represented
+ as a coforall function).
+
+ It's likely that this issue would be clearer to implement in
+ the compiler if coforall loops had their own AST node instead
+ of being represented as ForLoop.
+
+ */
+static void destroyFormalInTaskFn(ArgSymbol* formal, FnSymbol* taskFn);
+
+static void adjustCoforallIndexVariables() {
+
+  std::set<ArgSymbol*> handledFormals;
+
+  forv_Vec(FnSymbol, fn, gFnSymbols) {
+    if (fn->hasFlag(FLAG_COBEGIN_OR_COFORALL)) {
+
+      // For coforall functions, find the actual and formal corresponding
+      // to the coforall index variable.
+      for_SymbolSymExprs(fnSe, fn) {
+        if (CallExpr* call = toCallExpr(fnSe->parentExpr)) {
+          if (call->baseExpr == fnSe) {
+            for_formals_actuals(formal, actualExpr, call) {
+              SymExpr* actualSe = toSymExpr(actualExpr);
+              INT_ASSERT(actualSe);
+              Symbol* actual = actualSe->symbol();
+              if (actual->hasFlag(FLAG_COFORALL_INDEX_VAR) &&
+                  actual->hasFlag(FLAG_INSERT_AUTO_DESTROY) &&
+                  isUserDefinedRecord(actual->type)) {
+
+                // Remove FLAG_INSERT_AUTO_DESTROY so it will not
+                // be destroyed in the loop creating tasks.
+                actual->removeFlag(FLAG_INSERT_AUTO_DESTROY);
+
+                // instead, add the destruction at the end of
+                // the coforall body / task function.
+                if (handledFormals.count(formal) == 0) {
+                  destroyFormalInTaskFn(formal, fn);
+                  handledFormals.insert(formal);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+static void destroyFormalInTaskFn(ArgSymbol* formal, FnSymbol* taskFn) {
+  SET_LINENO(formal);
+
+  CallExpr* downEndCount = findDownEndCount(taskFn);
+  INT_ASSERT(downEndCount);
+  FnSymbol* autoDestroyFn = autoDestroyMap.get(formal->type);
+  INT_ASSERT(autoDestroyFn);
+  CallExpr* autoDestroyCall = new CallExpr(autoDestroyFn, formal);
+  downEndCount->insertBefore(autoDestroyCall);
+}
 
 /************************************* | **************************************
 *                                                                             *
@@ -1446,22 +1366,27 @@ void checkForErroneousInitCopies() {
 ************************************** | *************************************/
 
 void callDestructors() {
-  fixupNewAlias();
+
+  adjustCoforallIndexVariables();
+
   fixupDestructors();
 
   insertDestructorCalls();
-  insertAutoCopyTemps();
 
   // Execute this before conversion to return by ref
   // May fail to handle reference variables as desired
   addAutoDestroyCalls();
 
   ReturnByRef::apply();
-  returnRecordsByReferenceArguments();
 
   insertYieldTemps();
+
+  checkLifetimes();
+
   insertGlobalAutoDestroyCalls();
   insertReferenceTemps();
 
   checkForErroneousInitCopies();
+
+  convertClassTypesToCanonical();
 }

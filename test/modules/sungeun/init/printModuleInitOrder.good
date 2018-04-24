@@ -3,17 +3,16 @@ Initializing Modules:
     CPtr
     CString
     String
-     BaseStringType
      SysCTypes
      StringCasts
     ChapelDebugPrint
     ChapelBase
-     ChapelStringLiterals
     MemConsistency
     Atomics
     ChapelThreads
     ChapelTuple
     ChapelRange
+    ChapelTaskDataHelp
     LocaleModel
      LocaleModelHelpFlat
       LocaleModelHelpSetup
@@ -33,7 +32,8 @@ Initializing Modules:
     ChapelIO
      IO
       SysError
-      Regexp
+      FormattedIO
+       Regexp
     LocaleTree
     DefaultAssociative
     ChapelTaskTable
@@ -41,6 +41,7 @@ Initializing Modules:
     ChapelUtil
     ChapelError
     ChapelDynDispHack
+    ChapelTaskData
     Assert
     AlignedTSupport
     RangeChunk

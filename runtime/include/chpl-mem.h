@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -28,8 +28,8 @@
 #include <assert.h>
 #include "arg.h"
 #include "chpl-comm.h"
+#include "chpl-mem-desc.h"
 #include "chpl-mem-hook.h"
-#include "chplsys.h"
 #include "chpl-topo.h"
 #include "chpltypes.h"
 #include "chpl-tasks.h"
@@ -65,10 +65,6 @@ void chpl_mem_exit(void);
 
 int chpl_mem_inited(void);
 
-// predeclared here because we need them below; actual definitions
-// are near the end
-static chpl_bool chpl_mem_alloc_localizes(void);
-static size_t chpl_mem_localizationThreshold(void);
 
 static inline
 void* chpl_mem_allocMany(size_t number, size_t size,
@@ -133,49 +129,111 @@ void chpl_mem_free(void* memAlloc, int32_t lineno, int32_t filename) {
 }
 
 static inline
-void* chpl_mem_array_alloc(size_t nmemb, size_t eltSize,
-                           chpl_bool localizeSubchunks, c_sublocid_t subloc,
+chpl_bool chpl_mem_size_justifies_comm_alloc(size_t size) {
+  //
+  // Don't try to use comm layer allocation unless the size is beyond
+  // the comm layer threshold and enough pages to make localization
+  // worthwhile.
+  //
+  return (size >= chpl_comm_regMemAllocThreshold()
+          && size >= 2 * chpl_comm_regMemHeapPageSize());
+}
+
+static inline
+void* chpl_mem_array_alloc(size_t nmemb, size_t eltSize, c_sublocid_t subloc,
+                           chpl_bool* callAgain, void* repeat_p,
                            int32_t lineno, int32_t filename) {
-  void* p = chpl_mem_allocMany(nmemb, eltSize, CHPL_RT_MD_ARRAY_ELEMENTS,
-                               lineno, filename);
-  if (isActualSublocID(subloc)) {
-    if (!chpl_mem_alloc_localizes()
-        && nmemb * eltSize >= chpl_mem_localizationThreshold()) {
-      chpl_topo_setMemLocality(p, nmemb * eltSize, true, subloc);
+  const size_t size = nmemb * eltSize;
+  void* p;
+
+  //
+  // Temporarily, to support dynamic array registration, we accept a
+  // couple of additional arguments.  On a first call, to allocate,
+  // pass NULL for repeat_p.  This function will return a pointer to
+  // the allocated memory and either true or false in *callAgain.  If
+  // false then the allocation procedure is complete.  If true, then
+  // after initializing the memory the caller should call us again,
+  // repeating the original arguments and passing the pointer returned
+  // by the first call in repeat_p.  We will then call the comm layer
+  // post-alloc function.
+  //
+  if (repeat_p == NULL) {
+    //
+    // Allocate and maybe localize.
+    //
+    chpl_bool do_localize;
+
+    p = NULL;
+    *callAgain = false;
+    if (chpl_mem_size_justifies_comm_alloc(size)) {
+      p = chpl_comm_regMemAlloc(size, CHPL_RT_MD_ARRAY_ELEMENTS,
+                                lineno, filename);
+      if (p != NULL) {
+        *callAgain = true;
+        do_localize = (subloc == c_sublocid_all) ? true : false;
+      }
     }
-  }
-  else if (localizeSubchunks) {
-    if (!chpl_mem_alloc_localizes()
-        && nmemb * eltSize >= chpl_mem_localizationThreshold()) {
-      chpl_topo_setMemSubchunkLocality(p, nmemb * eltSize, true, NULL);
+
+    if (p == NULL) {
+      p = chpl_mem_allocMany(nmemb, eltSize, CHPL_RT_MD_ARRAY_ELEMENTS,
+                             lineno, filename);
+      do_localize = (subloc == c_sublocid_all) ? true : false;
     }
+
+    if (do_localize) {
+      if (isActualSublocID(subloc)) {
+        chpl_topo_setMemLocality(p, size, true, subloc);
+      }
+    }
+  } else {
+    //
+    // do comm layer post-allocation, if we got the memory from there.
+    //
+    p = repeat_p;
+    chpl_comm_regMemPostAlloc(p, size);
   }
+
   return p;
 }
 
 static inline
 void* chpl_mem_wide_array_alloc(int32_t dstNode, size_t nmemb, size_t eltSize,
-                                chpl_bool localizeSubchunks,
                                 c_sublocid_t subloc,
+                                chpl_bool* callAgain, void* repeat_p,
                                 int32_t lineno, int32_t filename) {
   if (dstNode != chpl_nodeID)
     chpl_error("array vector data is not local", lineno, filename);
-  return chpl_mem_array_alloc(nmemb, eltSize, localizeSubchunks, subloc,
+  return chpl_mem_array_alloc(nmemb, eltSize, subloc, callAgain, repeat_p,
                               lineno, filename);
 }
 
 static inline
 void chpl_mem_array_free(void* p,
+                         size_t nmemb, size_t eltSize,
                          int32_t lineno, int32_t filename) {
+  const size_t size = nmemb * eltSize;
+
+  //
+  // If the size indicates we might have gotten this memory from the
+  // comm layer then try to free it there.  If not, or if so but the
+  // comm layer says it didn't come from there, free it in the memory
+  // layer.
+  //
+  if (chpl_mem_size_justifies_comm_alloc(size)
+      && chpl_comm_regMemFree(p, size)) {
+    return;
+  }
+
   chpl_mem_free(p, lineno, filename);
 }
 
 static inline
 void chpl_mem_wide_array_free(int32_t dstNode, void* p,
+                              size_t nmemb, size_t eltSize,
                               int32_t lineno, int32_t filename) {
   if (dstNode != chpl_nodeID)
     chpl_error("array vector data is not local", lineno, filename);
-  chpl_mem_array_free(p, lineno, filename);
+  chpl_mem_array_free(p, nmemb, eltSize, lineno, filename);
 }
 
 // Provide a handle to instrument Chapel calls to memcpy.
@@ -196,26 +254,14 @@ static inline size_t chpl_mem_good_alloc_size(size_t minSize, int32_t lineno, in
   return chpl_good_alloc_size(minSize);
 }
 
-// free a c_string_copy, no error checking.
-// The argument type is explicitly c_string_copy, since only an "owned" string
+// free a c_string, no error checking.
+// The argument type is explicitly c_string, since only an "owned" string
 // should be freed.
 static inline
-void chpl_rt_free_c_string_copy(c_string_copy *s, int32_t lineno, int32_t filename)  {
+void chpl_rt_free_c_string(c_string *s, int32_t lineno, int32_t filename)  {
   assert(*s!=NULL);
   chpl_mem_free((void *) *s, lineno, filename);
   *s = NULL;
-}
-
-// free a c_string (deprecated)
-// This function is needed only because NewString.chpl uses the c_string type.
-// c_strings are "unowned" so should not be freed, but NewString.chpl was written
-// before this distinction was made.
-static inline
-void chpl_rt_free_c_string(c_string* s, int32_t lineno, int32_t filename)
-{
-  // As far as the C compiler is concerned c_string and c_string_copy are the
-  // same type, so no explicit cast is required.
-  chpl_rt_free_c_string_copy(s, lineno, filename);
 }
 
 void chpl_mem_layerInit(void);
@@ -224,39 +270,19 @@ void* chpl_mem_layerAlloc(size_t, int32_t lineno, int32_t filename);
 void* chpl_mem_layerRealloc(void*, size_t, int32_t lineno, int32_t filename);
 void chpl_mem_layerFree(void*, int32_t lineno, int32_t filename);
 
-//
-// Does the implementation provide allocated memory that is already
-// localized to the calling sublocale?  That is, when the locale model
-// has sublocales and an allocation is done while running on one, will
-// the allocated memory be localized to that sublocale?  (Note that the
-// answer doesn't have to be completely truthful; it really only matters
-// for allocations large enough that we'll try to force localization
-// where chpl_mem_doLocalization is true, above.)
-//
-#ifndef CHPL_MEM_IMPL_ALLOC_LOCALIZES
-  #define CHPL_MEM_IMPL_ALLOC_LOCALIZES() false
-#endif
-
-static inline
-chpl_bool chpl_mem_alloc_localizes(void) {
-  return CHPL_MEM_IMPL_ALLOC_LOCALIZES();
-}
-
-static inline
-size_t chpl_mem_localizationThreshold(void) {
-  return chpl_topo_getNumNumaDomains() * 2 * chpl_getHeapPageSize();
-}
-
 #else // LAUNCHER
 
-#include <stdlib.h>
+#include "chpl-mem-sys.h"
 #include "arg.h"
 
 #define chpl_mem_allocMany(number, size, description, lineno, filename)        \
-  malloc((number)*(size))
+  sys_malloc((number)*(size))
+
+#define chpl_mem_alloc(size, description, lineno, filename)        \
+  sys_malloc(size)
 
 #define chpl_mem_free(ptr, lineno, filename)        \
-  free(ptr)
+  sys_free(ptr)
 
 #endif // LAUNCHER
 

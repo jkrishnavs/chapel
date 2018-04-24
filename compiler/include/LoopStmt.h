@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -25,18 +25,23 @@
 class LoopStmt : public BlockStmt
 {
 public:
-  virtual bool           isLoopStmt()                                 const;
+  static LoopStmt*       findEnclosingLoop(Expr* expr);
 
-  LabelSymbol*           breakLabelGet()                              const;
+  static LoopStmt*       findEnclosingLoop(Expr* expr, const char* name);
+
+  static Stmt*           findEnclosingLoopOrForall(Expr* expr);
+
+public:
+  virtual bool           isLoopStmt()                                    const;
+
+  LabelSymbol*           breakLabelGet()                                 const;
   void                   breakLabelSet(LabelSymbol* sym);
 
-  LabelSymbol*           continueLabelGet()                           const;
+  LabelSymbol*           continueLabelGet()                              const;
   void                   continueLabelSet(LabelSymbol* sym);
 
-  bool                   isOrderIndependent()                         const;
+  bool                   isOrderIndependent()                            const;
   void                   orderIndependentSet(bool b);
-
-  static LoopStmt*       findEnclosingLoop(Expr* expr);
 
 protected:
                          LoopStmt(BlockStmt* initBody);
@@ -50,6 +55,8 @@ protected:
 
 private:
                          LoopStmt();
+
+  bool                   isNamed(const char* name)                       const;
 };
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,21 +20,24 @@
 #include "stmt.h"
 
 #include "astutil.h"
+#include "AstVisitor.h"
 #include "codegen.h"
+#include "driver.h"
 #include "expr.h"
 #include "files.h"
+#include "LayeredValueTable.h"
+#include "llvmDebug.h"
 #include "misc.h"
 #include "passes.h"
 #include "stlUtil.h"
 #include "stringutil.h"
 
-#include "codegen.h"
-#include "llvmDebug.h"
+#ifdef HAVE_LLVM
+#include "llvm/IR/Module.h"
+#endif
 
-#include "AstVisitor.h"
-
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 void codegenStmt(Expr* stmt) {
@@ -55,17 +58,13 @@ void codegenStmt(Expr* stmt) {
       // Adjust the current line number, but leave the scope alone.
       llvm::MDNode* scope;
 
-      if(stmt->parentSymbol && stmt->parentSymbol->astTag == E_FnSymbol) {
+      if(stmt->inTree() && stmt->parentSymbol->astTag == E_FnSymbol) {
         scope = debug_info->get_function((FnSymbol *)stmt->parentSymbol);
       } else {
-        scope = info->builder->getCurrentDebugLocation().getScope(
-#if HAVE_LLVM_VER < 37
-                                                      info->llvmContext
-#endif
-                                                      );
+        scope = info->irBuilder->getCurrentDebugLocation().getScope();
       }
 
-      info->builder->SetCurrentDebugLocation(
+      info->irBuilder->SetCurrentDebugLocation(
                   llvm::DebugLoc::get(stmt->linenum(),0 /*col*/,scope));
     }
 #endif
@@ -127,19 +126,19 @@ GenRet BlockStmt::codegen() {
 
   } else {
 #ifdef HAVE_LLVM
-    llvm::Function*   func          = info->builder->GetInsertBlock()->getParent();
+    llvm::Function*   func          = info->irBuilder->GetInsertBlock()->getParent();
     llvm::BasicBlock* blockStmtBody = NULL;
 
     getFunction()->codegenUniqueNum++;
 
     blockStmtBody = llvm::BasicBlock::Create(info->module->getContext(), FNAME("blk_body"));
 
-    info->builder->CreateBr(blockStmtBody);
+    info->irBuilder->CreateBr(blockStmtBody);
 
     // Now add the body.
     func->getBasicBlockList().push_back(blockStmtBody);
 
-    info->builder->SetInsertPoint(blockStmtBody);
+    info->irBuilder->SetInsertPoint(blockStmtBody);
 
     info->lvt->addLayer();
 
@@ -194,7 +193,7 @@ CondStmt::codegen() {
 
   } else {
 #ifdef HAVE_LLVM
-    llvm::Function* func = info->builder->GetInsertBlock()->getParent();
+    llvm::Function* func = info->irBuilder->GetInsertBlock()->getParent();
 
     getFunction()->codegenUniqueNum++;
 
@@ -219,10 +218,10 @@ CondStmt::codegen() {
 
     info->lvt->addLayer();
 
-    info->builder->CreateBr(condStmtIf);
+    info->irBuilder->CreateBr(condStmtIf);
 
     func->getBasicBlockList().push_back(condStmtIf);
-    info->builder->SetInsertPoint(condStmtIf);
+    info->irBuilder->SetInsertPoint(condStmtIf);
 
     GenRet condValueRet = codegenValue(condExpr);
 
@@ -230,38 +229,38 @@ CondStmt::codegen() {
 
     if( condValue->getType() !=
         llvm::Type::getInt1Ty(info->module->getContext()) ) {
-      condValue = info->builder->CreateICmpNE(
+      condValue = info->irBuilder->CreateICmpNE(
           condValue,
           llvm::ConstantInt::get(condValue->getType(), 0),
           FNAME("condition"));
     }
 
-    info->builder->CreateCondBr(
+    info->irBuilder->CreateCondBr(
         condValue,
         condStmtThen,
         (elseStmt) ? condStmtElse : condStmtEnd);
 
     func->getBasicBlockList().push_back(condStmtThen);
-    info->builder->SetInsertPoint(condStmtThen);
+    info->irBuilder->SetInsertPoint(condStmtThen);
 
     info->lvt->addLayer();
     thenStmt->codegen();
 
-    info->builder->CreateBr(condStmtEnd);
+    info->irBuilder->CreateBr(condStmtEnd);
     info->lvt->removeLayer();
 
     if(elseStmt) {
       func->getBasicBlockList().push_back(condStmtElse);
-      info->builder->SetInsertPoint(condStmtElse);
+      info->irBuilder->SetInsertPoint(condStmtElse);
 
       info->lvt->addLayer();
       elseStmt->codegen();
-      info->builder->CreateBr(condStmtEnd);
+      info->irBuilder->CreateBr(condStmtEnd);
       info->lvt->removeLayer();
     }
 
     func->getBasicBlockList().push_back(condStmtEnd);
-    info->builder->SetInsertPoint(condStmtEnd);
+    info->irBuilder->SetInsertPoint(condStmtEnd);
 
     info->lvt->removeLayer();
 #endif
@@ -284,7 +283,7 @@ GenRet GotoStmt::codegen() {
     info->cStatements.push_back("goto " + label->codegen().c + ";\n");
   } else {
 #ifdef HAVE_LLVM
-    llvm::Function *func = info->builder->GetInsertBlock()->getParent();
+    llvm::Function *func = info->irBuilder->GetInsertBlock()->getParent();
 
     const char *cname;
     if(isDefExpr(label)) {
@@ -300,14 +299,14 @@ GenRet GotoStmt::codegen() {
       info->lvt->addBlock(cname, blockLabel);
     }
 
-    info->builder->CreateBr(blockLabel);
+    info->irBuilder->CreateBr(blockLabel);
 
     getFunction()->codegenUniqueNum++;
 
     llvm::BasicBlock *afterGoto = llvm::BasicBlock::Create(
         info->module->getContext(), FNAME("afterGoto"));
     func->getBasicBlockList().push_back(afterGoto);
-    info->builder->SetInsertPoint(afterGoto);
+    info->irBuilder->SetInsertPoint(afterGoto);
 
 #endif
   }

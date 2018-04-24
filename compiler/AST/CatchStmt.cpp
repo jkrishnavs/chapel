@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -72,10 +72,6 @@ void CatchStmt::replaceChild(Expr* old_ast, Expr* new_ast) {
   if (_body == old_ast) {
     _body = toBlockStmt(new_ast);
   }
-}
-
-Expr* CatchStmt::getFirstChild() {
-  return _body;
 }
 
 Expr* CatchStmt::getFirstExpr() {

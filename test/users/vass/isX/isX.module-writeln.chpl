@@ -1798,7 +1798,7 @@ report(isAtomicValue(rng2), "isAtomicValue");
 report(isAtomicType(rng2.type), "isAtomicType");
 writeln("  .");
 
-write("new dmap(new DefaultDist()) (dmp)");
+write("defaultDist (dmp)");
 report(isBool(dmp), "isBool");
 report(isBoolValue(dmp), "isBoolValue");
 report(isBoolType(dmp.type), "isBoolType");
@@ -2963,3 +2963,5 @@ report(isPrimitiveType(siReal.type), "siReal");
 report(isPrimitiveType(aInt.type), "aInt");
 report(isPrimitiveType(aReal.type), "aReal");
 writeln("  .");
+
+delete cInstance;

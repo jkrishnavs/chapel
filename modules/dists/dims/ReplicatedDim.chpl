@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -34,7 +34,7 @@ This Replicated dimension specifier is for use with the
 The dimension of a domain or array for which this specifier is used
 has a *replicand* for each element of ``targetLocales``
 in the same dimension. This is similar to the Replicated distribution
-(:class:`ReplicatedDist`). The dimension specifies differs
+(:class:`Replicated`). The dimension specifies differs
 in that it always accesses the local replicand, whereas the Replicated
 distribution accesses all replicands in certain cases, as specified there.
 
@@ -222,13 +222,6 @@ proc ReplicatedDim.dsiNewRectangularDom1d(type idxType, param stridable: bool,
 // This might get renamed in the future.
 proc ReplicatedDim.toString()
   return "ReplicatedDim(" + numLocales:string + ")";
-
-// REQ-2 create a 1-d global distribution descriptor that
-// describes a reindexing of 'this' from 'oldRange' to 'newRange'.
-// This is the 1-d counterpart of dsiCreateReindexDist().
-proc ReplicatedDim.dsiCreateReindexDist1d(newRange: range(?), oldRange: range(?)) {
-  return this;
-}
 
 // REQ is this a replicated distribution?
 proc Replicated1dom.dsiIsReplicated1d() param return true;

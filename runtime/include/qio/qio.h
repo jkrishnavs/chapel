@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -52,7 +52,6 @@ typedef enum {
   QIO_FDFLAG_READABLE = 2,
   QIO_FDFLAG_WRITEABLE = 4,
   QIO_FDFLAG_SEEKABLE = 8,
-  //QIO_FDFLAG_CLOSED = 16, // means channel/file was closed.
 } qio_fdflag_t;
 
 typedef uint32_t qio_hint_t;
@@ -73,11 +72,6 @@ typedef uint32_t qio_hint_t;
 #ifndef FTYPE_CURL
 #define FTYPE_CURL 3
 #endif
-
-// So that we can free c_strings from Chapel
-// This is temporary for now, one Sung's 'string_free' function goes in, this
-// and the use of it in IO.chpl can go away.
-#define qio_free_string(str) qio_free((char*)str)
 
 // The qio lock must be re-entrant in order to handle
 // e.g. qio_printf, which has will lock the lock, then
@@ -498,6 +492,7 @@ typedef struct qio_file_s {
   void* file_info; // Holds the file information (as a user defined struct)
 
   qio_fdflag_t fdflags;
+  bool closed;
   qio_hint_t hints;
 
   int64_t initial_length;
@@ -1271,6 +1266,9 @@ qioerr qio_channel_end_peek_cached(const int threadsafe, qio_channel_t* ch, void
 
   return err;
 }
+
+qioerr qio_channel_advance_past_byte(const int threadsafe, qio_channel_t* ch, int byte);
+
 qioerr qio_channel_begin_peek_buffer(const int threadsafe, qio_channel_t* ch, int64_t require, int writing, qbuffer_t** buf_out, qbuffer_iter_t* start_out, qbuffer_iter_t* end_out);
 
 qioerr qio_channel_end_peek_buffer(const int threadsafe, qio_channel_t* ch, int64_t advance);

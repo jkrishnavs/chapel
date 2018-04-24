@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 # 
 # The entirety of this work is licensed under the Apache License,
@@ -25,6 +25,9 @@ CRAYPE_GEN_CFLAGS += -hnomessage=186
 # certain cases of __asm__
 CRAYPE_GEN_CFLAGS += -hnomessage=3140
 
+# Suppress warnings about floating-point value cannot be represented exactly.
+CRAYPE_GEN_CFLAGS += -hnomessage=1046
+
 # Could set CRAYPE_COMP_CXXFLAGS, CRAYPE_GEN_CFLAGS
 
 FAST_FLOAT_GEN_CFLAGS = -hfp2
@@ -43,16 +46,13 @@ CXX11_STD := -h std=c++11
 # if execution time becomes too slow with -O0.
 NO_OPT_CFLAGS += -O0
 
-#
-# The current Cray compiler does not compile GASNet cleanly, so we have
-# to compile GASNet code using the gnu version instead
-#
-MODULECMD = /opt/modules/$(MODULE_VERSION)/bin/modulecmd sh
-
-# this appears to not be needed recently
-# it was added in 2009, see a89bf917ae3102c7ce3544ac3be10b7b4e9fa76c
-#ENSURE_GASNET_COMPATIBLE_COMPILER = eval `$(MODULECMD) swap PrgEnv-cray PrgEnv-gnu` &&
+ifdef CHPL_COMM_DEBUG
+CHPL_GASNET_MORE_CFLAGS += -O0 -UNDEBUG
+endif
 
 include $(CHPL_MAKE_HOME)/make/compiler/Makefile.cray-prgenv
 
-
+# Certain versions of CCE have had difficulty with high levels of
+# interprocedural analysis.  We conservatively back off slightly in
+# case someone happens to be using one of those versions.
+OPT_CFLAGS += -hipa2

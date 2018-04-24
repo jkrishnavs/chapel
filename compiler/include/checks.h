@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -38,7 +38,6 @@ void check_resolve();
 void check_resolveIntents();
 void check_checkResolved();
 void check_replaceArrayAccessesWithRefTemps();
-void check_processIteratorYields();
 void check_flattenFunctions();
 void check_cullOverReferences();
 void check_lowerErrorHandling();
@@ -53,7 +52,6 @@ void check_scalarReplace();
 void check_refPropagation();
 void check_copyPropagation();
 void check_deadCodeElimination();
-void check_removeWrapRecords();
 void check_removeEmptyRecords();
 void check_localizeGlobals();
 void check_loopInvariantCodeMotion();

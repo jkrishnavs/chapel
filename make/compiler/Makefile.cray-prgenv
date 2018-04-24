@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 # 
 # The entirety of this work is licensed under the Apache License,
@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# PrgEnv settings for Cray X series (XC, XE, XK, XT)
+# PrgEnv settings for Cray X series (XC, XE, XK)
 
 # This file is not used for Cray CS machines
 
@@ -33,15 +33,6 @@ RANLIB = ranlib
 # flags
 #
 
-# gcc 5.1 introduced a new libstdc++ ABI to conform with the C11 standard, but
-# it is incompatible with the old ABI. If Chapel third-party/runtime C++ code
-# (e.g. re2) is built with the new ABI, the generated code must also use the
-# new ABI or we'll get link errors. However, it's possible for a user to use an
-# older version of gcc than the one used to build the runtime/third-party, so
-# we force the use of the old ABI so our libs can be linked with code that's
-# using either ABI.
-CXXFLAGS += -D_GLIBCXX_USE_CXX11_ABI=0
-
 DEBUG_CFLAGS = -g
 OPT_CFLAGS = -O3
 
@@ -55,10 +46,19 @@ GEN_DYNAMIC_FLAG = -dynamic
 LIB_STATIC_FLAG =
 LIB_DYNAMIC_FLAG = -shared
 
-# With locale models other than 'flat' we will need libnuma.  That is
-# so far available only in .so form, but the PrgEnv compilers default
-# to forcing static linking.  So, override them in this case.
+#
+# Normally we let the PrgEnv compilers choose the linking mode, but in
+# some circumstances we push dynamic linking as the default.
+#
 ifneq ($(CHPL_MAKE_LOCALE_MODEL), flat)
+# With locale models other than 'flat' we will need libnuma.  That is
+# so far available only in .so form, so override them in this case.
+RUNTIME_LFLAGS += -dynamic
+else ifeq ($(CHPL_MAKE_COMM), ofi)
+# libfabric calls dlopen() and getaddrinfo().  With static linking, the
+# references to these cause link-time warnings that the corresponding
+# dynamic libraries will be required at execution time, so default to
+# dynamic linking to avoid these warnings.
 RUNTIME_LFLAGS += -dynamic
 endif
 
@@ -76,8 +76,12 @@ SPECIALIZE_CFLAGS =
 export PE_PKGCONFIG_PRODUCTS := PE_CHAPEL:$(PE_PKGCONFIG_PRODUCTS)
 export PE_CHAPEL_MODULE_NAME := chapel
 
-# ugni and gasnet-{aries, gemini} require pmi and ugni
+# ugni, ofi-gni and gasnet-{aries, gemini} require pmi and ugni
 ifeq ($(CHPL_MAKE_COMM), ugni)
+export PE_CHAPEL_PKGCONFIG_LIBS := cray-pmi:cray-ugni:$(PE_CHAPEL_PKGCONFIG_LIBS)
+endif
+ifeq ($(CHPL_MAKE_COMM), ofi)
+# Don't need to add ugni, because it will be added by libfabric
 export PE_CHAPEL_PKGCONFIG_LIBS := cray-pmi:cray-ugni:$(PE_CHAPEL_PKGCONFIG_LIBS)
 endif
 ifeq ($(CHPL_MAKE_COMM), gasnet)

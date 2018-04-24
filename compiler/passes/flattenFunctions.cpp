@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -26,7 +26,7 @@
 #include "stmt.h"
 #include "stlUtil.h"
 
-static void flattenNestedFunctions(Vec<FnSymbol*>& nestedFunctions);
+static void markTaskFunctionsInIterators(Vec<FnSymbol*>& nestedFunctions);
 
 void flattenFunctions() {
   Vec<FnSymbol*> nestedFunctions;
@@ -37,8 +37,10 @@ void flattenFunctions() {
     }
   }
 
+  markTaskFunctionsInIterators(nestedFunctions);
   flattenNestedFunctions(nestedFunctions);
 }
+
 
 void flattenNestedFunction(FnSymbol* nestedFunction) {
   if (isFnSymbol(nestedFunction->defPoint->parentSymbol)) {
@@ -49,6 +51,28 @@ void flattenNestedFunction(FnSymbol* nestedFunction) {
     flattenNestedFunctions(nestedFunctions);
   }
 }
+
+static void markTaskFunctionsInIterators(Vec<FnSymbol*>& nestedFunctions) {
+
+  forv_Vec(FnSymbol, fn, nestedFunctions) {
+    FnSymbol* curFn = fn;
+    while (curFn && isTaskFun(curFn)) {
+      curFn = toFnSymbol(curFn->defPoint->parentSymbol);
+    }
+    // Now curFn is NULL or the first not-a-task function
+    if (curFn && curFn->isIterator()) {
+      // Mark all of the inner task functions
+      IteratorInfo* ii = curFn->iteratorInfo;
+      curFn = fn;
+      while (curFn && isTaskFun(curFn)) {
+        curFn->addFlag(FLAG_TASK_FN_FROM_ITERATOR_FN);
+        curFn->iteratorInfo = ii;
+        curFn = toFnSymbol(curFn->defPoint->parentSymbol);
+      }
+    }
+  }
+}
+
 
 //
 // returns true if the symbol is defined in an outer function to fn
@@ -75,18 +99,15 @@ isOuterVar(Symbol* sym, FnSymbol* fn, Symbol* parent = NULL) {
 //
 static void
 findOuterVars(FnSymbol* fn, SymbolMap* uses) {
-  std::vector<BaseAST*> asts;
+  std::vector<SymExpr*> SEs;
+  collectSymExprs(fn, SEs);
 
-  collect_asts(fn, asts);
-
-  for_vector(BaseAST, ast, asts) {
-    if (SymExpr* symExpr = toSymExpr(ast)) {
+  for_vector(SymExpr, symExpr, SEs) {
       Symbol* sym = symExpr->symbol();
 
       if (isLcnSymbol(sym) && isOuterVar(sym, fn)) {
         uses->put(sym,gNil);
       }
-    }
   }
 }
 
@@ -130,6 +151,16 @@ passByRef(Symbol* sym) {
   if (sym->isRef()) return true;
 
   Type* type = sym->type;
+
+  //
+  // BHARSH: 2017-10-13: By passing ICs by value, it will be easier later in
+  // the pipeline to scalar replace or hoist them. This is hardly the ideal
+  // place for this 'optimization', but it's easier than revamping
+  // scalarReplacement or iterators.
+  //
+  if (type->symbol->hasFlag(FLAG_ITERATOR_CLASS)) {
+    return false;
+  }
 
   if (sym->hasFlag(FLAG_ARG_THIS) == true &&
       passableByVal(type)         == true) {
@@ -202,14 +233,14 @@ addVarsToFormals(FnSymbol* fn, SymbolMap* vars) {
         // no matter the type. This enables e.g. a task function processing
         // array elements to correctly set array argument intent.
         IntentTag temp = INTENT_REF_MAYBE_CONST;
-        if (sym->hasFlag(FLAG_CONST)) {
+        if (sym->isConstant()) {
           temp = INTENT_CONST_REF;
         }
         intent = concreteIntent(temp, type);
         type = type->getValType()->refType;
       } else {
         IntentTag temp = INTENT_BLANK;
-        if (sym->hasFlag(FLAG_CONST) && sym->isRef()) {
+        if (sym->isConstant() && sym->isRef()) {
           // Allows for RVF later
           temp = INTENT_CONST_REF;
         }
@@ -217,25 +248,16 @@ addVarsToFormals(FnSymbol* fn, SymbolMap* vars) {
       }
 
       SET_LINENO(sym);
-      //
-      // BLC: TODO: This routine is part of the reason that we aren't
-      // consistent in representing 'ref' argument intents in the AST.
-      // In particular, the code above uses a certain test to decide
-      // to pass something by reference and changes the formal's type
-      // to the corresponding reference type if it believes it should.
-      // But the blankIntentForType() call below (and the INTENT_BLANK
-      // that was used before it) may pass the argument by 'const in'
-      // which seems inconsistent (because most 'ref' formals reflect
-      // INTENT_REF in the current compiler).  My current thought is
-      // to only indicate ref-ness through intents for most of the
-      // compilation (at a Chapel level) and only worry about ref
-      // types very close to code generation, primarily to avoid
-      // inconsistencies like this and keep things more
-      // uniform/simple; but we haven't made this switch yet.
-      //
       ArgSymbol* arg = new ArgSymbol(intent, sym->name, type);
       if (sym->hasFlag(FLAG_ARG_THIS))
-        arg->addFlag(FLAG_ARG_THIS);
+          arg->addFlag(FLAG_ARG_THIS);
+      if (sym->hasFlag(FLAG_REF_TO_IMMUTABLE))
+          arg->addFlag(FLAG_REF_TO_IMMUTABLE);
+      if (sym->hasFlag(FLAG_CONST_DUE_TO_TASK_FORALL_INTENT))
+          arg->addFlag(FLAG_CONST_DUE_TO_TASK_FORALL_INTENT);
+      if (sym->hasFlag(FLAG_COFORALL_INDEX_VAR))
+          arg->addFlag(FLAG_COFORALL_INDEX_VAR);
+
       fn->insertFormalAtTail(new DefExpr(arg));
       vars->put(sym, arg);
     }
@@ -272,15 +294,7 @@ replaceVarUsesWithFormals(FnSymbol* fn, SymbolMap* vars) {
 
               if (arg->isRef()                            &&
                   form->isRef()                           &&
-                  arg->getValType() == form->getValType() &&
-                  // BHARSH TODO: Can we remove that now that
-                  // removeWrapRecords is gone?
-                  // I observed some increase comm-counts with stream, but
-                  // maybe we shouldn't have deref'd before
-                  !isRecordWrappedType(form->getValType())) {
-                // removeWrapRecords can modify the formal to have the
-                // 'const in' intent. For now it's easier to insert the
-                // DEREF here.
+                  arg->getValType() == form->getValType()) {
                 canPassToFn = true;
               } else if (arg->type == form->type) {
                 canPassToFn = true;
@@ -330,10 +344,14 @@ addVarsToActuals(CallExpr* call, SymbolMap* vars, bool outerCall) {
         // This is only a performance issue.
         INT_ASSERT(!sym->hasFlag(FLAG_SHOULD_NOT_PASS_BY_REF));
         /* NOTE: See note above in addVarsToFormals() */
-        VarSymbol* tmp = newTemp(sym->type->getValType()->refType);
-        call->getStmtExpr()->insertBefore(new DefExpr(tmp));
-        call->getStmtExpr()->insertBefore(new CallExpr(PRIM_MOVE, tmp, new CallExpr(PRIM_ADDR_OF, sym)));
-        call->insertAtTail(tmp);
+        if (sym->isRef())
+          call->insertAtTail(sym);
+        else {
+          VarSymbol* tmp = newTemp(sym->type->getValType()->refType);
+          call->getStmtExpr()->insertBefore(new DefExpr(tmp));
+          call->getStmtExpr()->insertBefore(new CallExpr(PRIM_MOVE, tmp, new CallExpr(PRIM_ADDR_OF, sym)));
+          call->insertAtTail(tmp);
+        }
       } else {
         call->insertAtTail(sym);
       }
@@ -341,8 +359,7 @@ addVarsToActuals(CallExpr* call, SymbolMap* vars, bool outerCall) {
   }
 }
 
-
-static void flattenNestedFunctions(Vec<FnSymbol*>& nestedFunctions) {
+void flattenNestedFunctions(Vec<FnSymbol*>& nestedFunctions) {
   compute_call_sites();
 
   Vec<FnSymbol*> outerFunctionSet;

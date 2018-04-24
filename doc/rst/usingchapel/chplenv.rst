@@ -33,7 +33,7 @@ CHPL_HOME
 
     .. code-block:: sh
 
-        export CHPL_HOME=~/chapel-1.15.0
+        export CHPL_HOME=~/chapel-1.17.0
 
    .. note::
      This, and all other examples in the Chapel documentation, assumes you're
@@ -460,7 +460,8 @@ CHPL_GMP
        =======  ============================================================
        Value     Description
        =======  ============================================================
-       system   assume GMP is already installed (#include gmp.h, -lgmp)
+       system   use a system install of GMP
+                (#include gmp.h, -lgmp)
        none     do not build GMP support into the Chapel runtime
        gmp      use the GMP distribution bundled with Chapel in third-party
        =======  ============================================================
@@ -490,24 +491,58 @@ CHPL_HWLOC
 ~~~~~~~~~~
    Optionally, the ``CHPL_HWLOC`` environment variable can select between
    no hwloc support or using the hwloc package distributed with Chapel in
-   third-party.  Note that hwloc is only used by the qthreads tasking layer,
-   and does not need to be built for other tasking layers.  Current options
-   are:
+   third-party.
 
-       ======= ==============================================================
-       Value   Description
-       ======= ==============================================================
-       none    do not build hwloc support into the Chapel runtime
-       hwloc   use the hwloc distribution bundled with Chapel in third-party
-       ======= ==============================================================
+       ======== ==============================================================
+       Value    Description
+       ======== ==============================================================
+       none     do not build hwloc support into the Chapel runtime
+       hwloc    use the hwloc distribution bundled with Chapel in third-party
+       ======== ==============================================================
 
-   If unset, ``CHPL_HWLOC`` defaults to ``hwloc`` if :ref:`readme-chplenv.CHPL_TASKS` is
-   ``qthreads``.  In all other cases it defaults to ``none``.  In the unlikely
-   event the bundled hwloc distribution does not build successfully, it should
-   still be possible to use qthreads.  To do this, manually set ``CHPL_HWLOC``
-   to ``none`` and rebuild (and please file a bug with the Chapel team.) Note
-   that building without hwloc will have a negative impact on performance.
+   If unset, ``CHPL_HWLOC`` defaults to ``hwloc`` if
+   :ref:`readme-chplenv.CHPL_TASKS` is ``qthreads``.  In all other cases
+   it defaults to ``none``.  In the unlikely event the bundled hwloc
+   distribution does not build successfully, it should still be possible
+   to use qthreads.  To do this, manually set ``CHPL_HWLOC`` to ``none``
+   and rebuild (and please file a bug with the Chapel team.) Note that
+   building without hwloc will have a negative impact on performance.
 
+   .. (comment) CHPL_HWLOC=system is also available but it is only
+       intended to support packaging.
+       Using CHPL_HWLOC=system is not regularly tested and may not work
+       for you. Chapel depends on hwloc features that are not available in
+       all versions. For best results, we recommend using the bundled hwloc
+       if possible.
+
+..  (comment) CHPL_JEMALLOC is not a user-facing feature
+
+   .. _readme-chplenv.CHPL_JEMALLOC:
+
+   CHPL_JEMALLOC
+   ~~~~~~~~~~~~~
+      Optionally, the ``CHPL_JEMALLOC`` environment variable can select
+      between no jemalloc, or using the jemalloc distributed with Chapel in
+      third-party. This setting is intended to elaborate upon
+      ``CHPL_MEM=jemalloc``.
+
+          ======== ==============================================================
+          Value    Description
+          ======== ==============================================================
+          none     do not build or use jemalloc
+          jemalloc use the jemalloc distribution bundled with Chapel in third-party
+          ======== ==============================================================
+
+      If unset, ``CHPL_JEMALLOC`` defaults to ``jemalloc`` if
+      :ref:`readme-chplenv.CHPL_MEM` is ``jemalloc``.  In all other cases it
+      defaults to ``none``.
+
+   .. (comment) CHPL_JEMALLOC=system is also available but it is only
+       intended to support packaging.
+       Using CHPL_JEMALLOC=system is not regularly tested and may not work
+       for you. Chapel depends on jemalloc features that are not available in
+       all versions. For best results, we recommend using the bundled jemalloc
+       if possible.
 
 .. _readme-chplenv.CHPL_REGEXP:
 
@@ -589,52 +624,22 @@ CHPL_LLVM
    If unset, ``CHPL_LLVM`` defaults to ``llvm`` if you've already installed
    llvm in third-party and ``none`` otherwise.
 
-   Chapel currently supports LLVM 3.7.
+   Chapel currently supports LLVM 6.0.  Earlier versions of LLVM
+   required the use of internal Clang header files.  LLVM 5.0 has a
+   known optimization bug that affects Chapel.
 
    .. note::
 
-       We have had success with these commands to install LLVM 3.7 dependencies
+       We have had success with this procedure to install LLVM 6.0
+       dependencies on Ubuntu.
+
+       First, place the appropriate lines from ``https://apt.llvm.org``
+       into ``/etc/apt/sources.list.d/llvm-toolchain.list``, then do
+       the following.
 
         .. code-block:: sh
 
-            # Fedora 25
-            dnf install llvm3.7 llvm3.7-devel llvm3.7-static zlib-static
-
-            # Ubuntu 16.04
-            apt-get install llvm-3.7-dev llvm-3.7 clang-3.7 libclang-3.7-dev libedit-dev
-
-
-.. _readme-chplenv.CHPL_WIDE_POINTERS:
-
-CHPL_WIDE_POINTERS
-~~~~~~~~~~~~~~~~~~
-   Optionally, the ``CHPL_WIDE_POINTERS`` environment variable can be used to
-   specify the wide pointer format for multilocale programs.  Current options
-   are:
-
-       ======== =============================================================
-       Value    Description
-       ======== =============================================================
-       struct   store wide pointers in structures which may span more than
-                one word
-       nodeN    ("N" a number, 2 <= N <= 60) store wide pointers in single
-                words, with N bits used to store the node (top level locale)
-                number and the rest containing the address on that node
-       ======== =============================================================
-
-   ``CHPL_WIDE_POINTERS`` is used to select between two modes of operation.  One is
-   universally applicable; the other has restricted applicability but may
-   reduce remote communication.
-
-   If unset, ``CHPL_WIDE_POINTERS`` defaults to ``struct``.  This setting works in
-   all situations and in particular, it is compatible with all locale models
-   including the hierarchical ones.  The ``nodeN`` option does not work with
-   hierarchical locale models and is only useful with the LLVM backend, which
-   is currently experimental.  However, when used, it allows LLVM to understand
-   and optimize remote transfers, potentially reducing the amount of
-   communication a program performs.  See :ref:`readme-llvm` for more
-   information about ``CHPL_WIDE_POINTERS=nodeN``.
-
+            apt-get install llvm-6.0-dev llvm-6.0 llvm-6.0-tools clang-6.0 libclang-6.0-dev libedit-dev
 
 .. _readme-chplenv.CHPL_UNWIND:
 
@@ -714,19 +719,23 @@ Below is an example of a Chapel configuration file with comments:
     CHPL_GMP=system
 
 
+To confirm the configuration file is written correctly, you can run
+``printchplenv --all --overrides``, which will show a list of variables that are
+currently being overridden. Values followed by a
+``+`` have been overridden by the Chapel configuration file, whereas
+values followed by a ``*`` have been overridden by an environment variable.
 
 Generating Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
-To generate a configuration file, use ``printchplenv`` or
-``./configure``.
+To generate a configuration file based on the current configuration, use
+``printchplenv`` or ``./configure``.
 
-When using ``printchplenv``, run it with ``--simple`` or
-``--overrides`` to get a format compatible with Chapel configuration
-files.
+When using ``printchplenv``, run it with the ``--simple`` format flag to get a
+format compatible with Chapel configuration files.
 
-The ``printchplenv --overrides`` flag can be used to print the variables
+The ``--overrides`` filter flag can be used to print only the variables
 currently overridden by either environment variables or Chapel
 configuration file.
 
@@ -734,15 +743,17 @@ For example, to save the current overrides into a Chapel configuration file:
 
 .. code-block:: sh
 
-    printchplenv --overrides > ~/.chplconfig
+    printchplenv --all --simple --overrides > ~/.chplconfig
 
-The ``printchplenv --simple`` flag can be used to print all the variables
+The ``printchplenv --all --simple`` flag can be used to print all the variables
 of the current configuration. For example:
 
 .. code-block:: sh
 
-    printchplenv --simple > ~/.chplconfig
+    printchplenv --all --simple > ~/.chplconfig
 
+For more information on using ``printchplenv``, see the ``printchplenv -h``
+output.
 
 Alternatively, the ``./configure`` script will generate a ``chplconfig``
 file. See :ref:`readme-installing`.

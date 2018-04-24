@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -75,8 +75,8 @@ void WhileStmt::verify()
   if (BlockStmt::blockInfoGet() != 0)
     INT_FATAL(this, "WhileStmt::verify. blockInfo is not NULL");
 
-  if (modUses                   != 0)
-    INT_FATAL(this, "WhileStmt::verify. modUses   is not NULL");
+  if (useList                   != 0)
+    INT_FATAL(this, "WhileStmt::verify. useList   is not NULL");
 
   if (byrefVars                 != 0)
     INT_FATAL(this, "WhileStmt::verify. byrefVars is not NULL");
@@ -253,9 +253,8 @@ void WhileStmt::checkConstLoops()
     {
       // There was no update of the loop condition variable in the
       // body of the loop.
-      USR_WARN(condSym,
-               "Infinite loop? The loop condition variable is never "
-               "updated within the loop.");
+      // It could be an infinite loop, or it could have a
+      // 'break' or 'return' in it.
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -27,6 +27,7 @@
 // duplication. If necessary, a locale model using this file
 // should feel free to reimplement them in some other way.
 module LocaleModelHelpRuntime {
+  use ChapelStandard;
 
   // The chpl_localeID_t type is used internally.  It should not be exposed to
   // the user.  The runtime defines the actual type, as well as a functional
@@ -40,6 +41,7 @@ module LocaleModelHelpRuntime {
     // to see its contents.
   };
 
+  // runtime stuff about argument bundles
   extern record chpl_comm_on_bundle_t {
   };
 
@@ -104,6 +106,7 @@ module LocaleModelHelpRuntime {
                                          args: chpl_comm_on_bundle_p, args_size: size_t,
                                          subloc_id: int): void;
   extern proc chpl_ftable_call(fn: int, args: chpl_comm_on_bundle_p): void;
+  extern proc chpl_ftable_call(fn: int, args: chpl_task_bundle_p): void;
 
   //////////////////////////////////////////
   //
@@ -133,8 +136,15 @@ module LocaleModelHelpRuntime {
                              ref tlist: c_void_ptr, // task list
                              tlist_node_id: int     // task list owner node
                             ) {
-    chpl_task_addToTaskList(fn, args, args_size,
-                            subloc_id, tlist, tlist_node_id, true);
+    var tls = chpl_task_getChapelData();
+    var isSerial = chpl_task_data_getSerial(tls);
+    if isSerial {
+      chpl_ftable_call(fn, args);
+    } else {
+      chpl_task_data_setup(args, tls);
+      chpl_task_addToTaskList(fn, args, args_size,
+                              subloc_id, tlist, tlist_node_id, true);
+    }
   }
 
   //
@@ -150,9 +160,16 @@ module LocaleModelHelpRuntime {
                               ref tlist: c_void_ptr, // task list
                               tlist_node_id: int     // task list owner node
                              ) {
-    chpl_task_addToTaskList(fn, args, args_size,
-                            subloc_id, tlist, tlist_node_id, false);
-   }
+    var tls = chpl_task_getChapelData();
+    var isSerial = chpl_task_data_getSerial(tls);
+    if isSerial {
+      chpl_ftable_call(fn, args);
+    } else {
+      chpl_task_data_setup(args, tls);
+      chpl_task_addToTaskList(fn, args, args_size,
+                              subloc_id, tlist, tlist_node_id, false);
+     }
+  }
 
   //
   // make sure all tasks in a list have an opportunity to run
@@ -160,6 +177,9 @@ module LocaleModelHelpRuntime {
   pragma "insert line file info"
   export
   proc chpl_taskListExecute(ref task_list: c_void_ptr) {
+    // note: if we're serial, all of the tasks have already
+    // been executed. Tasking layers should tolerate empty task
+    // lists for this reason.
     chpl_task_executeTasksInList(task_list);
   }
 

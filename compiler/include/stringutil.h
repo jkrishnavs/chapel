@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include <string>
+#include <vector>
 
 const char* astr(const char* s1,
                  const char* s2,
@@ -61,5 +62,7 @@ inline bool        isEmpty(std::string s);
 inline std::string ltrim(std::string s);
        std::string ltrimAllLines(std::string s);
        int         minimumPrefix(std::string s);
+
+void readArgsFromString(std::string s, std::vector<std::string>& args);
 
 #endif

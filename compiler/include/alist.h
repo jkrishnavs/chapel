@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -45,6 +45,8 @@ class AList {
   // other ways to get elements from the list
   Expr* only(void);            // return the single element in a list
   Expr* get(int index)  const; // get the index-th element in a list
+
+  bool empty();
 
   // add element(s) at beginning of list
   void insertAtHead(Expr* new_ast);

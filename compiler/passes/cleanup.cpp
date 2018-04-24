@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -40,8 +40,6 @@ static void normalizeNestedFunctionExpressions(FnSymbol* fn);
 
 static void normalizeLoopIterExpressions(FnSymbol* fn);
 
-static void flattenScopelessBlock(BlockStmt* block);
-
 static void destructureTupleAssignment(CallExpr* call);
 
 static void flattenPrimaryMethod(TypeSymbol* ts, FnSymbol* fn);
@@ -50,7 +48,7 @@ static void applyAtomicTypeToPrimaryMethod(TypeSymbol* ts, FnSymbol* fn);
 
 static void changeCastInWhere(FnSymbol* fn);
 
-static void addParensToDeinitFns(FnSymbol* fn);
+static void fixupVoidReturnFn(FnSymbol* fn);
 
 void cleanup() {
   std::vector<ModuleSymbol*> mods;
@@ -93,7 +91,7 @@ static void cleanup(ModuleSymbol* module) {
 
     if (BlockStmt* block = toBlockStmt(ast)) {
       if (block->blockTag == BLOCK_SCOPELESS && block->list != NULL) {
-        flattenScopelessBlock(block);
+        block->flattenAndRemove();
       }
 
     } else if (CallExpr* call = toCallExpr(ast)) {
@@ -110,7 +108,7 @@ static void cleanup(ModuleSymbol* module) {
         }
 
         changeCastInWhere(fn);
-        addParensToDeinitFns(fn);
+        fixupVoidReturnFn(fn);
       }
     }
   }
@@ -134,6 +132,21 @@ static void normalizeNestedFunctionExpressions(FnSymbol* fn) {
     def->replace(new UnresolvedSymExpr(fn->name));
 
     ct->addDeclarations(def);
+
+  } else if (ArgSymbol* arg = toArgSymbol(def->parentSymbol)) {
+    if (fn->hasFlag(FLAG_IF_EXPR_FN) && arg->typeExpr == NULL) {
+      USR_FATAL_CONT(fn,
+                     "cannot currently use an if expression as the default "
+                     "value for an argument when the argument's type is "
+                     "inferred");
+
+    } else {
+      Expr* stmt = def->getStmtExpr();
+
+      def->replace(new UnresolvedSymExpr(fn->name));
+
+      stmt->insertBefore(def);
+    }
 
   } else {
     Expr* stmt = def->getStmtExpr();
@@ -182,22 +195,6 @@ static void normalizeLoopIterExpressions(FnSymbol* fn) {
 
 /************************************* | **************************************
 *                                                                             *
-* Move the statements in a block out of the block                             *
-*                                                                             *
-************************************** | *************************************/
-
-static void flattenScopelessBlock(BlockStmt* block) {
-  for_alist(stmt, block->body) {
-    stmt->remove();
-
-    block->insertBefore(stmt);
-  }
-
-  block->remove();
-}
-
-/************************************* | **************************************
-*                                                                             *
 * destructureTupleAssignment                                                  *
 *                                                                             *
 *    (i,j) = expr;    ==>    i = expr(1);                                     *
@@ -220,7 +217,7 @@ static void destructureTupleAssignment(CallExpr* call) {
   CallExpr* parent = toCallExpr(call->parentExpr);
 
   if (parent               != NULL &&
-      parent->isNamed("=") == true &&
+      parent->isNamedAstr(astrSequals) &&
       parent->get(1)       == call) {
     VarSymbol* rtmp = newTemp();
     Expr*      S1   = new CallExpr(PRIM_MOVE, rtmp, parent->get(2)->remove());
@@ -240,6 +237,54 @@ static void destructureTupleAssignment(CallExpr* call) {
     S2->remove();
   }
 }
+
+
+//
+// If call is an empty return statement, e.g. "return;"
+// then change it into a return of the 'void' symbol: "return _void;"
+// and mark the function it is in with FLAG_VOID_NO_RETURN_VALUE.
+//
+static void insertVoidReturnSymbols(CallExpr* call) {
+  INT_ASSERT(call->isPrimitive(PRIM_RETURN));
+
+  if (call->numActuals() == 0) {
+    FnSymbol* fn = call->getFunction();
+    INT_ASSERT(fn);
+    call->insertAtTail(gVoid);
+    fn->addFlag(FLAG_VOID_NO_RETURN_VALUE);
+  }
+}
+
+//
+// Mark functions with no return statements and functions with only empty
+// return statements with FLAG_VOID_NO_RETURN_VALUE. Change empty return
+// statements to return the value '_void'.
+//
+static void fixupVoidReturnFn(FnSymbol* fn) {
+  std::vector<CallExpr*> callExprs;
+  collectCallExprs(fn, callExprs);
+  bool foundReturn = false;
+  // Pass expandExternArrayCalls builds a wrapper for the extern function
+  // and returns the value the extern function returned.  It marks the
+  // extern function with FLAG_EXTERN_FN_WITH_ARRAY_ARG, which tells us
+  // that we need to be able to handle the wrapper returning the result
+  // of a call to it.  If the extern function had a 'void' return, treat
+  // it as a void value.
+  if (fn->hasFlag(FLAG_EXTERN_FN_WITH_ARRAY_ARG)) {
+    return;
+  }
+
+  for_vector(CallExpr, call, callExprs) {
+    if (call->isPrimitive(PRIM_RETURN)) {
+      foundReturn = true;
+      insertVoidReturnSymbols(call);
+    }
+  }
+  if (!foundReturn) {
+    fn->addFlag(FLAG_VOID_NO_RETURN_VALUE);
+  }
+}
+
 
 static void insertDestructureStatements(Expr*     S1,
                                         Expr*     S2,
@@ -359,18 +404,5 @@ static void changeCastInWhere(FnSymbol* fn) {
         }
       }
     }
-  }
-}
-
-/************************************* | **************************************
-*                                                                             *
-* Make paren-less decls act as paren-ful.                                     *
-* Otherwise "arg.deinit()" in proc chpl__delete(arg) would not resolve.       *
-*                                                                             *
-************************************** | *************************************/
-
-static void addParensToDeinitFns(FnSymbol* fn) {
-  if (fn->hasFlag(FLAG_DESTRUCTOR)) {
-    fn->removeFlag(FLAG_NO_PARENS);
   }
 }

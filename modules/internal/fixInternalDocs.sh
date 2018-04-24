@@ -246,4 +246,17 @@ fixTitle "Chapel Environment Variables" $file
 replace " = AppendExpr.Call09" "" $file
 removeUsage $file
 
-## End of ChapelEnv##
+## End of ChapelEnv ##
+
+## CPtr ##
+
+file="./CPtr.rst"
+removeUsage $file
+
+## End of CPtr ##
+
+## ChapelError ##
+
+file=ChapelError.rst
+fixTitle "Errors" $file
+removeUsage $file

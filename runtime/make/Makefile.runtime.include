@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 # 
 # The entirety of this work is licensed under the Apache License,
@@ -63,6 +63,7 @@ endif
 # Some tasking layers put something in RUNTIME_INCLS first.
 RUNTIME_INCLS += \
         -I. \
+        -I$(CHPL_MAKE_HOME)/modules/packages \
         -I$(RUNTIME_INCLUDE_ROOT)/localeModels/$(CHPL_MAKE_LOCALE_MODEL) \
         -I$(RUNTIME_INCLUDE_ROOT)/localeModels \
         -I$(RUNTIME_INCLUDE_ROOT)/comm/$(CHPL_MAKE_COMM) \
@@ -89,11 +90,24 @@ ifeq ($(RUNTIME_CYGWIN),1)
   RUNTIME_INCLS += -I/usr/include/w32api
 endif
 
-# Add any further includes for memory
+# Add any further includes for memory including jemalloc target memory,
+# when making the launcher.
 MEM_INCLUDE=$(RUNTIME_ROOT)/make/Makefile.runtime.mem-$(CHPL_MAKE_MEM)
 ifneq ($(strip $(wildcard $(MEM_INCLUDE))),)
   include $(MEM_INCLUDE)
 endif
+
+ifeq ($(MAKE_LAUNCHER),1)
+  ifeq ($(CHPL_MAKE_TARGET_MEM),jemalloc)
+    TARGET_MEM_INCLUDE=\
+      $(RUNTIME_ROOT)/make/Makefile.runtime.mem-$(CHPL_MAKE_TARGET_MEM)
+    -include $(TARGET_MEM_INCLUDE)
+  endif
+endif
+
+# Add any further includes for COMM.
+COMM_INCLUDE=$(RUNTIME_ROOT)/make/Makefile.runtime.comm-$(CHPL_MAKE_COMM)
+-include $(COMM_INCLUDE)
 
 # Add any further includes for GMP.
 GMP_INCLUDE=$(RUNTIME_ROOT)/make/Makefile.runtime.gmp-$(CHPL_MAKE_GMP)

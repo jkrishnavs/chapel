@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -51,6 +51,11 @@ module ChapelTaskTable {
   // sort the tasks and indent to show the parent/child relationships, which
   // might be very nice.
   //
+  // This 'plain old data' pragma appears to be necessary for the following
+  // test to work: parallel/begin/stonea/reports.chpl
+  //
+  pragma "plain old data"
+  pragma "use default init"
   record chpldev_Task {
     var state     : taskState;
     var lineno    : uint(32);
@@ -58,6 +63,7 @@ module ChapelTaskTable {
     var tl_info   : uint(64);
   }
   
+  pragma "use default init"
   class chpldev_taskTable_t {
     var dom : domain(chpl_taskID_t, parSafe=false);
     var map : [dom] chpldev_Task;
@@ -158,9 +164,11 @@ module ChapelTaskTable {
     if (chpldev_taskTable == nil) then return;
   
     for taskID in chpldev_taskTable.dom {
-      stderr.writeln("- ", chpl_lookupFilename(chpldev_taskTable.map[taskID].filename):string,
-                     ":",  chpldev_taskTable.map[taskID].lineno,
-                     " is ", chpldev_taskTable.map[taskID].state);
+      try! stderr.writeln(
+             "- ",
+             chpl_lookupFilename(chpldev_taskTable.map[taskID].filename):string,
+             ":",  chpldev_taskTable.map[taskID].lineno,
+             " is ", chpldev_taskTable.map[taskID].state);
     }
   }
   

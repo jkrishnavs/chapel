@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,38 +20,43 @@
 #include "resolveIntents.h"
 
 #include "passes.h"
+#include "resolution.h"
 
 bool intentsResolved = false;
 
 static IntentTag constIntentForType(Type* t) {
-  if (isSyncType(t)          ||
-      isSingleType(t)        ||
-      isRecordWrappedType(t) ||  // domain, array, or distribution
-      isRecord(t)) { // may eventually want to decide based on size
-    return INTENT_CONST_REF;
-  } else if (is_bool_type(t) ||
-             is_int_type(t) ||
-             is_uint_type(t) ||
-             is_real_type(t) ||
-             is_imag_type(t) ||
-             is_complex_type(t) ||
-             is_enum_type(t) ||
-             isClass(t) ||
-             isUnion(t) ||
-             isAtomicType(t) ||
-             t == dtOpaque ||
-             t == dtTaskID ||
-             t == dtFile ||
-             t == dtNil ||
-             t == dtStringC ||
-             t == dtStringCopy ||
-             t == dtCVoidPtr ||
-             t == dtCFnPtr ||
-             t == dtVoid ||
-             // TODO: t->symbol->hasFlag(FLAG_RANGE) ||
-             t->symbol->hasFlag(FLAG_EXTERN)) {
+  if (is_bool_type(t) ||
+      is_int_type(t) ||
+      is_uint_type(t) ||
+      is_real_type(t) ||
+      is_imag_type(t) ||
+      is_complex_type(t) ||
+      is_enum_type(t) ||
+      isClass(t) ||
+      isUnmanagedClassType(t) ||
+      isUnion(t) ||
+      t == dtOpaque ||
+      t == dtTaskID ||
+      t == dtFile ||
+      t == dtNil ||
+      t == dtStringC ||
+      t == dtCVoidPtr ||
+      t == dtCFnPtr ||
+      t == dtVoid ||
+      t->symbol->hasFlag(FLAG_RANGE) ||
+      // MPF: This rule seems odd to me
+      (t->symbol->hasFlag(FLAG_EXTERN) && !isRecord(t))) {
     return INTENT_CONST_IN;
+
+  } else if (isSyncType(t)          ||
+             isSingleType(t)        ||
+             isRecordWrappedType(t) ||  // domain, array, or distribution
+             isAtomicType(t) ||
+             isRecord(t)) { // may eventually want to decide based on size
+    return INTENT_CONST_REF;
+
   }
+
   INT_FATAL(t, "Unhandled type in constIntentForType()");
   return INTENT_CONST;
 }
@@ -80,10 +85,7 @@ bool isTupleContainingRefMaybeConst(Type* t)
 IntentTag blankIntentForType(Type* t) {
   IntentTag retval = INTENT_BLANK;
 
-  if (/*isSyncType(t)                                  ||
-      isSingleType(t)                                ||
-        these should have FLAG_DEFAULT_INTENT_IS_REF) */
-      isAtomicType(t)                                ||
+  if (isAtomicType(t)                                ||
       t->symbol->hasFlag(FLAG_DEFAULT_INTENT_IS_REF)) {
     retval = INTENT_REF;
 
@@ -99,11 +101,12 @@ IntentTag blankIntentForType(Type* t) {
              is_complex_type(t)                      ||
              is_enum_type(t)                         ||
              t == dtStringC                          ||
-             t == dtStringCopy                       ||
              t == dtCVoidPtr                         ||
              t == dtCFnPtr                           ||
              isClass(t)                              ||
+             isUnmanagedClassType(t)                 ||
              isRecord(t)                             ||
+             // Note: isRecord(t) includes range (FLAG_RANGE)
              isUnion(t)                              ||
              t == dtTaskID                           ||
              t == dtFile                             ||
@@ -158,7 +161,9 @@ IntentTag concreteIntent(IntentTag existingIntent, Type* t) {
 }
 
 static IntentTag constIntentForThisArg(Type* t) {
-  if (isRecord(t) || isUnion(t) || t->symbol->hasFlag(FLAG_REF))
+  if (t->symbol->hasFlag(FLAG_RANGE))
+    return INTENT_CONST_IN;
+  else if (isRecord(t) || isUnion(t) || t->symbol->hasFlag(FLAG_REF))
     return INTENT_CONST_REF;
   else
     return INTENT_CONST_IN;
@@ -169,6 +174,9 @@ static IntentTag blankIntentForThisArg(Type* t) {
 
   Type* valType = t->getValType();
 
+  // Range default this intent is const-in
+  if (valType->symbol->hasFlag(FLAG_RANGE))
+    return INTENT_CONST_IN;
   // For user records or types with FLAG_DEFAULT_INTENT_IS_REF_MAYBE_CONST,
   // the intent for this is INTENT_REF_MAYBE_CONST
   //
@@ -238,16 +246,23 @@ void resolveArgIntent(ArgSymbol* arg) {
     } else if (intent == INTENT_IN) {
       // MPF note: check types/range/ferguson/range-begin.chpl
       // if you try to add INTENT_CONST_IN here.
+      //
+      // BHARSH: Update insertWideReferences.fixTupleFormal and the following
+      // test if INTENT_CONST_IN is added here:
+      //   multilocale/bharshbarg/constInTuple.chpl
 
       // Resolution already handled copying for INTENT_IN for
       // records/unions.
       bool addedTmp = (isRecord(arg->type) || isUnion(arg->type));
-      if (toFnSymbol(arg->defPoint->parentSymbol)->hasFlag(FLAG_EXTERN))
+      FnSymbol* fn = toFnSymbol(arg->defPoint->parentSymbol);
+      if (fn->hasFlag(FLAG_EXTERN))
         // Q - should this check arg->type->symbol->hasFlag(FLAG_EXTERN)?
         addedTmp = false;
 
       if (addedTmp) {
-        if (arg->type->symbol->hasFlag(FLAG_COPY_MUTATES))
+        if (arg->type->symbol->hasFlag(FLAG_COPY_MUTATES) ||
+            (formalRequiresTemp(arg, fn) &&
+             shouldAddFormalTempAtCallSite(arg, fn)))
           intent = INTENT_REF;
         else
           intent = constIntentForType(arg->type);
@@ -260,7 +275,22 @@ void resolveArgIntent(ArgSymbol* arg) {
     }
   }
 
+  if (arg->intent != intent) {
+    arg->originalIntent = arg->intent;
+  }
   arg->intent = intent;
+}
+
+static void resolveVarIntent(VarSymbol* sym) {
+  QualifiedType q = sym->qualType();
+  if (q.getQual() == QUAL_UNKNOWN) {
+    if (sym->isRef()) {
+      sym->qual = QUAL_REF;
+    } else {
+      sym->qual = QUAL_VAL;
+    }
+    // TODO also check sym->isConstant() and set one of CONST qualifiers
+  }
 }
 
 void resolveIntents() {
@@ -271,14 +301,10 @@ void resolveIntents() {
   // BHARSH TODO: This shouldn't be necessary, but will be until we fully
   // switch over to qualified types.
   forv_Vec(VarSymbol, sym, gVarSymbols) {
-    QualifiedType q = sym->qualType();
-    if (q.getQual() == QUAL_UNKNOWN) {
-      if (sym->isRef()) {
-        sym->qual = QUAL_REF;
-      } else {
-        sym->qual = QUAL_VAL;
-      }
-    }
+    resolveVarIntent(sym);
+  }
+  forv_Vec(ShadowVarSymbol, sym, gShadowVarSymbols) {
+    resolveVarIntent(sym);
   }
 
   intentsResolved = true;

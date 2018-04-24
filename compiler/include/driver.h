@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -33,7 +33,6 @@ extern int  instantiation_limit;
 
 // optimization control flags
 extern bool fFastFlag;
-extern int  fConditionalDynamicDispatchLimit;
 extern bool fNoBoundsChecks;
 extern bool fNoCopyPropagation;
 extern bool fNoDeadCodeElimination;
@@ -54,6 +53,7 @@ extern bool fEnableTaskTracking;
 extern bool fLLVMWideOpt;
 
 extern bool fNoRemoteValueForwarding;
+extern bool fNoRemoteSerialization;
 extern bool fNoRemoveCopyCalls;
 extern bool fNoScalarReplacement;
 extern bool fNoTupleCopyOpt;
@@ -67,6 +67,7 @@ extern bool fRemoveUnreachableBlocks;
 extern bool fReplaceArrayAccessesWithRefTemps;
 extern int  optimize_on_clause_limit;
 extern int  scalar_replace_limit;
+extern int  inline_iter_yield_limit;
 extern int  tuple_copy_limit;
 
 
@@ -86,7 +87,11 @@ extern const char* CHPL_HOST_PLATFORM;
 extern const char* CHPL_HOST_COMPILER;
 extern const char* CHPL_TARGET_PLATFORM;
 extern const char* CHPL_TARGET_COMPILER;
+extern const char* CHPL_ORIG_TARGET_COMPILER;
 extern const char* CHPL_TARGET_ARCH;
+extern const char* CHPL_RUNTIME_ARCH;
+extern const char* CHPL_TARGET_BACKEND_ARCH;
+extern const char* CHPL_TARGET_ARCH_FLAG;
 extern const char* CHPL_LOCALE_MODEL;
 extern const char* CHPL_COMM;
 extern const char* CHPL_COMM_SUBSTRATE;
@@ -105,15 +110,11 @@ extern const char* CHPL_WIDE_POINTERS;
 extern const char* CHPL_LLVM;
 extern const char* CHPL_AUX_FILESYS;
 extern const char* CHPL_UNWIND;
+extern const char* CHPL_RUNTIME_SUBDIR;
+extern const char* CHPL_LAUNCHER_SUBDIR;
 
 extern bool  printPasses;
 extern FILE* printPassesFile;
-
-// Set true if CHPL_WIDE_POINTERS==struct.
-// In that case, the code generator emits structures
-// for wide pointers. Otherwise, wide pointers are
-// packed into a wide pointer type.
-extern bool widePointersStruct;
 
 extern char fExplainCall[256];
 extern int  explainCallID;
@@ -131,9 +132,13 @@ extern bool fPrintModuleResolution;
 extern bool fPrintEmittedCodeSize;
 extern char fPrintStatistics[256];
 extern bool fPrintDispatch;
+extern bool fPrintUnusedFns;
+extern bool fPrintUnusedInternalFns;
 extern bool fGenIDS;
 extern bool fLocal;
 extern bool fIgnoreLocalClasses;
+extern bool fUserDefaultInitializers;
+extern bool fLifetimeChecking;
 extern bool fHeterogeneous;
 extern int  ffloatOpt;
 extern int  fMaxCIdentLen;
@@ -157,6 +162,7 @@ extern int  debugParserLevel;
 extern int  debugShortLoc;
 extern bool fLibraryCompile;
 extern bool fUseNoinit;
+extern bool fNoUserConstructors;
 extern bool no_codegen;
 extern bool developer;
 extern bool fVerify;
@@ -164,16 +170,18 @@ extern int  num_constants_per_variable;
 extern bool printCppLineno;
 
 extern char defaultDist[256];
-extern char mainModuleName[256];
 extern bool printSearchDirs;
 extern bool printModuleFiles;
 extern bool ignore_warnings;
 extern bool ignore_errors;
+extern bool ignore_user_errors;
 extern bool ignore_errors_for_pass;
 extern int  squelch_header_errors;
 extern bool fWarnConstLoops;
+extern bool fWarnUnstable;
 
 extern bool fReportOptimizedLoopIterators;
+extern bool fReportInlinedIterators;
 extern bool fReportOrderIndependentLoops;
 extern bool fReportOptimizedOn;
 extern bool fReportPromotion;
@@ -181,7 +189,7 @@ extern bool fReportScalarReplace;
 extern bool fReportDeadBlocks;
 extern bool fReportDeadModules;
 
-extern bool fStrictErrorHandling;
+extern bool fPermitUnhandledModuleErrors;
 
 extern bool debugCCode;
 extern bool optimizeCCode;
@@ -193,6 +201,8 @@ extern bool preserveInlinedLineNumbers;
 
 extern int breakOnID;
 extern int breakOnDeleteID;
+
+extern char stopAfterPass[128];
 
 // code generation strings
 extern const char* compileCommand;
@@ -208,5 +218,8 @@ extern bool fIncrementalCompilation;
 // Set to true if we want to use the experimental
 // Interactive Programming Environment (IPE) mode.
 extern bool fUseIPE;
+
+// LLVM flags (-mllvm)
+extern std::string llvmFlags;
 
 #endif

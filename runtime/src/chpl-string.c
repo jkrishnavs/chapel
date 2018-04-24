@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -117,5 +117,9 @@ chpl_comm_wide_get_string(chpl_string* local, struct chpl_chpl____wide_chpl_stri
                       sizeof(char) * x->size, tid,
                       CHPL_COMM_UNKNOWN_ID, lineno, filename);
   *local = chpl_macro_tmp;
+}
+
+uint8_t* chpl__getInPlaceBufferData(chpl__inPlaceBuffer* buf) {
+  return buf->data;
 }
 

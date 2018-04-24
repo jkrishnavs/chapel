@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -35,6 +35,16 @@ bool AstVisitorTraverse::enterAggrType(AggregateType* node)
 }
 
 void AstVisitorTraverse::exitAggrType(AggregateType* node)
+{
+
+}
+
+bool AstVisitorTraverse::enterUnmanagedClassType(UnmanagedClassType* node)
+{
+  return true;
+}
+
+void AstVisitorTraverse::exitUnmanagedClassType(UnmanagedClassType* node)
 {
 
 }
@@ -178,6 +188,16 @@ void AstVisitorTraverse::visitForallIntents(ForallIntents* clause)
 
 }
 
+bool AstVisitorTraverse::enterForallStmt(ForallStmt* node)
+{
+  return true;
+}
+
+void AstVisitorTraverse::exitForallStmt(ForallStmt* node)
+{
+
+}
+
 bool AstVisitorTraverse::enterWhileDoStmt(WhileDoStmt* node)
 {
   return true;
@@ -259,6 +279,16 @@ bool AstVisitorTraverse::enterForwardingStmt(ForwardingStmt* node)
 }
 
 void AstVisitorTraverse::exitForwardingStmt(ForwardingStmt* node)
+{
+
+}
+
+bool AstVisitorTraverse::enterDeferStmt(DeferStmt* node)
+{
+  return true;
+}
+
+void AstVisitorTraverse::exitDeferStmt(DeferStmt* node)
 {
 
 }

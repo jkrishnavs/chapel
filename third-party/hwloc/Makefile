@@ -9,7 +9,7 @@ include $(CHPL_MAKE_HOME)/make/Makefile.base
 # Cray X* builds are cross-compilations.
 #
 ifneq (, $(filter cray-x%,$(CHPL_MAKE_TARGET_PLATFORM)))
-CHPL_HWLOC_CFG_OPTIONS += --host=x86_64-cle-linux-gnu
+CHPL_HWLOC_CFG_OPTIONS += --host=$(shell uname -m)-cle-linux-gnu
 else ifneq ($(CHPL_MAKE_HOST_PLATFORM),$(CHPL_MAKE_TARGET_PLATFORM))
 CHPL_HWLOC_CFG_OPTIONS += --host=$(CHPL_MAKE_TARGET_PLATFORM)-unknown-linux-gnu
 endif
@@ -27,6 +27,7 @@ CHPL_HWLOC_CFG_OPTIONS += --enable-static \
                           --disable-cairo \
                           --disable-libxml2 \
                           --disable-libudev \
+                          --disable-cuda \
                           --disable-opencl \
                           --disable-pci
 
@@ -62,7 +63,9 @@ hwloc-config: FORCE
 #
 	cd $(HWLOC_SUBDIR) && touch -c configure.ac
 	cd $(HWLOC_SUBDIR) && find . -name "*.m4" | xargs touch 
+	sleep 1
 	cd $(HWLOC_SUBDIR) && touch -c aclocal.m4
+	sleep 1
 	cd $(HWLOC_SUBDIR) && touch configure
 	cd $(HWLOC_SUBDIR) && find . -name "*.in" | xargs touch
 #

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -125,13 +125,15 @@ module BigInteger {
     pragma "no doc"
     var localeId : chpl_nodeID_t;      // The locale id for the GMP state
 
-    proc bigint() {
+    proc init() {
+      this.complete();
       mpz_init(this.mpz);
 
       this.localeId = chpl_nodeID;
     }
 
-    proc bigint(const ref num: bigint) {
+    proc init(const ref num: bigint) {
+      this.complete();
       if _local || num.localeId == chpl_nodeID {
         mpz_init_set(this.mpz, num.mpz);
       } else {
@@ -145,19 +147,22 @@ module BigInteger {
       this.localeId = chpl_nodeID;
     }
 
-    proc bigint(num: int) {
+    proc init(num: int) {
+      this.complete();
       mpz_init_set_si(this.mpz, num.safeCast(c_long));
 
       this.localeId = chpl_nodeID;
     }
 
-    proc bigint(num: uint) {
+    proc init(num: uint) {
+      this.complete();
       mpz_init_set_ui(this.mpz, num.safeCast(c_ulong));
 
       this.localeId = chpl_nodeID;
     }
 
-    proc bigint(str: string, base: int = 0) {
+    proc init(str: string, base: int = 0) {
+      this.complete();
       const str_  = str.localize().c_str();
       const base_ = base.safeCast(c_int);
 
@@ -170,7 +175,8 @@ module BigInteger {
       this.localeId = chpl_nodeID;
     }
 
-    proc bigint(str: string, base: int = 0, out error: syserr) {
+    proc init(str: string, base: int = 0, out error: syserr) {
+      this.complete();
       const str_  = str.localize().c_str();
       const base_ = base.safeCast(c_int);
 
@@ -323,12 +329,12 @@ module BigInteger {
       if _local {
         var tmpvar = chpl_gmp_mpz_get_str(base_, this.mpz);
 
-        ret = new string(tmpvar, owned = true, needToCopy = false);
+        ret = new string(tmpvar, isowned = true, needToCopy = false);
 
       } else if this.localeId == chpl_nodeID {
         var tmpvar = chpl_gmp_mpz_get_str(base_, this.mpz);
 
-        ret = new string(tmpvar, owned = true, needToCopy = false);
+        ret = new string(tmpvar, isowned = true, needToCopy = false);
 
       } else {
         const thisLoc = chpl_buildLocaleID(this.localeId, c_sublocid_any);
@@ -336,7 +342,7 @@ module BigInteger {
         on __primitive("chpl_on_locale_num", thisLoc) {
           var tmpvar = chpl_gmp_mpz_get_str(base_, this.mpz);
 
-          ret = new string(tmpvar, owned = true, needToCopy = false);
+          ret = new string(tmpvar, isowned = true, needToCopy = false);
         }
       }
 
@@ -360,48 +366,8 @@ module BigInteger {
         }
       }
 
-      writer.write(s);
+      writer <~> s;
     }
-  }
-
-  pragma "init copy fn"
-  pragma "no doc"
-  proc chpl__initCopy(const ref bir: bigint) {
-    var ret : bigint;
-
-    if _local {
-      mpz_set(ret.mpz, bir.mpz);
-
-    } else if bir.localeId == chpl_nodeID {
-      mpz_set(ret.mpz, bir.mpz);
-
-    } else {
-      var mpz_struct = bir.mpzStruct();
-
-      chpl_gmp_get_mpz(ret.mpz, bir.localeId, mpz_struct);
-    }
-
-    return ret;
-  }
-
-  pragma "donor fn"
-  pragma "auto copy fn"
-  pragma "no doc"
-  proc chpl__autoCopy(const ref bir: bigint) {
-    var ret : bigint;
-
-    if _local {
-      mpz_set(ret.mpz, bir.mpz);
-
-    } else if bir.localeId == chpl_nodeID {
-      mpz_set(ret.mpz, bir.mpz);
-
-    } else {
-      ret.mpz      = bir.mpz;
-      ret.localeId = bir.localeId;
-    }
-
-    return ret;
   }
 
   //

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,8 +20,11 @@
 #ifndef _POST_FOLD_H_
 #define _POST_FOLD_H_
 
+class CallExpr;
 class Expr;
 
 Expr* postFold(Expr* expr);
+
+bool  requiresImplicitDestroy(CallExpr* call);
 
 #endif

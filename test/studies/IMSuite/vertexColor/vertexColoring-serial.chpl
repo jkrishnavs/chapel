@@ -6,7 +6,7 @@
 
     Ported By: Kushal Singh
 
-    The original program can be viewed here : http://www.cse.iitm.ac.in/~suyash/imsuite/
+    The original program can be viewed here : http://www.cse.iitm.ac.in/~krishna/imsuite/
  */
 
  /* This file was derived from the IMSuite Benchamark Suite.
@@ -19,7 +19,7 @@
    (C) Copyright IMSuite 2013-present.
  */
 
-
+pragma "error mode fatal"
 module vertexColoring {
 
     use Random;
@@ -111,6 +111,8 @@ module vertexColoring {
             for i in D do sumval = sumval + nval[i];
             if(sumval > 0) then writeln();
         }
+
+        cleanup();
     }
 
     /* Initializes all the fields of the abstract node. */
@@ -138,6 +140,12 @@ module vertexColoring {
 
         colorLabel = log2(nodes);
         if(1<<colorLabel < nodes) then colorLabel+=1;
+    }
+
+    /* Clean up memory allocated by this benchmark */
+    proc cleanup() {
+      forall node in nodeSet do
+        delete node;
     }
 
     /*

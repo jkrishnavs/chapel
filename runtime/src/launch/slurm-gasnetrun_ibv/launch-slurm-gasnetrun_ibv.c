@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -24,6 +24,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "chplcgfns.h"
 #include "chpllaunch.h"
 #include "chpl-mem.h"
 #include "chpltypes.h"
@@ -51,50 +52,37 @@ char sysFilename[FILENAME_MAX];
 
 /* copies of binary to run per node */
 #define procsPerNode 1  
-#define versionBuffLen 80
 
 #define launcherAccountEnvvar "CHPL_LAUNCHER_ACCOUNT"
 
 typedef enum {
   slurmpro,
-  nccs,
-  torque,
   uma,
   slurm,
   unknown
 } sbatchVersion;
 
-static sbatchVersion determineQsubVersion(void) {
-  char version[versionBuffLen+1] = "";
-  char* versionPtr = version;
-  FILE* sysFile;
-  int i;
 
-  char* command = chpl_glom_strings(3, "sbatch --version > ", sysFilename, " 2>&1");
-  system(command);
-  sysFile = fopen(sysFilename, "r");
-  for (i=0; i<versionBuffLen; i++) {
-    char tmp;
-    fscanf(sysFile, "%c", &tmp);
-    if (tmp == '\n') {
-      *versionPtr++ = '\0';
-      break;
-    } else {
-      *versionPtr++ = tmp;
-    }
+// Check what version of slurm is on the system
+static sbatchVersion determineSlurmVersion(void) {
+  const int buflen = 256;
+  char version[buflen];
+  char *argv[3];
+  argv[0] = (char *) "sbatch";
+  argv[1] = (char *) "--version";
+  argv[2] = NULL;
+
+  memset(version, 0, buflen);
+  if (chpl_run_utility1K("sbatch", argv, version, buflen) <= 0) {
+    chpl_error("Error trying to determine slurm version", 0, 0);
   }
 
-  fclose(sysFile);
-  if (strstr(version, "NCCS")) {
-    return nccs;
-  } else if (strstr(version, "SBATCHPro")) {
+  if (strstr(version, "SBATCHPro")) {
     return slurmpro;
   } else if (strstr(version, "wrapper sbatch SBATCH UMA 1.0")) {
     return uma;
   } else if (strstr(version, "slurm")) {
     return slurm;
-  } else if (strstr(version, "version: ")) {
-    return torque;
   } else {
     return unknown;
   }
@@ -165,9 +153,6 @@ static void genNumLocalesOptions(FILE* slurmFile, sbatchVersion sbatch,
     fprintf(slurmFile, "#SBATCH --exclusive\n");
 
     break;
-  case torque:
-    fprintf(slurmFile, "#SBATCH --nodes=%d\n", numLocales);
-    break;
   default:
     break;
   }
@@ -221,7 +206,7 @@ static char* chpl_launch_create_command(int argc, char* argv[],
     slurmFile = fopen(slurmFilename, "w");
     fprintf(slurmFile, "#!/bin/sh\n\n");
     fprintf(slurmFile, "#SBATCH -J Chpl-%.10s\n", basenamePtr);
-    genNumLocalesOptions(slurmFile, determineQsubVersion(), numLocales, getNumCoresPerLocale());
+    genNumLocalesOptions(slurmFile, determineSlurmVersion(), numLocales, getNumCoresPerLocale());
     if (projectString && strlen(projectString) > 0)
       fprintf(slurmFile, "#SBATCH -A %s\n", projectString);
     if (getenv("CHPL_LAUNCHER_USE_SBATCH") != NULL) {
@@ -231,8 +216,8 @@ static char* chpl_launch_create_command(int argc, char* argv[],
     else
       fprintf(slurmFile, "#SBATCH -o %s.%%j.out\n", argv[0]);
 //    fprintf(slurmFile, "cd $SBATCH_O_WORKDIR\n");
-      fprintf(slurmFile, "%s/gasnetrun_ibv -n %d %s ",
-              WRAP_TO_STR(LAUNCH_PATH), numLocales, chpl_get_real_binary_name());
+      fprintf(slurmFile, "%s/%s/gasnetrun_ibv -n %d %s ",
+              CHPL_THIRD_PARTY, WRAP_TO_STR(LAUNCH_PATH), numLocales, chpl_get_real_binary_name());
       for (i=1; i<argc; i++) {
         fprintf(slurmFile, " '%s'", argv[i]);
       }
@@ -265,8 +250,8 @@ static char* chpl_launch_create_command(int argc, char* argv[],
     fprintf(expectFile, " -C %s", constraint);
   }
 //  fprintf(expectFile, "-I %s ", slurmFilename);
-  fprintf(expectFile, " %s/gasnetrun_ibv -n %d %s ", 
-          WRAP_TO_STR(LAUNCH_PATH), numLocales, chpl_get_real_binary_name());
+  fprintf(expectFile, " %s/%s/gasnetrun_ibv -n %d %s ",
+          CHPL_THIRD_PARTY, WRAP_TO_STR(LAUNCH_PATH), numLocales, chpl_get_real_binary_name());
   for (i=1; i<argc; i++) {
     fprintf(expectFile, " %s", argv[i]);
   }

@@ -1,15 +1,21 @@
 # Makefile for Chapel documentation
 
+# for a release, change the following to 'release/' and 'x.yz' (the
+# release's verion number
+#
+WEB_DOC_DIR=
+WEB_DOC_VERSION=master
+
 # Makefile.sphinx interfaces with sphinx build commands
 include Makefile.sphinx
 
 CHPL2RST     = ../util/run-in-venv.bash ./util/chpl2rst.py
 
 CHPL_DOC_PRIMERS_DIR = $(SOURCEDIR)/primers
-CHPL2RSTOPTS = --output=rst --prefix=$(CHPL_DOC_PRIMERS_DIR) --link=master
+CHPL2RSTOPTS = --output=rst --prefix=$(CHPL_DOC_PRIMERS_DIR) --link=$(WEB_DOC_DIR)$(WEB_DOC_VERSION)
 
 CHPL_DOC_HELLO_DIR = $(SOURCEDIR)/examples/hellos
-CHPL2RSTOPTS_HELLO = --output=rst --prefix=$(CHPL_DOC_HELLO_DIR) --link=master
+CHPL2RSTOPTS_HELLO = --output=rst --prefix=$(CHPL_DOC_HELLO_DIR) --link=$(WEB_DOC_DIR)$(WEB_DOC_VERSION)
 
 help: help-sphinx help-source
 
@@ -29,8 +35,8 @@ help-source:
 
 
 docs: FORCE
-	@../util/run-in-venv.bash $(MAKE) html-release || (echo;echo "If a documentation hierarchy change was made on the master branch, \
-	try resolving with: \`git clean "'$$CHPL_HOME'"/doc/*\`";echo)
+	@../util/run-in-venv.bash $(MAKE) html-release || $(MAKE) error_docs
+
 
 man-chapel: FORCE
 	../util/run-in-venv.bash $(MAKE) man
@@ -114,6 +120,13 @@ clean-symlinks: FORCE
 	@echo
 	@echo "Removing all symbolic links"
 	find $(SOURCEDIR) -type l -delete
+
+error_docs: FORCE
+	@echo;
+	@echo "If a documentation hierarchy change was made on the master branch,"
+	@echo "try resolving with: \`git clean "'$$CHPL_HOME'"/doc/*\`"
+	@echo;
+	@exit 1 # Note that 'make' will return exit code of 2, despite exit 1
 
 
 FORCE:

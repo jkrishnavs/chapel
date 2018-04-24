@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,6 +20,16 @@
 #ifndef _ERROR_HANDLING_H_
 #define _ERROR_HANDLING_H_
 
+class BlockStmt;
+class BaseAST;
+class Expr;
+class Symbol;
+
 void lowerErrorHandling();
+void lowerCheckErrorPrimitive();
+void normalizeErrorHandling(BaseAST* ast);
+
+bool isCheckErrorStmt(Expr* e);
+Symbol* getErrorSymbolFromCheckErrorStmt(Expr* e);
 
 #endif

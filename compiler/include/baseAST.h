@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -49,10 +49,12 @@
   macro(PrimitiveType) sep                         \
   macro(EnumType) sep                              \
   macro(AggregateType) sep                         \
+  macro(UnmanagedClassType) sep                    \
                                                    \
   macro(ModuleSymbol) sep                          \
   macro(VarSymbol)    sep                          \
   macro(ArgSymbol)    sep                          \
+  macro(ShadowVarSymbol) sep                       \
   macro(TypeSymbol)   sep                          \
   macro(FnSymbol)     sep                          \
   macro(EnumSymbol)   sep                          \
@@ -70,6 +72,8 @@
   macro(BlockStmt) sep                             \
   macro(CondStmt) sep                              \
   macro(GotoStmt) sep                              \
+  macro(DeferStmt) sep                             \
+  macro(ForallStmt) sep                            \
   macro(TryStmt) sep                               \
   macro(ForwardingStmt) sep                        \
   macro(CatchStmt) sep                             \
@@ -81,6 +85,7 @@
 #define for_alive_in_Vec(TYPE, VAR, VEC)           \
   forv_Vec(TYPE, VAR, VEC) if (VAR->inTree())
 
+class BaseAST;
 class AstVisitor;
 class Expr;
 class GenRet;
@@ -102,6 +107,17 @@ class QualifiedType;
 #define proto_classes(type) class type
 foreach_ast(proto_classes);
 #undef proto_classes
+
+#define def_vec_hash(SomeType) \
+    template<> \
+    uintptr_t _vec_hasher(SomeType* obj);
+
+foreach_ast(def_vec_hash);
+def_vec_hash(Symbol);
+def_vec_hash(Type);
+def_vec_hash(BaseAST);
+
+#undef def_vec_hash
 
 //
 // declare global vectors for all AST node types
@@ -131,6 +147,13 @@ public:
 
   const char* filename;  // filename of location
   int         lineno;    // line number of location
+
+  inline bool operator==(const astlocT other) const {
+    return this->filename == other.filename && this->lineno == other.lineno;
+  }
+  inline bool operator!=(const astlocT other) const {
+    return this->filename != other.filename || this->lineno != other.lineno;
+  }
 };
 
 //
@@ -146,16 +169,19 @@ enum AstTag {
   E_ForwardingStmt,
   E_NamedExpr,
   E_UseStmt,
+  E_DeferStmt,
   E_TryStmt,
   E_CatchStmt,
   E_BlockStmt,
   E_CondStmt,
   E_GotoStmt,
+  E_ForallStmt,
   E_ExternBlockStmt,
 
   E_ModuleSymbol,
   E_VarSymbol,
   E_ArgSymbol,
+  E_ShadowVarSymbol,
   E_TypeSymbol,
   E_FnSymbol,
   E_EnumSymbol,
@@ -163,7 +189,8 @@ enum AstTag {
 
   E_PrimitiveType,
   E_EnumType,
-  E_AggregateType
+  E_AggregateType,
+  E_UnmanagedClassType
 };
 
 static inline bool isExpr(AstTag tag)
@@ -173,7 +200,7 @@ static inline bool isSymbol(AstTag tag)
 { return tag >= E_ModuleSymbol   && tag <= E_LabelSymbol; }
 
 static inline bool isType(AstTag tag)
-{ return tag >= E_PrimitiveType  && tag <= E_AggregateType; }
+{ return tag >= E_PrimitiveType  && tag <= E_UnmanagedClassType; }
 
 
 //
@@ -274,6 +301,8 @@ int    lastNodeIDUsed();
 // trace various AST node removals
 void   trace_remove(BaseAST* ast, char flag);
 
+void verifyInTree(BaseAST* ast, const char* msg);
+
 
 //
 // macro to update the global line number used to set the line number
@@ -301,12 +330,6 @@ public:
 };
 
 //
-// vectors of modules
-//
-extern Vec<ModuleSymbol*> allModules;  // contains all modules
-extern Vec<ModuleSymbol*> userModules; // contains user modules
-
-//
 // class test inlines: determine the dynamic type of a BaseAST*
 //
 static inline bool isExpr(const BaseAST* a)
@@ -319,7 +342,10 @@ static inline bool isType(const BaseAST* a)
 { return a && isType(a->astTag); }
 
 static inline bool isLcnSymbol(const BaseAST* a)
-{ return a && (a->astTag == E_ArgSymbol || a->astTag == E_VarSymbol); }
+{ return a && (a->astTag == E_ArgSymbol || a->astTag == E_VarSymbol || a->astTag == E_ShadowVarSymbol); }
+
+static inline bool isVarSymbol(const BaseAST* a)
+{ return a && (a->astTag == E_VarSymbol || a->astTag == E_ShadowVarSymbol); }
 
 static inline bool isCallExpr(const BaseAST* a)
 { return a && (a->astTag == E_CallExpr || a->astTag == E_ContextCallExpr); }
@@ -341,13 +367,15 @@ def_is_ast(UseStmt)
 def_is_ast(BlockStmt)
 def_is_ast(CondStmt)
 def_is_ast(GotoStmt)
+def_is_ast(DeferStmt)
+def_is_ast(ForallStmt)
 def_is_ast(TryStmt)
 def_is_ast(ForwardingStmt)
 def_is_ast(CatchStmt)
 def_is_ast(ExternBlockStmt)
 def_is_ast(ModuleSymbol)
-def_is_ast(VarSymbol)
 def_is_ast(ArgSymbol)
+def_is_ast(ShadowVarSymbol)
 def_is_ast(TypeSymbol)
 def_is_ast(FnSymbol)
 def_is_ast(EnumSymbol)
@@ -355,6 +383,7 @@ def_is_ast(LabelSymbol)
 def_is_ast(PrimitiveType)
 def_is_ast(EnumType)
 def_is_ast(AggregateType)
+def_is_ast(UnmanagedClassType)
 #undef def_is_ast
 
 bool isLoopStmt(const BaseAST* a);
@@ -385,6 +414,8 @@ def_to_ast(UseStmt)
 def_to_ast(BlockStmt)
 def_to_ast(CondStmt)
 def_to_ast(GotoStmt)
+def_to_ast(DeferStmt)
+def_to_ast(ForallStmt)
 def_to_ast(TryStmt)
 def_to_ast(ForwardingStmt)
 def_to_ast(CatchStmt)
@@ -393,6 +424,7 @@ def_to_ast(Expr)
 def_to_ast(ModuleSymbol)
 def_to_ast(VarSymbol)
 def_to_ast(ArgSymbol)
+def_to_ast(ShadowVarSymbol)
 def_to_ast(TypeSymbol)
 def_to_ast(FnSymbol)
 def_to_ast(EnumSymbol)
@@ -401,6 +433,7 @@ def_to_ast(Symbol)
 def_to_ast(PrimitiveType)
 def_to_ast(EnumType)
 def_to_ast(AggregateType)
+def_to_ast(UnmanagedClassType)
 def_to_ast(Type)
 
 def_to_ast(LoopStmt);
@@ -412,6 +445,60 @@ def_to_ast(CForLoop);
 def_to_ast(ParamForLoop);
 
 #undef def_to_ast
+
+#define def_less_ast(SomeType) \
+  namespace std { \
+    template<> struct less<SomeType*> { \
+      bool operator()(const SomeType* lhs, const SomeType* rhs) const { \
+        if (lhs == NULL && rhs != NULL) return true; \
+        if (lhs != NULL && rhs == NULL) return false; \
+        if (lhs == NULL && rhs == NULL) return false; \
+        return ((const BaseAST*)lhs)->id < ((const BaseAST*)rhs)->id; \
+      } \
+    }; \
+  }
+
+def_less_ast(SymExpr)
+def_less_ast(UnresolvedSymExpr)
+def_less_ast(DefExpr)
+def_less_ast(ContextCallExpr)
+def_less_ast(ForallExpr)
+def_less_ast(NamedExpr)
+def_less_ast(UseStmt)
+def_less_ast(BlockStmt)
+def_less_ast(CondStmt)
+def_less_ast(GotoStmt)
+def_less_ast(DeferStmt)
+def_less_ast(ForallStmt)
+def_less_ast(TryStmt)
+def_less_ast(ForwardingStmt)
+def_less_ast(CatchStmt)
+def_less_ast(ExternBlockStmt)
+def_less_ast(Expr)
+def_less_ast(ModuleSymbol)
+def_less_ast(VarSymbol)
+def_less_ast(ArgSymbol)
+def_less_ast(ShadowVarSymbol)
+def_less_ast(TypeSymbol)
+def_less_ast(FnSymbol)
+def_less_ast(EnumSymbol)
+def_less_ast(LabelSymbol)
+def_less_ast(Symbol)
+def_less_ast(PrimitiveType)
+def_less_ast(EnumType)
+def_less_ast(AggregateType)
+def_less_ast(UnmanagedClassType)
+def_less_ast(Type)
+
+def_less_ast(LoopStmt);
+def_less_ast(WhileStmt);
+def_less_ast(WhileDoStmt);
+def_less_ast(DoWhileStmt);
+def_less_ast(ForLoop);
+def_less_ast(CForLoop);
+def_less_ast(ParamForLoop);
+
+#undef def_less_ast
 
 static inline LcnSymbol* toLcnSymbol(BaseAST* a)
 {
@@ -527,7 +614,7 @@ static inline const CallExpr* toConstCallExpr(const BaseAST* a)
     } else  {                                                                  \
       AST_CALL_LIST (stmt, BlockStmt,    body,           call, __VA_ARGS__);   \
       AST_CALL_CHILD(stmt, BlockStmt,    blockInfoGet(), call, __VA_ARGS__);   \
-      AST_CALL_CHILD(stmt, BlockStmt,    modUses,        call, __VA_ARGS__);   \
+      AST_CALL_CHILD(stmt, BlockStmt,    useList,        call, __VA_ARGS__);   \
       AST_CALL_CHILD(stmt, BlockStmt,    byrefVars,      call, __VA_ARGS__);   \
       if (ForallIntents* bi = stmt->forallIntents) {                           \
         AST_CALL_STDVEC(bi->fiVars,  Expr, call, __VA_ARGS__);                 \
@@ -551,13 +638,26 @@ static inline const CallExpr* toConstCallExpr(const BaseAST* a)
   case E_ForwardingStmt:                                                \
     AST_CALL_CHILD(_a, ForwardingStmt, toFnDef, call, __VA_ARGS__);     \
     break;                                                              \
+  case E_DeferStmt:                                                     \
+    AST_CALL_CHILD(_a, DeferStmt, body(), call, __VA_ARGS__);           \
+    break;                                                              \
   case E_TryStmt:                                                       \
-    AST_CALL_CHILD(_a, TryStmt, _body, call, __VA_ARGS__);             \
+    AST_CALL_CHILD(_a, TryStmt, _body, call, __VA_ARGS__);              \
     AST_CALL_LIST(_a, TryStmt, _catches, call, __VA_ARGS__);            \
     break;                                                              \
   case E_CatchStmt:                                                     \
-    AST_CALL_CHILD(_a, CatchStmt, _body, call, __VA_ARGS__);           \
+    AST_CALL_CHILD(_a, CatchStmt, _body, call, __VA_ARGS__);            \
     break;                                                              \
+  case E_ForallStmt:                                                          \
+    AST_CALL_LIST (_a, ForallStmt, inductionVariables(),  call, __VA_ARGS__); \
+    AST_CALL_LIST (_a, ForallStmt, iteratedExpressions(), call, __VA_ARGS__); \
+    AST_CALL_LIST (_a, ForallStmt, shadowVariables(),     call, __VA_ARGS__); \
+    AST_CALL_CHILD(_a, ForallStmt, fRecIterIRdef,         call, __VA_ARGS__); \
+    AST_CALL_CHILD(_a, ForallStmt, fRecIterICdef,         call, __VA_ARGS__); \
+    AST_CALL_CHILD(_a, ForallStmt, fRecIterGetIterator,   call, __VA_ARGS__); \
+    AST_CALL_CHILD(_a, ForallStmt, fRecIterFreeIterator,  call, __VA_ARGS__); \
+    AST_CALL_CHILD(_a, ForallStmt, loopBody(),            call, __VA_ARGS__); \
+    break;                                                                    \
   case E_ModuleSymbol:                                                  \
     AST_CALL_CHILD(_a, ModuleSymbol, block, call, __VA_ARGS__);         \
     break;                                                              \
@@ -566,6 +666,12 @@ static inline const CallExpr* toConstCallExpr(const BaseAST* a)
     AST_CALL_CHILD(_a, ArgSymbol, defaultExpr, call, __VA_ARGS__);      \
     AST_CALL_CHILD(_a, ArgSymbol, variableExpr, call, __VA_ARGS__);     \
     break;                                                              \
+  case E_ShadowVarSymbol:                                                   \
+    AST_CALL_CHILD(_a, ShadowVarSymbol, outerVarRep,   call, __VA_ARGS__);  \
+    AST_CALL_CHILD(_a, ShadowVarSymbol, specBlock,     call, __VA_ARGS__);  \
+    AST_CALL_CHILD(_a, ShadowVarSymbol, svInitBlock,   call, __VA_ARGS__);  \
+    AST_CALL_CHILD(_a, ShadowVarSymbol, svDeinitBlock, call, __VA_ARGS__);  \
+    break;                                                                  \
   case E_TypeSymbol:                                                    \
     AST_CALL_CHILD(_a, Symbol, type, call, __VA_ARGS__);                \
     break;                                                              \
@@ -582,6 +688,8 @@ static inline const CallExpr* toConstCallExpr(const BaseAST* a)
     AST_CALL_LIST(_a, AggregateType, fields, call, __VA_ARGS__);        \
     AST_CALL_LIST(_a, AggregateType, inherits, call, __VA_ARGS__);      \
     AST_CALL_LIST(_a, AggregateType, forwardingTo, call, __VA_ARGS__);  \
+    break;                                                              \
+  case E_UnmanagedClassType:                                              \
     break;                                                              \
   default:                                                              \
     break;                                                              \

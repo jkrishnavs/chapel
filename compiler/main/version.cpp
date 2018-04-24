@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include "driver.h"
+#include "files.h"
 #include "version.h"
 
 // this include sets BUILD_VERSION
@@ -26,6 +27,9 @@
 
 // this include sets CONFIGURED_PREFIX
 #include "configured_prefix.h"
+
+// this include sets CLANG_SETTINGS
+#include "clang_settings.h"
 
 void
 get_version(char *v) {
@@ -42,4 +46,25 @@ get_major_minor_version(char *v) {
 const char*
 get_configured_prefix() {
   return CONFIGURED_PREFIX;
+}
+
+std::string
+get_clang_cc() {
+  std::string ret = CLANG_SETTINGS[0];
+  expandInstallationPaths(ret);
+  return ret;
+}
+
+std::string
+get_clang_cxx() {
+  std::string ret = CLANG_SETTINGS[1];
+  expandInstallationPaths(ret);
+  return ret;
+}
+
+std::string
+get_clang_sysroot_args() {
+  std::string ret = CLANG_SETTINGS[2];
+  expandInstallationPaths(ret);
+  return ret;
 }

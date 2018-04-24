@@ -5,26 +5,27 @@
 
 # What is Chapel?
 
-[Chapel](http://chapel.cray.com/) is a parallel programming language designed for productivity at scale. It is developed as [open source on GitHub](https://github.com/chapel-lang/chapel/).
+[Chapel](https://chapel-lang.org/) is a parallel programming language designed for productivity at scale. It is developed as [open source on GitHub](https://github.com/chapel-lang/chapel/).
 
 # Docker Images
 
 ## `chapel/chapel:<version>`
 Supported Chapel versions:
-* [`1.15.0`, `latest` (_1.15.0/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.15.0/Dockerfile/)
-* [`1.14.0`, `latest` (_1.14.0/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.14.0/Dockerfile/)
-* [`1.13.1` (_1.13.1/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.13.1/Dockerfile)
+* [`1.17.0`, `latest` (_1.17.0/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/release/1.17/util/dockerfiles/Dockerfile/)
+* [`1.16.0` (_1.16.0/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.16.0/Dockerfile/)
+* [`1.15.0` (_1.15.0/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.15.0/Dockerfile/)
 
 This is the core image for Chapel. It provides the complete Chapel compiler and runtime.  It can be used to compile and run Chapel programs inside the Docker container. On 64-bit Linux hosts, the compiled Chapel program binary can sometimes be executed outside the container (your mileage may vary). Other Chapel-based Docker images can be created from this image.
 
 ## [`chapel/chapel-gasnet:<version>`](https://hub.docker.com/r/chapel/chapel-gasnet/)
 
-* [`1.15.0`, `latest` (_1.15.0/gasnet/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.15.0/gasnet/Dockerfile/)
-* [`1.14.0`, `latest` (_1.14.0/gasnet/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.14.0/gasnet/Dockerfile/)
+* [`1.17.0`, `latest` (_1.17.0/gasnet/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/release/1.17/util/dockerfiles/gasnet/Dockerfile/)
+* [`1.16.0` (_1.16.0/gasnet/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.16.0/gasnet/Dockerfile/)
+* [`1.15.0` (_1.15.0/gasnet/Dockerfile_)](https://github.com/chapel-lang/chapel/blob/master/util/dockerfiles/1.15.0/gasnet/Dockerfile/)
 
 The Chapel core image (above), rebuilt with `CHPL_COMM=gasnet` and `GASNET_SPAWNFN=L`. Simulates a multilocale Chapel platform within the Docker container.
 
-Multilocale Chapel brings additional requirements, unrelated to Docker. The `chpl` compilation produces two binary files (e.g. `hello_real` as well as `hello`). When you run the binary, you need another command line parameter, `-nl #`, to specify the number of locales. Please see [Multilocale Chapel Execution](http://chapel.cray.com/docs/latest/usingchapel/multilocale.html) for details.
+Multilocale Chapel brings additional requirements, unrelated to Docker. The `chpl` compilation produces two binary files (e.g. `hello_real` as well as `hello`). When you run the binary, you need another command line parameter, `-nl #`, to specify the number of locales. Please see [Multilocale Chapel Execution](https://chapel-lang.org/docs/usingchapel/multilocale.html) for details.
 
 # How to use the image
 
@@ -66,12 +67,13 @@ Hello, world!
 
 # Documentation
 
-Chapel's documentation is [available online](http://chapel.cray.com/docs/latest/). Documentation for a specific release is also available: [1.15](http://chapel.cray.com/docs/1.15/), [1.14](http://chapel.cray.com/docs/1.14/), [1.13](http://chapel.cray.com/docs/1.13/).
+Chapel's documentation is [available online](https://chapel-lang.org/docs/).
+Documentation for a specific release is also available: [1.16](https://chapel-lang.org/docs/1.16/), [1.15](https://chapel-lang.org/docs/1.15/).
 
 # License
 
-View [license information](http://chapel.cray.com/license.html) for the software contained in this image.
+View [license information](https://chapel-lang.org/license.html) for the software contained in this image.
 
 # User Feedback
 
-If you have any questions about or problems with this image, please write to the [Chapel developers mailing list](https://lists.sourceforge.net/lists/listinfo/chapel-developers). To post a message to all the list members, send email to [chapel-developers@lists.sourceforge.net](mailto:chapel-developers@lists.sourceforge.net). You may also be interested in other [Chapel resources for developers](http://chapel.cray.com/developers.html), including the `#chapel-developers` IRC channel on Freenode.
+If you have any questions about or problems with this image, please write to the [Chapel developers mailing list](https://lists.sourceforge.net/lists/listinfo/chapel-developers). To post a message to all the list members, send email to [chapel-developers@lists.sourceforge.net](mailto:chapel-developers@lists.sourceforge.net). You may also be interested in other [Chapel resources for developers](https://chapel-lang.org/developers.html), including the `#chapel-developers` IRC channel on Freenode.

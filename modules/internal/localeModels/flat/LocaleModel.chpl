@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -57,24 +57,34 @@ module LocaleModel {
   //
   class LocaleModel : AbstractLocaleModel {
     const _node_id : int;
-    const local_name : string;
+    var local_name : string; // should never be modified after first assignment
 
     // This constructor must be invoked "on" the node
     // that it is intended to represent.  This trick is used
     // to establish the equivalence the "locale" field of the locale object
     // and the node ID portion of any wide pointer referring to it.
-    proc LocaleModel() {
+    proc init() {
       if doneCreatingLocales {
         halt("Cannot create additional LocaleModel instances");
       }
+      _node_id = chpl_nodeID: int;
+
+      this.complete();
+
       setup();
     }
 
-    proc LocaleModel(parent_loc : locale) {
+    proc init(parent_loc : locale) {
       if doneCreatingLocales {
         halt("Cannot create additional LocaleModel instances");
       }
-      parent = parent_loc;
+
+      super.init(parent_loc);
+
+      _node_id = chpl_nodeID: int;
+
+      this.complete();
+
       setup();
     }
 
@@ -142,8 +152,6 @@ module LocaleModel {
     //- Implementation (private)
     //-
     proc setup() {
-      _node_id = chpl_nodeID: int;
-
       helpSetupLocaleFlat(this, local_name);
     }
     //------------------------------------------------------------------------}
@@ -161,8 +169,8 @@ module LocaleModel {
     const myLocaleSpace: domain(1) = {0..numLocales-1};
     var myLocales: [myLocaleSpace] locale;
 
-    proc RootLocale() {
-      parent = nil;
+    proc init() {
+      super.init(nil);
       nPUsPhysAcc = 0;
       nPUsPhysAll = 0;
       nPUsLogAcc = 0;
@@ -217,6 +225,15 @@ module LocaleModel {
       // the index into myLocales that yields the locale representing that
       // node.
       return myLocales[chpl_rt_nodeFromLocaleID(id)];
+    }
+
+    proc deinit() {
+      for loc in myLocales {
+        on loc {
+          rootLocaleInitialized = false;
+          delete loc;
+        }
+      }
     }
   }
 

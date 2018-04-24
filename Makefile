@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -72,6 +72,10 @@ parser: FORCE
 
 modules: FORCE
 	cd modules && $(MAKE)
+	-@if [ ! -z `${NEEDS_LLVM_RUNTIME}` ]; then \
+	. ${CHPL_MAKE_HOME}/util/config/set_clang_included.bash && \
+	cd modules && $(MAKE) ; \
+	fi
 
 runtime: FORCE
 	cd runtime && $(MAKE)
@@ -133,6 +137,14 @@ chplvis: compiler third-party-fltk FORCE
 	cd tools/chplvis && $(MAKE)
 	cd tools/chplvis && $(MAKE) install
 
+mason: compiler chpldoc FORCE
+	cd tools/mason && $(MAKE) && $(MAKE) install
+
+c2chapel: FORCE
+	cd tools/c2chapel && $(MAKE)
+	cd tools/c2chapel && $(MAKE) install
+
+
 third-party-fltk: FORCE
 	cd third-party/fltk && $(MAKE)
 
@@ -163,6 +175,7 @@ clobber: FORCE
 	cd runtime && $(MAKE) clobber
 	cd third-party && $(MAKE) clobber
 	cd tools/chplvis && $(MAKE) clobber
+	cd tools/c2chapel && $(MAKE) clobber
 	if [ -e doc/Makefile ]; then cd doc && $(MAKE) clobber; fi
 	rm -rf bin
 	rm -rf lib
@@ -176,7 +189,7 @@ depend:
 	@echo "make depend has been deprecated for the time being"
 
 check:
-	@CHPL_HOME=$(CHPL_MAKE_HOME) bash $(CHPL_MAKE_HOME)/util/test/checkChplInstall
+	@+CHPL_HOME=$(CHPL_MAKE_HOME) bash $(CHPL_MAKE_HOME)/util/test/checkChplInstall
 
 check-chpldoc: chpldoc third-party-test-venv
 	@bash $(CHPL_MAKE_HOME)/util/test/checkChplDoc

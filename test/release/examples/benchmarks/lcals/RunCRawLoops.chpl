@@ -63,7 +63,7 @@ module RunCRawLoops {
             for isamp in 0..#num_samples {
               q = 0.0;
               for k in 0..#len {
-                q = z[k]*x[k];
+                q += z[k] * x[k];
               }
               val = q*isamp;
             }
@@ -329,6 +329,8 @@ module RunCRawLoops {
                 xx[k] = 0.0;
                 ix[k] = grd[k]:int;
                 xi[k] = ix[k]:real;
+                // ix[k] == 0, so the accesses of ex[ix[k]-1] and dex[ix[k]-1]
+                // are out of bounds. This also happens in the reference version.
                 ex1[k] = ex[ix[k]-1];
                 dex1[k] = dex[ix[k]-1];
               }

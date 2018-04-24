@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,6 +21,7 @@
 #define _AST_VISITOR_H_
 
 class AggregateType;
+class UnmanagedClassType;
 class EnumType;
 class PrimitiveType;
 
@@ -42,6 +43,7 @@ class UnresolvedSymExpr;
 class UseStmt;
 class BlockStmt;
 class ForallIntents;
+class ForallStmt;
 class WhileDoStmt;
 class DoWhileStmt;
 class CForLoop;
@@ -51,6 +53,7 @@ class ExternBlockStmt;
 class CondStmt;
 class GotoStmt;
 class ForwardingStmt;
+class DeferStmt;
 class TryStmt;
 class CatchStmt;
 
@@ -74,6 +77,9 @@ public:
   //
   virtual bool   enterAggrType       (AggregateType*     node) = 0;
   virtual void   exitAggrType        (AggregateType*     node) = 0;
+
+  virtual bool   enterUnmanagedClassType(UnmanagedClassType*     node) = 0;
+  virtual void   exitUnmanagedClassType (UnmanagedClassType*     node) = 0;
 
   virtual bool   enterEnumType       (EnumType*          node) = 0;
   virtual void   exitEnumType        (EnumType*          node) = 0;
@@ -129,6 +135,8 @@ public:
   virtual void   exitBlockStmt       (BlockStmt*         node) = 0;
 
   virtual void   visitForallIntents  (ForallIntents*   clause) = 0;
+  virtual bool   enterForallStmt     (ForallStmt*        node) = 0;
+  virtual void   exitForallStmt      (ForallStmt*        node) = 0;
 
   virtual bool   enterWhileDoStmt    (WhileDoStmt*       node) = 0;
   virtual void   exitWhileDoStmt     (WhileDoStmt*       node) = 0;
@@ -155,6 +163,9 @@ public:
 
   virtual bool   enterGotoStmt       (GotoStmt*          node) = 0;
   virtual void   exitGotoStmt        (GotoStmt*          node) = 0;
+
+  virtual bool   enterDeferStmt      (DeferStmt*         node) = 0;
+  virtual void   exitDeferStmt       (DeferStmt*         node) = 0;
 
   virtual bool   enterTryStmt        (TryStmt*           node) = 0;
   virtual void   exitTryStmt         (TryStmt*           node) = 0;

@@ -15,12 +15,9 @@ def get():
     if not substrate_val:
         comm_val = chpl_comm.get()
         platform_val = chpl_platform.get('target')
-        arch_val = chpl_arch.get('target', get_lcd=True)
 
         if comm_val == 'gasnet':
-            if platform_val == 'cray-xt':
-                substrate_val = 'mpi'
-            elif platform_val == 'cray-xe':
+            if platform_val == 'cray-xe':
                 substrate_val = 'gemini'
             elif platform_val == 'cray-xk':
                 substrate_val = 'gemini'
@@ -34,6 +31,12 @@ def get():
                 substrate_val = 'ibv'
             else:
                 substrate_val = 'udp'
+        elif comm_val == 'ofi':
+            if platform_val == 'cray-xc':
+                substrate_val = 'sockets'
+                # substrate_val = 'gni'
+            else:
+                substrate_val = 'sockets'
         else:
             substrate_val = 'none'
     return substrate_val

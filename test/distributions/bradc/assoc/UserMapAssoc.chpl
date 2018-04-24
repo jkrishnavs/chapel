@@ -80,9 +80,11 @@ class UserMapAssoc : BaseDist {
 
   // CONSTRUCTORS:
 
-  proc UserMapAssoc(type idxType = int(64),
-                    mapper:?t = new DefaultMapper(),
-                    targetLocales: [] locale = Locales) {
+  proc init(type idxType = int(64),
+            mapper:?t = new DefaultMapper(),
+            targetLocales: [] locale = Locales) {
+    this.idxType = idxType;
+    this.mapper = mapper;
     //
     // 0-base the local capture of the targetLocDom for simplicity
     // later on
@@ -102,9 +104,10 @@ class UserMapAssoc : BaseDist {
   //
   // builds up a privatized (replicated copy)
   //
-  proc UserMapAssoc(type idxType = int(64),
-                    mapper,
-                    other: UserMapAssoc(idxType, mapper.type)) {
+  proc init(type idxType = int(64),
+            mapper,
+            other: UserMapAssoc(idxType, mapper.type)) {
+    this.idxType = idxType;
     this.mapper = mapper; // normally == other.mapper;
     targetLocDom = other.targetLocDom;
     this.targetLocales = other.targetLocales;
@@ -152,15 +155,15 @@ class UserMapAssoc : BaseDist {
   //
   // print out the distribution
   //
-  proc WriteThis(x) {
-    x.writeln("UserMapAssoc");
-    x.writeln("-------");
-    x.writeln("distributed using: ", mapper);
-    x.writeln("across locales: ", targetLocales);
-    x.writeln("indexed via: ", targetLocDom);
-    x.writeln("resulting in: ");
+  proc writeThis(x) {
+    x <~> "UserMapAssoc\n";
+    x <~> "-------\n";
+    x <~> "distributed using: " <~> mapper <~> "\n";
+    x <~> "across locales: " <~> targetLocales <~> "\n";
+    x <~> "indexed via: " <~> targetLocDom <~> "\n";
+    x <~> "resulting in: " <~> "\n";
     //for locid in targetLocDom do
-    //  x.writeln("  [", locid, "] ", locDist(locid));
+    //  x <~> "  [" <~> locid <~> "] " <~> locDist(locid) <~> "\n";
   }
 
   //
@@ -251,6 +254,7 @@ class UserMapAssoc : BaseDist {
 //
 // The global domain class
 //
+pragma "use default init"
 class UserMapAssocDom: BaseAssociativeDom {
   param parSafe: bool=true; // we need this because of the wrapper interface
 
@@ -316,6 +320,12 @@ class UserMapAssocDom: BaseAssociativeDom {
     }
   }
 
+  proc dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+    if !lhsPrivate then
+      halt("UserMapAssoc domain assignment not yet supported");
+    for i in rhs do
+      dsiAdd(i);
+  }
 
   proc dsiRequestCapacity(numKeys:int) {
     // TODO
@@ -433,7 +443,7 @@ class UserMapAssocDom: BaseAssociativeDom {
       //
       //        ("locale" + here.id + " owns: ").writeThis(x);
 
-        x.write(locDom);
+        x <~> locDom;
       //      }
   }
 
@@ -606,6 +616,7 @@ class LocUserMapAssocDom {
 //
 // the global array class
 //
+pragma "use default init"
 class UserMapAssocArr: BaseArr {
   // GENERICS:
 
@@ -757,11 +768,11 @@ class UserMapAssocArr: BaseArr {
         if first {
           first = false;
         } else {
-          x.write(" ");
+          x <~> " ";
         }
       }
-      x.write(locArr);
-      stdout.flush();
+      x <~> locArr;
+      try! stdout.flush();
     }
   }
 

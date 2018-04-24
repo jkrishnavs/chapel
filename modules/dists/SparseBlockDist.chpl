@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -60,11 +60,11 @@ class SparseBlockDom: BaseSparseDomImpl {
   type sparseLayoutType;
   param stridable: bool = false;  // TODO: remove default value eventually
   const dist: Block(rank, idxType, sparseLayoutType);
-  const whole: domain(rank=rank, idxType=idxType, stridable=stridable);
+  var whole: domain(rank=rank, idxType=idxType, stridable=stridable);
   var locDoms: [dist.targetLocDom] LocSparseBlockDom(rank, idxType, stridable,
       sparseLayoutType);
 
-  proc initialize() {
+  proc postinit() {
     setup();
     //    writeln("Exiting initialize");
   }
@@ -92,6 +92,13 @@ class SparseBlockDom: BaseSparseDomImpl {
       */
     }
     //    writeln("Exiting setup()");
+  }
+
+  proc dsiDestroyDom() {
+    coforall localeIdx in dist.targetLocDom do {
+      on locDoms(localeIdx) do
+        delete locDoms(localeIdx);
+    }
   }
 
   // TODO: For some reason I have to make all the methods for these classes primary
@@ -175,16 +182,16 @@ class SparseBlockDom: BaseSparseDomImpl {
   //
   proc dsiSerialWrite(f) {
     if (rank == 1) {
-      f.write("{");
+      f <~> "{";
       for locdom in locDoms do {
         // on locdom do {
         if (locdom.dsiNumIndices) {
-            f.write(" ");
+            f <~> " ";
             locdom.dsiSerialWrite(f);
           }
           //}
       }
-      f.write("}");
+      f <~> "}";
     } else {
       compilerError("Can't write out multidimensional sparse distributed domains yet");
     }
@@ -229,10 +236,16 @@ class SparseBlockDom: BaseSparseDomImpl {
       yield i;
   }
 
-  iter these(param tag: iterKind) where tag == iterKind.standalone {
+  iter these(param tag: iterKind) where tag == iterKind.standalone &&
+    // Ensure it is legal to invoke the standalone iterator
+    // on locDom.mySparseBlock below.
+    __primitive("method call resolves",
+                locDoms[createTuple(rank,int,0)].mySparseBlock._value,
+                "these", tag)
+  {
     coforall locDom in locDoms {
       on locDom {
-        for i in locDom.mySparseBlock._value.these(tag) {
+        forall i in locDom.mySparseBlock {
           yield i;
         }
       }
@@ -253,6 +266,14 @@ class SparseBlockDom: BaseSparseDomImpl {
   }
 
   proc dsiMyDist() return dist;
+
+  proc dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+    if !lhsPrivate then
+      halt("SparseBlock domain assignment not yet supported");
+    for i in rhs do
+      dsiAdd(i);
+  }
+
 }
 
 //
@@ -271,10 +292,6 @@ class LocSparseBlockDom {
   var parentDom: domain(rank, idxType, stridable);
   var sparseDist = new sparseLayoutType; //unresolved call workaround
   var mySparseBlock: sparse subdomain(parentDom) dmapped new dmap(sparseDist);
-
-  proc initialize() {
-    //    writeln("On locale ", here.id, " LocSparseBlockDom = ", this);
-  }
 
   proc dsiAdd(ind: rank*idxType) {
     return mySparseBlock.add(ind);
@@ -314,6 +331,7 @@ class SparseBlockArr: BaseSparseArr {
   param stridable: bool;
   type sparseLayoutType = DefaultDist;
 
+  // INIT TODO: Can we address this constructor/initializer issue now?
   // ideally I wanted to have `var locArr: [dom.dist.targetLocDom]`. However,
   // superclass' fields cannot be used in child class' field initializers. See
   // the constructor for the workaround.
@@ -323,8 +341,11 @@ class SparseBlockArr: BaseSparseArr {
   var myLocArr: LocSparseBlockArr(eltType, rank, idxType, stridable,
       sparseLayoutType);
 
-  proc SparseBlockArr(type eltType, param rank, type idxType, param stridable,
+  proc init(type eltType, param rank, type idxType, param stridable,
       type sparseLayoutType ,dom) {
+    super.init(eltType=eltType, rank=rank, idxType=idxType, dom=dom);
+    this.stridable = stridable;
+    this.sparseLayoutType = sparseLayoutType;
     locArrDom = dom.dist.targetLocDom;
   }
 
@@ -337,6 +358,14 @@ class SparseBlockArr: BaseSparseArr {
             stridable, sparseLayoutType, locDom);
         if thisid == here.id then
           myLocArr = locArr(localeIdx);
+      }
+    }
+  }
+
+  proc dsiDestroyArr() {
+    coforall localeIdx in dom.dist.targetLocDom {
+      on locArr(localeIdx) {
+        delete locArr(localeIdx);
       }
     }
   }
@@ -367,10 +396,16 @@ class SparseBlockArr: BaseSparseArr {
     }
   }
 
-  iter these(param tag: iterKind) ref where tag == iterKind.standalone {
-    coforall locA in locArr do on locArr {
+  iter these(param tag: iterKind) ref where tag == iterKind.standalone &&
+    // Ensure it is legal to invoke the standalone iterator
+    // on locA.myElems below.
+    __primitive("method call resolves",
+                locArr[locArrDom.low].myElems._value,
+                "these", tag)
+   {
+    coforall locA in locArr do on locA {
       // forward to sparse standalone iterator
-      for i in locA.myElems._value.these(tag) {
+      forall i in locA.myElems {
         yield i;
       }
     }
@@ -378,28 +413,28 @@ class SparseBlockArr: BaseSparseArr {
 
 
   proc dsiAccess(i: rank*idxType) ref {
-    //    local { // TODO: Turn back on once privatization is on
-      if myLocArr != nil && myLocArr.locDom.dsiMember(i) {
+    local {
+      if myLocArr != nil && myLocArr.locDom.parentDom.member(i) {
         return myLocArr.dsiAccess(i);
-        //      }
+      }
     }
     return locArr[dom.dist.targetLocsIdx(i)].dsiAccess(i);
   }
   proc dsiAccess(i: rank*idxType)
   where shouldReturnRvalueByValue(eltType) {
-    //    local { // TODO: Turn back on once privatization is on
-      if myLocArr != nil && myLocArr.locDom.dsiMember(i) {
+    local {
+      if myLocArr != nil && myLocArr.locDom.parentDom.member(i) {
         return myLocArr.dsiAccess(i);
-        //      }
+      }
     }
     return locArr[dom.dist.targetLocsIdx(i)].dsiAccess(i);
   }
   proc dsiAccess(i: rank*idxType) const ref
   where shouldReturnRvalueByConstRef(eltType) {
-    //    local { // TODO: Turn back on once privatization is on
-      if myLocArr != nil && myLocArr.locDom.dsiMember(i) {
+    local {
+      if myLocArr != nil && myLocArr.locDom.parentDom.member(i) {
         return myLocArr.dsiAccess(i);
-        //      }
+      }
     }
     return locArr[dom.dist.targetLocsIdx(i)].dsiAccess(i);
   }
@@ -642,16 +677,16 @@ proc LocSparseBlockArr.this(i) ref {
 //
 proc SparseBlockArr.dsiSerialWrite(f) {
   if (rank == 1) {
-    f.write("[");
+    f <~> "[";
     for locarr in locArr do {
       // on locdom do {
       if (locarr.locDom.dsiNumIndices) {
-        f.write(" ");
+        f <~> " ";
         locarr.dsiSerialWrite(f);
       }
       // }
     }
-    f.write("]");
+    f <~> "]";
   } else {
     compilerError("Can't write out multidimensional sparse distributed arrays yet");
   }
@@ -662,14 +697,17 @@ proc LocSparseBlockArr.dsiSerialWrite(f) {
 }
 
 
-proc SparseBlockDom.dsiSupportsPrivatization() param return false;
+proc SparseBlockDom.dsiSupportsPrivatization() param return true;
 
 proc SparseBlockDom.dsiGetPrivatizeData() return (dist.pid, whole.dims());
 
 proc SparseBlockDom.dsiPrivatize(privatizeData) {
   var privdist = chpl_getPrivatizedCopy(dist.type, privatizeData(1));
-  var c = new SparseBlockDom(rank=rank, idxType=idxType, stridable=stridable,
-      dist=privdist, whole=whole);
+  var c = new SparseBlockDom(rank=rank, idxType=idxType,
+                             sparseLayoutType=sparseLayoutType,
+                             stridable=parentDom.stridable, dist=privdist,
+                             whole=whole,
+                             parentDom=parentDom);
   for i in c.dist.targetLocDom do
     c.locDoms(i) = locDoms(i);
   c.whole = {(...privatizeData(2))};
@@ -684,13 +722,15 @@ proc SparseBlockDom.dsiReprivatize(other, reprivatizeData) {
   whole = {(...reprivatizeData)};
 }
 
-proc SparseBlockArr.dsiSupportsPrivatization() param return false;
+proc SparseBlockArr.dsiSupportsPrivatization() param return true;
 
 proc SparseBlockArr.dsiGetPrivatizeData() return dom.pid;
 
 proc SparseBlockArr.dsiPrivatize(privatizeData) {
   var privdom = chpl_getPrivatizedCopy(dom.type, privatizeData);
-  var c = new SparseBlockArr(eltType=eltType, rank=rank, idxType=idxType, stridable=stridable, dom=privdom);
+  var c = new SparseBlockArr(sparseLayoutType=sparseLayoutType,
+      eltType=eltType, rank=rank, idxType=idxType, stridable=stridable,
+      dom=privdom);
   for localeIdx in c.dom.dist.targetLocDom {
     c.locArr(localeIdx) = locArr(localeIdx);
     if c.locArr(localeIdx).locale.id == here.id then
@@ -699,106 +739,7 @@ proc SparseBlockArr.dsiPrivatize(privatizeData) {
   return c;
 }
 
-proc SparseBlockArr.dsiSupportsBulkTransfer() param return false;
-
-proc SparseBlockArr.doiCanBulkTransfer() {
-  if dom.stridable then
-    for param i in 1..rank do
-      if dom.whole.dim(i).stride != 1 then return false;
-
-  // See above note regarding aliased arrays
-  if disableAliasedBulkTransfer then
-    if _arrAlias != nil then return false;
-
-  return true;
-}
-
-// TODO This function needs to be fixed. For now, explicitly returning false
-// from dsiSupportsBulkTransfer, so this function should never be compiled
-proc SparseBlockArr.doiBulkTransfer(B, viewDom) {
-  halt("SparseBlockArr.doiBulkTransfer not yet implemented");
-/*
-  if debugSparseBlockDistBulkTransfer then resetCommDiagnostics();
-  var sameDomain: bool;
-  // We need to do the following on the locale where 'this' was allocated,
-  //  but hopefully, most of the time we are initiating the transfer
-  //  from the same locale (local on clauses are optimized out).
-  on this do sameDomain = dom==B._value.dom;
-  // Use zippered iteration to piggyback data movement with the remote
-  //  fork.  This avoids remote gets for each access to locArr[i] and
-  //  B._value.locArr[i]
-  coforall (i, myLocArr, BmyLocArr) in zip(dom.dist.targetLocDom,
-                                           locArr,
-                                           B._value.locArr) do
-    on dom.dist.targetLocales(i) {
-
-    if sameDomain &&
-      chpl__useBulkTransfer(myLocArr.myElems, BmyLocArr.myElems) {
-      // Take advantage of DefaultRectangular bulk transfer
-      if debugSparseBlockDistBulkTransfer then startCommDiagnosticsHere();
-      local {
-        myLocArr.myElems._value.doiBulkTransfer(BmyLocArr.myElems);
-      }
-      if debugSparseBlockDistBulkTransfer then stopCommDiagnosticsHere();
-    } else {
-      if debugSparseBlockDistBulkTransfer then startCommDiagnosticsHere();
-      if (rank==1) {
-        var lo=dom.locDoms[i].mySparseBlock.low;
-        const start=lo;
-        //use divCeilPos(i,j) to know the limits
-        //but i and j have to be positive.
-        for (rid, rlo, size) in ConsecutiveChunks(dom,B._value.dom,i,start) {
-          if debugSparseBlockDistBulkTransfer then writeln("Local Locale id=",i,
-                                            "; Remote locale id=", rid,
-                                            "; size=", size,
-                                            "; lo=", lo,
-                                            "; rlo=", rlo
-                                            );
-          // NOTE: This does not work with --heterogeneous, but heterogeneous
-          // compilation does not work right now.  This call should be changed
-          // once that is fixed.
-          var dest = myLocArr.myElems._value.theDataChunk(0);
-          const src = B._value.locArr[rid].myElems._value.theDataChunk(0);
-          __primitive("chpl_comm_get",
-                      __primitive("array_get", dest,
-                                  myLocArr.myElems._value.getDataIndex(lo, getChunked=false)),
-                      rid,
-                      __primitive("array_get", src,
-                                  B._value.locArr[rid].myElems._value.getDataIndex(rlo, getChunked=false)),
-                      size);
-          lo+=size;
-        }
-      } else {
-        var orig=dom.locDoms[i].mySparseBlock.low(dom.rank);
-        for coord in dropDims(dom.locDoms[i].mySparseBlock, dom.locDoms[i].mySparseBlock.rank) {
-          var lo=if rank==2 then (coord,orig) else ((...coord), orig);
-          const start=lo;
-          for (rid, rlo, size) in ConsecutiveChunksD(dom,B._value.dom,i,start) {
-            if debugSparseBlockDistBulkTransfer then writeln("Local Locale id=",i,
-                                        "; Remote locale id=", rid,
-                                        "; size=", size,
-                                        "; lo=", lo,
-                                        "; rlo=", rlo
-                                        );
-          var dest = myLocArr.myElems._value.theDataChunk(0);
-          const src = B._value.locArr[rid].myElems._value.theDataChunk(0);
-          __primitive("chpl_comm_get",
-                      __primitive("array_get", dest,
-                                  myLocArr.myElems._value.getDataIndex(lo, getChunked=false)),
-                      dom.dist.targetLocales(rid).id,
-                      __primitive("array_get", src,
-                                  B._value.locArr[rid].myElems._value.getDataIndex(rlo, getChunked=false)),
-                      size);
-            lo(rank)+=size;
-          }
-        }
-      }
-      if debugSparseBlockDistBulkTransfer then stopCommDiagnosticsHere();
-    }
-  }
-  if debugSparseBlockDistBulkTransfer then writeln("Comms:",getCommDiagnostics());
-*/
-}
+// TODO: bulk-transfer support
 
 iter ConsecutiveChunks(d1,d2,lid,lo) {
   var elemsToGet = d1.locDoms[lid].mySparseBlock.numIndices;

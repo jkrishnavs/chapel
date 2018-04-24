@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,11 +20,12 @@
 #include "optimizations.h"
 
 #include "astutil.h"
+#include "driver.h"
 #include "expr.h"
+#include "ForLoop.h"
 #include "passes.h"
 #include "stlUtil.h"
 #include "stmt.h"
-#include "ForLoop.h"
 
 #define DEBUG_RAAWRT 0
 

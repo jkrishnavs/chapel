@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -98,6 +98,9 @@ public:
 
   virtual bool     enterForwardingStmt (ForwardingStmt*     node);
   virtual void     exitForwardingStmt  (ForwardingStmt*     node);
+
+  virtual bool     enterDeferStmt   (DeferStmt*         node);
+  virtual void     exitDeferStmt    (DeferStmt*         node);
 
   virtual bool     enterTryStmt     (TryStmt*           node);
   virtual void     exitTryStmt      (TryStmt*           node);

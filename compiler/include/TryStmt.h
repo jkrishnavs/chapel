@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -30,6 +30,7 @@ public:
   static BlockStmt*   build(bool tryBang, Expr*      expr);
   static BlockStmt*   build(bool tryBang, BlockStmt* body);
   static BlockStmt*   build(bool tryBang, BlockStmt* body, BlockStmt* catches);
+  static BlockStmt*   buildWithCatchall(BlockStmt* body, BlockStmt* onErr);
 
                       TryStmt(bool tryBang, BlockStmt* body, BlockStmt* catches);
                       ~TryStmt();
@@ -38,7 +39,6 @@ public:
 
   void                accept(AstVisitor* visitor);
   void                replaceChild(Expr* old_ast, Expr* new_ast);
-  Expr*               getFirstChild();
   Expr*               getFirstExpr();
   Expr*               getNextExpr(Expr* expr);
   void                verify();

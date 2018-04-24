@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -25,7 +25,7 @@
 static int64_t chpl_capPrivateObjects = 0;
 static chpl_sync_aux_t privatizationSync;
 
-static void** chpl_privateObjects = NULL;
+void** chpl_privateObjects = NULL;
 
 void chpl_privatization_init(void) {
     chpl_sync_initAux(&privatizationSync);
@@ -70,12 +70,6 @@ void chpl_newPrivatizedClass(void* v, int64_t pid) {
   chpl_sync_unlock(&privatizationSync);
 }
 
-
-void* chpl_getPrivatizedClass(int64_t i) {
-  return chpl_privateObjects[i];
-}
-
-
 void chpl_clearPrivatizedClass(int64_t i) {
   chpl_sync_lock(&privatizationSync);
   chpl_privateObjects[i] = NULL;
@@ -93,4 +87,3 @@ int64_t chpl_numPrivatizedClasses(void) {
   chpl_sync_unlock(&privatizationSync);
   return ret;
 }
-

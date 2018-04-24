@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,10 +21,21 @@
 #define _INITIALIZER_RULES_H_
 
 class AggregateType;
+class BlockStmt;
+class CallExpr;
 class FnSymbol;
+
+bool      isSuperInit(CallExpr* stmt);
+bool      isThisInit (CallExpr* stmt);
+bool      isInitDone (CallExpr* stmt);
+
+bool      hasInitDone(BlockStmt* block);
+
+void      errorOnFieldsInArgList(FnSymbol* fn);
 
 void      preNormalizeFields(AggregateType* at);
 void      preNormalizeInitMethod(FnSymbol* fn);
+void      preNormalizePostInit(AggregateType* at);
 FnSymbol* buildClassAllocator(FnSymbol* initMethod);
 
 #endif

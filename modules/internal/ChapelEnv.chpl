@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -30,6 +30,7 @@
 
  */
 module ChapelEnv {
+  use ChapelStandard;
 
   /* See :ref:`readme-chplenv.CHPL_HOME` for more information. */
   param CHPL_HOME:string            = __primitive("get compiler variable", "CHPL_HOME");
@@ -94,11 +95,12 @@ module ChapelEnv {
   /* See :ref:`readme-chplenv.CHPL_HWLOC` for more information. */
   param CHPL_HWLOC:string           = __primitive("get compiler variable", "CHPL_HWLOC");
 
+  pragma "no doc"
+  /* See :ref:`readme-chplenv.CHPL_JEMALLOC` for more information. */
+  param CHPL_JEMALLOC:string           = __primitive("get compiler variable", "CHPL_JEMALLOC");
+
   /* See :ref:`readme-chplenv.CHPL_REGEXP` for more information. */
   param CHPL_REGEXP:string          = __primitive("get compiler variable", "CHPL_REGEXP");
-
-  /* See :ref:`readme-chplenv.CHPL_WIDE_POINTERS` for more information. */
-  param CHPL_WIDE_POINTERS:string   = __primitive("get compiler variable", "CHPL_WIDE_POINTERS");
 
   /* See :ref:`readme-chplenv.CHPL_LLVM` for more information. */
   param CHPL_LLVM:string            = __primitive("get compiler variable", "CHPL_LLVM");

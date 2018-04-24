@@ -7,14 +7,11 @@ record Foo {
 
   proc init(type tVal = bool) {
     t = tVal;
-    super.init();
   }
 }
 
 var foo1: Foo(int); // specifies a different value
-var foo2: Foo(); // relies on the default value
 var foo3: Foo(bool); // specifies the same value as the default
 
 writeln(foo1);
-writeln(foo2);
 writeln(foo3);

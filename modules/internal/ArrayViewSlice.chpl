@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -23,6 +23,21 @@
 // represent slices of another array via a domain.
 //
 module ArrayViewSlice {
+  use ChapelStandard;
+
+  private proc buildIndexCacheHelper(arr, dom) {
+    param isRankChangeReindex = arr.isRankChangeArrayView() ||
+                                arr.isReindexArrayView() ||
+                                (chpl__isArrayView(arr) && arr._containsRCRE());
+    if chpl__isDROrDRView(arr) && isRankChangeReindex {
+      if chpl__isArrayView(arr) then
+        return arr.indexCache.toSlice(dom);
+      else
+        return arr.dsiGetRAD().toSlice(dom);
+    } else {
+      return false;
+    }
+  }
 
   //
   // The class representing a slice of an array.  Like other array
@@ -46,7 +61,22 @@ module ArrayViewSlice {
     // (eventually...), the indexCache provides a mean of directly
     // accessing the array's ddata to avoid indirection overheads
     // through the array field above.
-    const indexCache = buildIndexCache();
+    //const indexCache = buildIndexCache();
+    const indexCache;
+
+    proc init(type eltType, const _DomPid, const dom, const _ArrPid, const _ArrInstance) {
+      this.eltType      = eltType;
+      this._DomPid      = _DomPid;
+      this.dom          = dom;
+      this._ArrPid      = _ArrPid;
+      this._ArrInstance = _ArrInstance;
+
+      this.indexCache = buildIndexCacheHelper(_ArrInstance, dom);
+    }
+
+    forwarding arr except these,
+                      doiBulkTransferFromKnown, doiBulkTransferToKnown,
+                      doiBulkTransferFromAny,  doiBulkTransferToAny;
 
 
     //
@@ -89,8 +119,9 @@ module ArrayViewSlice {
     }
 
     iter these(param tag: iterKind) ref
-      where tag == iterKind.standalone && !localeModelHasSublocales {
-      for i in privDom.these(tag) do yield arr.dsiAccess(i);
+      where tag == iterKind.standalone && !localeModelHasSublocales &&
+           __primitive("method call resolves", privDom, "these", tag) {
+      forall i in privDom do yield arr.dsiAccess(i);
     }
 
     iter these(param tag: iterKind) where tag == iterKind.leader {
@@ -180,17 +211,6 @@ module ArrayViewSlice {
       }
     }
 
-    inline proc dsiLocalAccess(i) ref
-      return arr.dsiLocalAccess(i);
-
-    inline proc dsiLocalAccess(i)
-      where shouldReturnRvalueByValue(eltType)
-      return arr.dsiLocalAccess(i);
-
-    inline proc dsiLocalAccess(i) const ref
-      where shouldReturnRvalueByConstRef(eltType)
-      return arr.dsiLocalAccess(i);
-
     inline proc checkBounds(i) {
       if boundsChecking then
         if !privDom.dsiMember(i) then
@@ -202,25 +222,11 @@ module ArrayViewSlice {
     // locality-oriented queries
     //
 
-    proc dsiTargetLocales() {
-      return arr.dsiTargetLocales();
-    }
-
     proc dsiHasSingleLocalSubdomain() param
       return privDom.dsiHasSingleLocalSubdomain();
 
     proc dsiLocalSubdomain() {
       return privDom.dsiLocalSubdomain();
-    }
-
-    proc dsiNoFluffView() {
-      // For now avoid implementing 'noFluffView' on each class and use
-      // 'canResolve' to print a better error message.
-      if canResolveMethod(arr, "dsiNoFluffView") {
-        return arr.dsiNoFluffView();
-      } else {
-        compilerError("noFluffView is not supported on this array type.");
-      }
     }
 
 
@@ -244,73 +250,6 @@ module ArrayViewSlice {
                                    _ArrPid=privatizeData(3),
                                    _ArrInstance=privatizeData(4));
     }
-
-
-    //
-    // bulk-transfer
-    //
-
-    proc dsiSupportsBulkTransfer() param {
-      return arr.dsiSupportsBulkTransfer();
-    }
-
-    proc dsiSupportsBulkTransferInterface() param
-      return arr.dsiSupportsBulkTransferInterface();
-
-    proc _viewHelper(dims) {
-      compilerError("viewHelper not supported on ArrayViewSlice.");
-    }
-
-    proc _getViewDom() {
-      if _containsRCRE() {
-        // Rank-changes and reindexes know how to deal with nested rank-changes
-        // and reindexes, so hand off our indices and let them handle the rest.
-        var nextView = _getRCREView();
-        return nextView._viewHelper(dom.dsiDims());
-      } else {
-        return {(...dom.dsiDims())};
-      }
-    }
-
-    // contiguous transfer support
-    proc doiUseBulkTransfer(B) {
-      return arr.doiUseBulkTransfer(B);
-    }
-
-    proc doiCanBulkTransfer(viewDom) {
-      return arr.doiCanBulkTransfer(viewDom);
-    }
-
-    proc doiBulkTransfer(B, viewDom) {
-      arr.doiBulkTransfer(B, viewDom);
-    }
-
-    // strided transfer support
-    proc doiUseBulkTransferStride(B) {
-      return arr.doiUseBulkTransferStride(B);
-    }
-
-    proc doiCanBulkTransferStride(viewDom) {
-      return arr.doiCanBulkTransferStride(viewDom);
-    }
-
-    proc doiBulkTransferStride(B, viewDom) {
-      arr.doiBulkTransferStride(B, viewDom);
-    }
-
-    // distributed transfer support
-    proc doiBulkTransferToDR(B, viewDom) {
-      arr.doiBulkTransferToDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFromDR(B, viewDom) {
-      arr.doiBulkTransferFromDR(B, viewDom);
-    }
-
-    proc doiBulkTransferFrom(B, viewDom) {
-      arr.doiBulkTransferFrom(B, viewDom);
-    }
-
 
     //
     // utility functions used to set up the index cache
@@ -385,6 +324,17 @@ module ArrayViewSlice {
       compilerAssert(this._containsRCRE());
       return arr._getRCREView();
     }
-  }
 
+    proc doiCanBulkTransferRankChange() param {
+      return arr.doiCanBulkTransferRankChange();
+    }
+
+    proc doiBulkTransferFromKnown(destDom, srcClass, srcDom) : bool {
+      return chpl__bulkTransferArray(this.arr, destDom, srcClass, srcDom);
+    }
+
+    proc doiBulkTransferToKnown(srcDom, destClass, destDom) : bool {
+      return chpl__bulkTransferArray(destClass, destDom, this.arr, srcDom);
+    }
+  }
 }

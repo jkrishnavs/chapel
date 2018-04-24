@@ -33,6 +33,7 @@ chplvars = [
              'CHPL_NETWORK_ATOMICS',
              'CHPL_GMP',
              'CHPL_HWLOC',
+             'CHPL_JEMALLOC',
              'CHPL_REGEXP',
              'CHPL_WIDE_POINTERS',
              'CHPL_LLVM',
@@ -194,12 +195,26 @@ def get(var, default=None):
     """ Check if variable has a default defined somewhere and return value """
     return os.environ.get(var) or chplconfig.get(var) or default
 
+@memoize
+def get_environ(var, default=None):
+    """ Check if variable has a default defined in the environment and return value """
+    return os.environ.get(var) or default
 
-def allvars():
-    """ Generate overrides currently set via environment/chplconfig """
+@memoize
+def get_chplconfig(var, default=None):
+    """ Check if variable has a default defined in a chplconfig file and return value """
+    return chplconfig.get(var) or default
+
+""" Generate env vars currently set via environment/chplconfig """
+def keys():
     for var in [v for v in chplvars if get(v)]:
-        varstring = '{0}={1}'.format(var, get(var))
-        yield varstring
+        yield var
+
+""" Generate (env var, value) pairs currently set via environment/chplconfig """
+def items():
+    for var in keys():
+        yield (var, get(var))
+
 
 
 def _main():

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -22,7 +22,7 @@
 #include "astutil.h"
 #include "AstVisitor.h"
 #include "build.h"
-#include "codegen.h"
+#include "DeferStmt.h"
 
 #include <algorithm>
 
@@ -86,12 +86,11 @@ static void tryToReplaceWithDirectRangeIterator(Expr* iteratorExpr)
       range = toCallExpr(call->get(1)->copy());
       stride = toExpr(call->get(2)->copy());
     }
-    // or grab the count if we have a counted range and set unit stride
+    // or grab the count if we have a counted range
     else if (call->isNamed("#"))
     {
       range = toCallExpr(call->get(1)->copy());
       count = toExpr(call->get(2)->copy());
-      stride = new SymExpr(new_IntSymbol(1));
     }
     // or assume the call is the range (checked below) and set unit stride
     else
@@ -113,7 +112,7 @@ static void tryToReplaceWithDirectRangeIterator(Expr* iteratorExpr)
     // with:
     //
     // `chpl_direct_range_iter(low, high, stride)`
-    if (range && range->isNamed("chpl_build_bounded_range"))
+    if (!count && range && range->isNamed("chpl_build_bounded_range"))
     {
       // replace the range construction with a direct range iterator
       Expr* low = range->get(1)->copy();
@@ -132,8 +131,7 @@ static void tryToReplaceWithDirectRangeIterator(Expr* iteratorExpr)
     else if (count && range && range->isNamed("chpl_build_low_bounded_range"))
     {
       Expr* low = range->get(1)->copy();
-      Expr* high = new CallExpr("-", new CallExpr("+", low->copy(), count), new_IntSymbol(1));
-      iteratorExpr->replace(new CallExpr("chpl_direct_range_iter", low, high, stride));
+      iteratorExpr->replace(new CallExpr("chpl_direct_counted_range_iter", low, count));
     }
   }
 }
@@ -144,17 +142,19 @@ static void tryToReplaceWithDirectRangeIterator(Expr* iteratorExpr)
 *                                                                           *
 ************************************* | ************************************/
 
-BlockStmt* ForLoop::buildForLoop(Expr*      indices,
-                                 Expr*      iteratorExpr,
-                                 BlockStmt* body,
-                                 bool       coforall,
-                                 bool       zippered)
+BlockStmt* ForLoop::doBuildForLoop(Expr*      indices,
+                          Expr*      iteratorExpr,
+                          BlockStmt* body,
+                          bool       coforall,
+                          bool       zippered,
+                          bool       isLoweredForall)
 {
   VarSymbol*   index         = newTemp("_indexOfInterest");
   VarSymbol*   iterator      = newTemp("_iterator");
   CallExpr*    iterInit      = 0;
   CallExpr*    iterMove      = 0;
-  ForLoop*     loop          = new ForLoop(index, iterator, body, zippered);
+  ForLoop*     loop          = new ForLoop(index, iterator, body,
+                                           zippered, isLoweredForall);
   LabelSymbol* continueLabel = new LabelSymbol("_continueLabel");
   LabelSymbol* breakLabel    = new LabelSymbol("_breakLabel");
   BlockStmt*   retval        = new BlockStmt();
@@ -263,15 +263,34 @@ BlockStmt* ForLoop::buildForLoop(Expr*      indices,
   retval->insertAtTail(new DefExpr(iterator));
 
   retval->insertAtTail(iterInit);
+  retval->insertAtTail(new DeferStmt(new CallExpr("_freeIterator", iterator)));
   retval->insertAtTail(new BlockStmt(iterMove, BLOCK_TYPE));
 
   retval->insertAtTail(loop);
 
   retval->insertAtTail(new DefExpr(breakLabel));
-  retval->insertAtTail(new CallExpr("_freeIterator", iterator));
 
   return retval;
 }
+
+BlockStmt* ForLoop::buildForLoop(Expr*      indices,
+                                 Expr*      iteratorExpr,
+                                 BlockStmt* body,
+                                 bool       coforall,
+                                 bool       zippered)
+{
+  return doBuildForLoop(indices, iteratorExpr, body, coforall, zippered, false);
+}
+
+BlockStmt* ForLoop::buildLoweredForallLoop(Expr*      indices,
+                                           Expr*      iteratorExpr,
+                                           BlockStmt* body,
+                                           bool       coforall,
+                                           bool       zippered)
+{
+  return doBuildForLoop(indices, iteratorExpr, body, coforall, zippered, true);
+}
+
 
 /************************************ | *************************************
 *                                                                           *
@@ -284,16 +303,19 @@ ForLoop::ForLoop() : LoopStmt(0)
   mIndex    = 0;
   mIterator = 0;
   mZippered = false;
+  mLoweredForall = false;
 }
 
 ForLoop::ForLoop(VarSymbol* index,
                  VarSymbol* iterator,
                  BlockStmt* initBody,
-                 bool       zippered) : LoopStmt(initBody)
+                 bool       zippered,
+                 bool       isLoweredForall) : LoopStmt(initBody)
 {
   mIndex    = new SymExpr(index);
   mIterator = new SymExpr(iterator);
   mZippered = zippered;
+  mLoweredForall = isLoweredForall;
 }
 
 ForLoop::~ForLoop()
@@ -364,6 +386,11 @@ bool ForLoop::isCoforallLoop() const
   return mIndex->symbol()->hasFlag(FLAG_COFORALL_INDEX_VAR);
 }
 
+bool ForLoop::isLoweredForallLoop() const
+{
+  return mLoweredForall;
+}
+
 SymExpr* ForLoop::indexGet() const
 {
   return mIndex;
@@ -415,8 +442,8 @@ void ForLoop::verify()
   if (mIterator == 0)
     INT_FATAL(this, "ForLoop::verify. iterator  is NULL");
 
-  if (modUses   != 0)
-    INT_FATAL(this, "ForLoop::verify. modUses   is not NULL");
+  if (useList   != 0)
+    INT_FATAL(this, "ForLoop::verify. useList   is not NULL");
 
   if (byrefVars != 0)
     INT_FATAL(this, "ForLoop::verify. byrefVars is not NULL");
@@ -447,8 +474,8 @@ void ForLoop::accept(AstVisitor* visitor)
     if (iteratorGet() != 0)
       iteratorGet()->accept(visitor);
 
-    if (modUses)
-      modUses->accept(visitor);
+    if (useList)
+      useList->accept(visitor);
 
     if (byrefVars)
       byrefVars->accept(visitor);

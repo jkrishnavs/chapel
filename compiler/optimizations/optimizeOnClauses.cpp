@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -24,12 +24,17 @@
 //  the handler (rather than creating a new task).
 //
 
-#include <vector>
-#include "stlUtil.h"
-#include "astutil.h"
-#include "expr.h"
-#include "stmt.h"
 #include "passes.h"
+
+#include "astutil.h"
+#include "driver.h"
+#include "expr.h"
+#include "stlUtil.h"
+#include "stmt.h"
+#include "wellknown.h"
+
+#include <vector>
+
 
 // There are two questions:
 // 1- is the primitive/function eligible to run in a fast block?
@@ -129,6 +134,8 @@ classifyPrimitive(CallExpr *call) {
   case PRIM_LOOKUP_FILENAME:
 
   case PRIM_STACK_ALLOCATE_CLASS:
+
+  case PRIM_CLASS_NAME_BY_ID:
     return FAST_AND_LOCAL;
 
   case PRIM_MOVE:
@@ -171,6 +178,9 @@ classifyPrimitive(CallExpr *call) {
       // Otherwise, communication is required if we're not in a local block
       return FAST_NOT_LOCAL;
     }
+
+  case PRIM_WIDE_MAKE:
+    return FAST_NOT_LOCAL;
 
 // I think these can always return true. <hilde>
 // But that works only if the remote get is removed from code generation.
@@ -242,15 +252,21 @@ classifyPrimitive(CallExpr *call) {
 
   case PRIM_INIT:
   case PRIM_INIT_FIELD:
+  case PRIM_INIT_MAYBE_SYNC_SINGLE_FIELD:
   case PRIM_INIT_VAR:
   case PRIM_NO_INIT:
   case PRIM_TYPE_INIT:
 
   case PRIM_LOGICAL_FOLDER:
   case PRIM_TYPEOF:
+  case PRIM_STATIC_TYPEOF:
+  case PRIM_SCALAR_PROMOTION_TYPE:
   case PRIM_TYPE_TO_STRING:
   case PRIM_ENUM_MIN_BITS:
   case PRIM_ENUM_IS_SIGNED:
+  case PRIM_IS_CLASS_TYPE:
+  case PRIM_IS_EXTERN_CLASS_TYPE:
+  case PRIM_IS_RECORD_TYPE:
   case PRIM_IS_UNION_TYPE:
   case PRIM_IS_ATOMIC_TYPE:
   case PRIM_IS_TUPLE_TYPE:
@@ -302,6 +318,11 @@ classifyPrimitive(CallExpr *call) {
   case NUM_KNOWN_PRIMS:
   case PRIM_ITERATOR_RECORD_FIELD_VALUE_BY_FORMAL:
   case PRIM_THROW:
+  case PRIM_TRY_EXPR:
+  case PRIM_TRYBANG_EXPR:
+  case PRIM_CHECK_ERROR:
+  case PRIM_TO_UNMANAGED_CLASS:
+  case PRIM_TO_BORROWED_CLASS:
     INT_FATAL("This primitive should have been removed from the tree by now.");
     break;
 
@@ -318,19 +339,20 @@ classifyPrimitive(CallExpr *call) {
     //
   case PRIM_ARRAY_ALLOC:
   case PRIM_ARRAY_FREE:
-  case PRIM_ARRAY_FREE_ELTS:
   case PRIM_STRING_COPY:
     return LOCAL_NOT_FAST;
 
+  case PRIM_GET_END_COUNT:
+  case PRIM_SET_END_COUNT:
+  case PRIM_GET_DYNAMIC_END_COUNT:
+  case PRIM_SET_DYNAMIC_END_COUNT:
+    return FAST_AND_LOCAL;
 
     // Temporarily unclassified (legacy) cases.
     // These formerly defaulted to false (slow), so we leave them
     // here until they are proven fast.
-  case PRIM_GET_END_COUNT:
-  case PRIM_SET_END_COUNT:
   case PRIM_TO_LEADER:
   case PRIM_TO_FOLLOWER:
-  case PRIM_DELETE:
   case PRIM_CALL_DESTRUCTOR:
   case PRIM_HEAP_REGISTER_GLOBAL_VAR:
   case PRIM_HEAP_BROADCAST_GLOBAL_VARS:
@@ -553,10 +575,41 @@ removeUnnecessaryFences(FnSymbol* fn)
 }
 
 
+// Insert runningTaskCounter increment and decrement calls for on-stmts.
+//
+// TODO move this into its own pass
+static void addRunningTaskModifiers(void) {
+  compute_call_sites();
+
+  forv_Vec(CallExpr, call, gCallExprs) {
+    FnSymbol* fn = call->resolvedFunction();
+    if (fn && fn->hasFlag(FLAG_ON_BLOCK)) {
+      // For non-fast on's increment the local runningTaskCounter before
+      // executing the body. Fast on's run directly in the comm-handler and
+      // will not spawn a task.
+      if (fn->hasFlag(FLAG_FAST_ON) == false) {
+        SET_LINENO(fn);
+        fn->insertAtHead(new CallExpr(gChplIncRunningTask));
+        fn->insertBeforeEpilogue(new CallExpr(gChplDecRunningTask));
+      }
+
+      // For on stmts that aren't fast or non-blocking, decrement the local
+      // runningTaskCounter before migrating to a new locale
+      if (fn->hasEitherFlag(FLAG_NON_BLOCKING, FLAG_FAST_ON) == false) {
+        SET_LINENO(call);
+        call->insertBefore(new CallExpr(gChplDecRunningTask));
+        call->insertAfter(new CallExpr(gChplIncRunningTask));
+      }
+    }
+  }
+}
+
 void
 optimizeOnClauses(void) {
-  if (fNoOptimizeOnClauses)
+  if (fNoOptimizeOnClauses) {
+    addRunningTaskModifiers();
     return;
+  }
 
   // If we're not using locks, the extern functions in
   // atomics are local and safe for fast on.
@@ -622,4 +675,5 @@ optimizeOnClauses(void) {
       }
     }
   }
+  addRunningTaskModifiers();
 }

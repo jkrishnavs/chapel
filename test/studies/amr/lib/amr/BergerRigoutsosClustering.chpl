@@ -160,7 +160,7 @@ class CandidateDomain {
 
 
   //|\'''''''''''''''''''|\
-  //| >    destructor    | >
+  //| >  deinitializer   | >
   //|/...................|/
 
   proc deinit ()
@@ -168,7 +168,7 @@ class CandidateDomain {
     for i in 1..rank do delete signatures(i);
   }
   // /|'''''''''''''''''''/|
-  //< |    destructor    < |
+  //< |  deinitializer   < |
   // \|...................\|
 
 
@@ -237,7 +237,8 @@ proc CandidateDomain.trim()
       //---- Approximately center the enlarged range ----
       
       var n_overflow_low = (min_width(d) - R.length) / 2;
-      R = ((trim_low - n_overflow_low*stride .. by stride) #min_width(d)).alignHigh();
+      var tmp = ((trim_low - n_overflow_low*stride .. by stride) #min_width(d));
+      R = tmp.alignHigh();
 
 
       //---- Enforce bounds of D ----
@@ -427,7 +428,7 @@ proc CandidateDomain.inflectionCut ()
     
     if D.dim(d).length >= 4 {
 
-      var sig => signatures(d).array;
+      ref sig = signatures(d).array;
       var stride = D.stride(d);
 
       //===> Search for cuts ===>

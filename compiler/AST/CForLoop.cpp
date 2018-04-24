@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -244,8 +244,8 @@ void CForLoop::verify()
   if (incrBlockGet()->blockTag  != BLOCK_C_FOR_LOOP)
     INT_FATAL(this, "CForLoop::verify. incrBlock is not BLOCK_C_FOR_LOOP");
 
-  if (modUses                   != 0)
-    INT_FATAL(this, "CForLoop::verify. modUses   is not NULL");
+  if (useList                   != 0)
+    INT_FATAL(this, "CForLoop::verify. useList   is not NULL");
 
   if (byrefVars                 != 0)
     INT_FATAL(this, "CForLoop::verify. byrefVars is not NULL");

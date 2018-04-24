@@ -33,6 +33,8 @@ studies/shootout/thread-ring/thread-ring.graph
 release/examples/benchmarks/ssca2/total_time.graph
 release/examples/benchmarks/lulesh/lulesh.graph
 release/examples/benchmarks/miniMD/miniMD.graph
+studies/comd/llnl/CoMD.graph
+studies/comd/elegant/arrayOfStructs/CoMD-elegant-aos.graph
 studies/isx/isx.graph
 release/examples/benchmarks/isx/isx-release.graph
 studies/hpcc/STREAM_study.graph
@@ -74,15 +76,14 @@ performance/bradc/parOpEquals.graph
 performance/sungeun/assign.1024.graph
 performance/sungeun/init.graph
 performance/thomasvandoren/matrix-multiply.graph
-parallel/taskCompare/elliot/taskSpawn.graph
-parallel/taskCompare/elliot/serialTaskSpawn.graph
 distributions/robust/associative/performance/array_iter.graph
 performance/elliot/no-op.graph
 performance/bharshbarg/forall-dom-range.graph
 performance/bharshbarg/arr-forall.graph
 performance/bharshbarg/views-forall-index.graph
 performance/bharshbarg/views-forall-iter.graph
-studies/prk/stencil/prk-stencil-time.graph
+performance/bharshbarg/create-views.graph
+studies/prk/Stencil/prk-stencil-time.graph
 types/string/ferguson/temporary-copies.graph
 types/string/psahabu/perf/arguments.graph
 types/string/psahabu/perf/search.graph
@@ -112,6 +113,8 @@ release/examples/benchmarks/ssca2/performance.graph
 # suite: DOE proxy apps
 studies/lulesh/bradc/lulesh-dense.graph
 release/examples/benchmarks/miniMD/miniMD.graph
+studies/comd/llnl/CoMD.graph
+studies/comd/elegant/arrayOfStructs/CoMD-elegant-aos.graph
 release/examples/benchmarks/lcals/LCALS-raw-short.graph
 release/examples/benchmarks/lcals/LCALS-raw-medium.graph
 release/examples/benchmarks/lcals/LCALS-raw-long.graph
@@ -169,12 +172,12 @@ studies/isx/isx-no-return.graph
 studies/isx/isx-per-task.graph
 release/examples/benchmarks/isx/isx-release.graph
 # suite: PRK benchmarks
-studies/prk/synch_p2p/prk-synch_p2p.graph
-studies/prk/synch_p2p/prk-synch_p2p-time.graph
-studies/prk/stencil/prk-stencil.graph
-studies/prk/stencil/prk-stencil-time.graph
-studies/prk/transpose/prk-transpose.graph
-studies/prk/transpose/prk-transpose-time.graph
+studies/prk/Synch_p2p/prk-synch_p2p.graph
+studies/prk/Synch_p2p/prk-synch_p2p-time.graph
+studies/prk/Stencil/prk-stencil.graph
+studies/prk/Stencil/prk-stencil-time.graph
+studies/prk/Transpose/prk-transpose.graph
+studies/prk/Transpose/prk-transpose-time.graph
 # suite: NAS Parallel benchmarks
 npb/cg/cg.graph
 npb/cg/cg-a.graph
@@ -230,6 +233,7 @@ parallel/taskCompare/lydia/loopCompare.graph
 # suite: Task Spawning
 parallel/taskCompare/elliot/taskSpawn.graph
 parallel/taskCompare/elliot/serialTaskSpawn.graph
+performance/comm/barrier/empty-chpl-barrier.graph
 # suite: Compiler performance
 performance/compiler/bradc/fft-timecomp.graph
 performance/compiler/bradc/compSampler-timecomp.graph
@@ -259,15 +263,18 @@ types/string/psahabu/perf/arguments.graph
 types/string/psahabu/perf/search.graph
 types/string/psahabu/perf/substring.graph
 # suite: Standard Library
-modules/packages/Sort/performance/sorts-linearithmic.graph
-modules/packages/Sort/performance/sorts-quadratic.graph
+library/packages/Sort/performance/sorts-linearithmic.graph
+library/packages/Sort/performance/sorts-quadratic.graph
+library/packages/LinearAlgebra/performance/linearalgebra-perf.graph
+sparse/CS/multiplication/cs-multiplication.graph
+sparse/CS/resize/cs-resize.graph
 # suite: Misc
 users/franzf/v0/chpl/main.graph
 reductions/diten/testSerialReductions.graph
 reductions/vass/reductions-perf.graph
 spectests.graph
 studies/paracr/asenjo/PARACR-BC.graph
-modules/standard/BitOps/c-tests/performance/bitops.graph
+library/standard/BitOps/c-tests/performance/bitops.graph
 studies/rbc/tvandoren/RBC.graph
 exercises/c-ray/c-ray.graph
 # suite: Colorado State University
@@ -312,3 +319,4 @@ statements/lydia/moduleVersusFunctionDifAccess.graph
 statements/lydia/moduleVersusFunction.graph
 # suite: Samples (bogus)
 Samples/Performance/foo.graph
+Samples/Performance/cleanCopy/foobar.graph

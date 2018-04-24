@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -31,10 +31,16 @@
 
 #include "beautify.h"
 #include "driver.h"
+#include "llvmVer.h"
 #include "misc.h"
 #include "mysystem.h"
+#include "stlUtil.h"
 #include "stringutil.h"
 #include "tmpdirname.h"
+
+#ifdef HAVE_LLVM
+#include "llvm/Support/FileSystem.h"
+#endif
 
 #include <pwd.h>
 #include <unistd.h>
@@ -48,44 +54,69 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-char               executableFilename[FILENAME_MAX + 1] = "a.out";
+char               executableFilename[FILENAME_MAX + 1] = "";
 char               saveCDir[FILENAME_MAX + 1]           = "";
 
 std::string ccflags;
 std::string ldflags;
 
-int                numLibFlags                          = 0;
-const char**       libFlag                              = NULL;
-
-Vec<const char*>   incDirs;
+std::vector<const char*>   incDirs;
+std::vector<const char*>   libDirs;
+std::vector<const char*>   libFiles;
 
 // directory for intermediates; tmpdir or saveCDir
 static const char* intDirName        = NULL;
 
 static const int   MAX_CHARS_PER_PID = 32;
 
-void addLibInfo(const char* libName) {
-  static int libSpace = 0;
+static void addPath(const char* pathVar, std::vector<const char*>* pathvec) {
+  char* dirString = strdup(pathVar);
 
-  numLibFlags++;
+  char* colon;              // used to refer to ':'s in dirString
 
-  if (numLibFlags > libSpace) {
-    libSpace = 2*numLibFlags;
-    libFlag = (const char**)realloc(libFlag, libSpace*sizeof(char*));
-  }
+  do {
+    colon = strchr(dirString, ':'); // are there colon separators?
+    if (colon != NULL) {
+      *colon = '\0';                      // if so, cut the string there
+      colon++;                            // and advance to the next
+    }
 
-  libFlag[numLibFlags-1] = astr(libName);
+    pathvec->push_back(astr(dirString));
+
+    dirString = colon;                     // advance dirString
+  } while (colon != NULL);
+}
+
+//
+// Convert a libString of the form "foo:bar:baz" to entries in libDirs
+//
+void addLibPath(const char* libString) {
+  addPath(libString, &libDirs);
+}
+
+void addLibFile(const char* libFile) {
+  // use astr() to get a copy of the string that this vector can own
+  libFiles.push_back(astr(libFile));
 }
 
 void addIncInfo(const char* incDir) {
-  incDirs.add(astr(incDir));
+  addPath(incDir, &incDirs);
 }
 
 void ensureDirExists(const char* dirname, const char* explanation) {
+#ifdef HAVE_LLVM
+  std::error_code err = llvm::sys::fs::create_directories(dirname);
+  if (err) {
+    USR_FATAL("creating directory %s failed: %s\n",
+              dirname,
+              err.message().c_str());
+  }
+#else
   const char* mkdircommand = "mkdir -p ";
   const char* command = astr(mkdircommand, dirname);
 
   mysystem(command, explanation);
+#endif
 }
 
 
@@ -168,9 +199,39 @@ static void ensureTmpDirExists() {
 }
 
 
-void deleteDir(const char* dirname) {
+#if !defined(HAVE_LLVM) || HAVE_LLVM_VER < 50
+static
+void deleteDirSystem(const char* dirname) {
   const char* cmd = astr("rm -rf ", dirname);
   mysystem(cmd, astr("removing directory: ", dirname));
+}
+#endif
+
+#ifdef HAVE_LLVM
+static
+void deleteDirLLVM(const char* dirname) {
+#if HAVE_LLVM_VER >= 50
+  // LLVM 5 added remove_directories
+  std::error_code err = llvm::sys::fs::remove_directories(dirname, false);
+  if (err) {
+    USR_FATAL("removing directory %s failed: %s\n",
+              dirname,
+              err.message().c_str());
+  }
+#else
+  deleteDirSystem(dirname);
+#endif
+}
+#endif
+
+
+
+void deleteDir(const char* dirname) {
+#ifdef HAVE_LLVM
+  deleteDirLLVM(dirname);
+#else
+  deleteDirSystem(dirname);
+#endif
 }
 
 
@@ -453,21 +514,25 @@ std::string runPrintChplEnv(std::map<std::string, const char*> varMap) {
   }
 
   // Toss stderr away until printchplenv supports a '--suppresswarnings' flag
-  command += std::string(CHPL_HOME) + "/util/printchplenv --simple 2> /dev/null";
+  command += std::string(CHPL_HOME) + "/util/printchplenv --all --internal --no-tidy --simple 2> /dev/null";
 
   return runCommand(command);
 }
 
-std::string getChplPythonVersion() {
-  // Runs util/chplenv/chpl_python_version.py and removes the newline
+std::string getVenvDir() {
+  // Runs `util/chplenv/chpl_home_utils.py --venv` and removes the newline
 
-  std::string command = "";
-  command += std::string(CHPL_HOME) + "/util/chplenv/chpl_python_version.py 2> /dev/null";
+  std::string command = "CHPL_HOME=" + std::string(CHPL_HOME) + " python ";
+  command += std::string(CHPL_HOME) + "/util/chplenv/chpl_home_utils.py --venv 2> /dev/null";
 
-  std::string pyVer = runCommand(command);
-  pyVer.erase(pyVer.find_last_not_of("\n\r")+1);
+  std::string venvDir = runCommand(command);
+  venvDir.erase(venvDir.find_last_not_of("\n\r")+1);
 
-  return pyVer;
+  return venvDir;
+}
+
+bool compilingWithPrgEnv() {
+  return (strstr(CHPL_ORIG_TARGET_COMPILER, "cray-prgenv") != NULL);
 }
 
 std::string runCommand(std::string& command) {
@@ -589,12 +654,16 @@ void codegen_makefile(fileinfo* mainfile, const char** tmpbinname, bool skip_com
   // Generate one variable containing all envMap information to pass to printchplenv
   for (std::map<std::string, const char*>::iterator env=envMap.begin(); env!=envMap.end(); ++env)
   {
-    if(!useDefaultEnv(env->first)) {
-      chplmakeallvars += env->first + "=" + std::string(env->second) + " ";
-    }
+    const std::string& key = env->first;
+    const char* oldPrefix = "CHPL_";
+    const char* newPrefix = "CHPL_MAKE_";
+    INT_ASSERT(key.substr(0, strlen(oldPrefix)) == oldPrefix);
+    std::string keySuffix = key.substr(strlen(oldPrefix), std::string::npos);
+    std::string chpl_make_key = newPrefix + keySuffix;
+    chplmakeallvars += chpl_make_key + "=" + std::string(env->second) + "|";
   }
 
-  fprintf(makefile.fptr, "\nCHPL_MAKE_ALL_VARS = %s\n", chplmakeallvars.c_str());
+  fprintf(makefile.fptr, "\nexport CHPL_MAKE_SETTINGS_NO_NEWLINES := %s\n", chplmakeallvars.c_str());
 
 
   // LLVM builds just use the makefile for the launcher and
@@ -609,15 +678,15 @@ void codegen_makefile(fileinfo* mainfile, const char** tmpbinname, bool skip_com
   }
   fprintf(makefile.fptr, "BINNAME = %s%s\n\n", executableFilename, exeExt);
   // BLC: This munging is done so that cp won't complain if the source
-  // and destination are the same file (e.g., a.out and ./a.out)
+  // and destination are the same file (e.g., myprogram and ./myprogram)
   tmpbin = astr(tmpDirName, "/", strippedExeFilename, ".tmp", exeExt);
   if( tmpbinname ) *tmpbinname = tmpbin;
   fprintf(makefile.fptr, "TMPBINNAME = %s\n", tmpbin);
   // BLC: We generate a TMPBINNAME which is the name that will be used
   // by the C compiler in creating the executable, and is in the
   // --savec directory (a /tmp directory by default).  We then copy it
-  // over to BINNAME -- the name given by the user, or a.out by
-  // default -- after linking is done.  As it turns out, this saves a
+  // over to BINNAME -- the name given by the user/default module's filename
+  // -- after linking is done.  As it turns out, this saves a
   // factor of 5 or so in time in running the test system, as opposed
   // to specifying BINNAME on the C compiler command line.
 
@@ -631,7 +700,7 @@ void codegen_makefile(fileinfo* mainfile, const char** tmpbinname, bool skip_com
 
   if (fLibraryCompile && (fLinkStyle==LS_DYNAMIC))
     fprintf(makefile.fptr, " $(SHARED_LIB_CFLAGS)");
-  forv_Vec(const char*, dirName, incDirs) {
+  for_vector(const char, dirName, incDirs) {
     fprintf(makefile.fptr, " -I%s", dirName);
   }
   fprintf(makefile.fptr, " %s\n", ccflags.c_str());
@@ -672,8 +741,12 @@ void codegen_makefile(fileinfo* mainfile, const char** tmpbinname, bool skip_com
   genCFiles(makefile.fptr);
   genObjFiles(makefile.fptr);
   fprintf(makefile.fptr, "\nLIBS =");
-  for (int i=0; i<numLibFlags; i++)
-    fprintf(makefile.fptr, " %s", libFlag[i]);
+  for_vector(const char, dirName, libDirs)
+    fprintf(makefile.fptr, " -L%s", dirName);
+  for_vector(const char, libName, libFiles)
+    fprintf(makefile.fptr, " -l%s", libName);
+  if (fLinkStyle==LS_STATIC)
+      fprintf(makefile.fptr, " $(LIBMVEC)" );
   fprintf(makefile.fptr, "\n");
 
   fprintf(makefile.fptr, "\n");
@@ -706,9 +779,9 @@ const char* filenameToModulename(const char* filename) {
   return asubstr(moduleName, strrchr(moduleName, '.'));
 }
 
-void readArgsFromCommand(const char* cmd, std::vector<std::string>& args) {
+void readArgsFromCommand(std::string cmd, std::vector<std::string>& args) {
   // Gather information from compileline into clangArgs.
-  if(FILE* fd = popen(cmd,"r")) {
+  if(FILE* fd = popen(cmd.c_str(),"r")) {
     int ch;
     // Read arguments.
     while( (ch = getc(fd)) != EOF ) {
@@ -726,6 +799,69 @@ void readArgsFromCommand(const char* cmd, std::vector<std::string>& args) {
       // First argument is the clang install directory...
       args.push_back(arg);
     }
+    fclose(fd);
+  }
+}
+
+void readArgsFromFile(std::string path, std::vector<std::string>& args) {
+
+  FILE* fd = fopen(path.c_str(), "r");
+  if (!fd)
+    USR_FATAL("Could not open file %s", path.c_str());
+
+  int ch;
+  // Read arguments.
+  while( (ch = getc(fd)) != EOF ) {
+    // Read the next argument.
+    // skip leading spaces
+    while( ch != EOF && isspace(ch) ) ch = getc(fd);
+    std::string arg;
+    arg.push_back(ch);
+    // read until space. TODO - handle quoting/spaces
+    ch = getc(fd);
+    while( ch != EOF && !isspace(ch) ) {
+      arg += ch;
+      ch = getc(fd);
+    }
+    args.push_back(arg);
+  }
+
+  fclose(fd);
+}
+
+// Expands variables like $CHPL_HOME in the string
+void expandInstallationPaths(std::string& s) {
+  const char* tofix[] = {"$CHPL_RUNTIME_LIB", CHPL_RUNTIME_LIB,
+                         "$CHPL_RUNTIME_INCL", CHPL_RUNTIME_INCL,
+                         "$CHPL_THIRD_PARTY", CHPL_THIRD_PARTY,
+                         "$CHPL_HOME", CHPL_HOME,
+                         NULL};
+
+  // For each of the patterns in tofix, find/replace all occurrences.
+  for (int j = 0; tofix[j] != NULL; j += 2) {
+
+    const char* key = tofix[j];
+    const char* val = tofix[j+1];
+    size_t key_len = strlen(key);
+    size_t val_len = strlen(val);
+
+    size_t off = 0;
+    while (true) {
+      off = s.find(key, off);
+      if (off == std::string::npos)
+        break; // no more occurrences to replace
+      s.replace(off, key_len, val);
+      off += val_len;
+    }
+  }
+}
+
+void expandInstallationPaths(std::vector<std::string>& args) {
+
+  for (size_t i = 0; i < args.size(); i++) {
+    std::string s = args[i];
+    expandInstallationPaths(s);
+    args[i] = s;
   }
 }
 
@@ -776,7 +912,7 @@ char* dirHasFile(const char *dir, const char *file)
   return real;
 }
 
-// This also exists in runtime/src/sys.c
+// This also exists in runtime/src/qio/sys.c
 // returns 0 on success.
 static int sys_getcwd(char** path_out)
 {

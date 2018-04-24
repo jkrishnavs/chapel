@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -46,6 +46,7 @@ void collect_top_asts(BaseAST* ast, std::vector<BaseAST*>& asts);
 void collectExprs(BaseAST* ast, std::vector<Expr*>& exprs);
 void collect_stmts(BaseAST* ast, std::vector<Expr*>& stmts);
 void collectDefExprs(BaseAST* ast, std::vector<DefExpr*>& defExprs);
+void collectForallStmts(BaseAST* ast, std::vector<ForallStmt*>& forallStmts);
 void collectCallExprs(BaseAST* ast, std::vector<CallExpr*>& callExprs);
 void collectMyCallExprs(BaseAST* ast,
                         std::vector<CallExpr*>& callExprs,
@@ -60,6 +61,7 @@ void reset_ast_loc(BaseAST* destNode, astlocT astloc);
 void reset_ast_loc(BaseAST* destNode, BaseAST* sourceNode);
 
 // compute call sites FnSymbol::calls
+void compute_fn_call_sites(FnSymbol* fn);
 void compute_call_sites();
 
 //
@@ -180,8 +182,11 @@ ArgSymbol* actual_to_formal( Expr *a);
 Expr* formal_to_actual(CallExpr* call, Symbol* formal);
 
 bool isTypeExpr(Expr* expr);
+bool givesType(Symbol* sym);
 
 Symbol* getSvecSymbol(CallExpr* call);
 void collectUsedFnSymbols(BaseAST* ast, std::set<FnSymbol*>& fnSymbols);
+
+void convertToQualifiedRefs();
 
 #endif

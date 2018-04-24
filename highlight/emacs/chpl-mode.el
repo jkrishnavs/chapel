@@ -1,4 +1,4 @@
-;;; chpl-mode.el --- a CC Mode for Chapel derived from derived-mode-ex.el
+;;; chpl-mode.el --- Major mode for editing Chapel code
 
 ;; Author:     2007 Steven T Balensiefer
 ;; Maintainer: Chapel group <chapel_info@cray.com>
@@ -163,7 +163,7 @@ or variable identifier (that's being defined)."
 
 (c-lang-defconst c-simple-stmt-kwds
   "Statement keywords followed by an expression or nothing."
-  chpl '("break" "continue" "return" "yield"))
+  chpl '("break" "continue" "label" "return" "yield"))
 
 (c-lang-defconst c-label-kwds
   "Keywords introducing colon terminated labels in blocks."
@@ -180,7 +180,7 @@ or variable identifier (that's being defined)."
 
 (c-lang-defconst c-other-kwds
   "Keywords not accounted for by any other `*-kwds' language constant."
-  chpl '("align" "atomic" "begin" "by" "cobegin" "coforall" "dmapped" "for" "forall" "if" "in" "inout" "local" "noinit" "on" "out" "reduce" "ref" "scan" "serial" "single" "sparse" "sync" "where" "while" "with" "zip"))
+  chpl '("align" "atomic" "begin" "by" "catch" "cobegin" "coforall" "dmapped" "for" "forall" "if" "in" "inout" "local" "noinit" "on" "out" "prototype" "reduce" "ref" "scan" "serial" "single" "sparse" "sync" "throw" "throws" "try" "where" "while" "with" "zip"))
 
 ;;; Chpl.
 
@@ -406,4 +406,4 @@ Key bindings:
 
 (provide 'chpl-mode)
 
-;;; derived-mode-ex.el ends here
+;;; chpl-mode.el ends here

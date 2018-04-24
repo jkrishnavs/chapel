@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,6 +21,7 @@
 //
 
 module ChapelBase {
+  use ChapelStandard;
 
   // These two are called by compiler-generated code.
   extern proc chpl_config_has_value(name:c_string, module_name:c_string): bool;
@@ -93,10 +94,9 @@ module ChapelBase {
 
   inline proc =(ref a, b: a.type) where isClassType(a.type)
   { __primitive("=", a, b); }
-  // Because resolution prefers user-defined versions to ones marked as "compiler
-  // generated", it is desirable to add that flag to this default version.
-  // In that way, a user-supplied version of assignment will override this one.
+
   pragma "compiler generated"
+  pragma "last resort" // so user-supplied assignment will override this one.
     // The CG pragma is needed because this function interferes with
     // assignments defined for sync and single class types.
   inline proc =(ref a, b:_nilType) where isClassType(a.type) {
@@ -196,7 +196,7 @@ module ChapelBase {
   inline proc -(a: real(?w)) return __primitive("u-", a);
   inline proc -(a: imag(?w)) return __primitive("u-", a);
   inline proc -(a: complex(?w)) return __primitive("u-", a);
-  
+
   inline proc +(param a: int(?w)) param return a;
   inline proc +(param a: uint(?w)) param return a;
 
@@ -254,7 +254,7 @@ module ChapelBase {
   inline proc *(a: real(?w), b: real(w)) return __primitive("*", a, b);
   inline proc *(a: imag(?w), b: imag(w)) return _i2r(__primitive("*", -a, b));
   inline proc *(a: complex(?w), b: complex(w)) return __primitive("*", a, b);
-  
+
   inline proc *(a: real(?w), b: imag(w)) return _r2i(a*_i2r(b));
   inline proc *(a: imag(?w), b: real(w)) return _r2i(_i2r(a)*b);
   inline proc *(a: real(?w), b: complex(w*2)) return (a*b.re, a*b.im):complex(w*2);
@@ -277,7 +277,7 @@ module ChapelBase {
   inline proc /(a: real(?w), b: real(w)) return __primitive("/", a, b);
   inline proc /(a: imag(?w), b: imag(w)) return _i2r(__primitive("/", a, b));
   inline proc /(a: complex(?w), b: complex(w)) return __primitive("/", a, b);
-  
+
   inline proc /(a: real(?w), b: imag(w)) return _r2i(-a/_i2r(b));
   inline proc /(a: imag(?w), b: real(w)) return _r2i(_i2r(a)/b);
   inline proc /(a: real(?w), b: complex(w*2))
@@ -307,11 +307,29 @@ module ChapelBase {
   //
   // % on primitive types
   //
-  inline proc %(a: int(?w), b: int(w)) return __primitive("%", a, b);
-  inline proc %(a: uint(?w), b: uint(w)) return __primitive("%", a, b);
+  inline proc %(a: int(?w), b: int(w)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
+  inline proc %(a: uint(?w), b: uint(w)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
 
-  inline proc %(param a: int(?w), param b: int(w)) param return __primitive("%", a, b);
-  inline proc %(param a: uint(?w), param b: uint(w)) param return __primitive("%", a, b);
+  inline proc %(param a: int(?w), param b: int(w)) param {
+    if b == 0 then
+      compilerError("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
+  inline proc %(param a: uint(?w), param b: uint(w)) param {
+    if b == 0 then
+      compilerError("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
 
   //
   // ** on primitive types
@@ -375,7 +393,7 @@ module ChapelBase {
   }
 
   inline proc _expBaseHelp(param a: int, b) where _basePowerTwo(a) {
-    if b == 0 then 
+    if b == 0 then
       return 1:a.type;
     if b < 0 then
       if a == 1 then // "where _basePowerTwo(a)" means 'a' cannot be <= 0
@@ -422,9 +440,9 @@ module ChapelBase {
   //
   // bitwise operations on primitive types
   //
-  inline proc ~(a: bool) return __primitive("u~", a);
   inline proc ~(a: int(?w)) return __primitive("u~", a);
   inline proc ~(a: uint(?w)) return __primitive("u~", a);
+  inline proc ~(a: bool) { compilerError("~ is not supported on operands of boolean type"); }
 
   inline proc &(a: bool, b: bool) return __primitive("&", a, b);
   inline proc &(a: int(?w), b: int(w)) return __primitive("&", a, b);
@@ -570,7 +588,7 @@ module ChapelBase {
       return cimagf(this);
     }
   }
-  
+
   //
   // helper functions
   //
@@ -619,6 +637,7 @@ module ChapelBase {
   //
   // More primitive funs
   //
+  pragma "function terminates program"
   inline proc exit(status: int=0) {
     __primitive("chpl_exit_any", status);
   }
@@ -655,7 +674,7 @@ module ChapelBase {
       initMethod = ArrayInit.noInit;
     } else if initMethod == ArrayInit.heuristicInit {
       // Heuristically determine if we should do parallel initialization. The
-      // current heuristic really just checks that we have a numeric array that's
+      // current heuristic really just checks that we have a POD array that's
       // at least 2MB. This value was chosen experimentally: Any smaller and the
       // cost of a forall (mostly the task creation) outweighs the benefit of
       // using multiple tasks. This was tested on a 2 core laptop, 8 core
@@ -666,19 +685,18 @@ module ChapelBase {
       // arrays of aggregate types where at one field is an array. The issue is
       // basically that an array's domain stores a linked list of all its arrays
       // and removal becomes expensive when addition and removal occur in
-      // different orders. We don't currently have a good way to check if an
-      // aggregate type contains arrays, so we limit parallel init to numeric
-      // types.
+      // different orders.
       //
       // Long term we probably want to store the domain's arrays as an
       // associative domain or some data structure with < log(n) find/add/remove
       // times. Currently we can't do that because the domain's arrays are part
-      // of the base domain, so we have a circular reference. As a stepping
-      // stone, we could do parallel init for plain old data (POD) types.
-      if !isNumericType(t) {
+      // of the base domain, so we have a circular reference.
+      if !isPODType(t) {
         initMethod = ArrayInit.serialInit;
       } else {
-        param elemsizeInBytes = numBytes(t);
+        extern proc sizeof(type t): size_t;
+        const elemsizeInBytes = if isNumericType(t) then numBytes(t)
+                                else sizeof(t).safeCast(int);
         const arrsizeInBytes = s.safeCast(int) * elemsizeInBytes;
         param heuristicThresh = 2 * 1024 * 1024;
         const heuristicWantsPar = arrsizeInBytes > heuristicThresh;
@@ -760,20 +778,19 @@ module ChapelBase {
     return ret;
   }
 
-  enum localizationStyle_t { locNone, locWhole, locSubchunks };
-
   inline proc _ddata_allocate(type eltType, size: integral,
-                              locStyle = localizationStyle_t.locNone,
                               subloc = c_sublocid_none) {
-    var ret:_ddata(eltType);
-    __primitive("array_alloc", ret, eltType, size,
-                locStyle == localizationStyle_t.locSubchunks, subloc);
+    var ret: _ddata(eltType);
+    var callAgain: bool;
+    __primitive("array_alloc", ret, size, subloc, c_ptrTo(callAgain), c_nil);
     init_elts(ret, size, eltType);
+    if callAgain then
+      __primitive("array_alloc", ret, size, subloc, c_nil, ret);
     return ret;
   }
 
-  inline proc _ddata_free(data: _ddata) {
-    __primitive("array_free", data);
+  inline proc _ddata_free(data: _ddata, size: integral) {
+    __primitive("array_free", data, size);
   }
 
   inline proc ==(a: _ddata, b: _ddata) where a.eltType == b.eltType {
@@ -817,14 +834,27 @@ module ChapelBase {
 
   config param useAtomicTaskCnt =  CHPL_NETWORK_ATOMICS!="none";
 
+  // Parent class for _EndCount instances so that it's easy
+  // to add non-generic fields here.
+  // And to get 'errors' field from any generic instantiation.
+  pragma "no default functions"
+  pragma "use default init"
+  class _EndCountBase {
+    var errors: chpl_TaskErrors;
+    var taskList: c_void_ptr = _defaultOf(c_void_ptr);
+  }
+
   pragma "end count"
   pragma "no default functions"
-  class _EndCount {
+  class _EndCount : _EndCountBase {
     type iType;
     type taskType;
-    var i: iType,
-        taskCnt: taskType,
-        taskList: c_void_ptr = _defaultOf(c_void_ptr);
+    var i: iType;
+    var taskCnt: taskType;
+    proc init(type iType, type taskType) {
+      this.iType = iType;
+      this.taskType = taskType;
+    }
   }
 
   // This function is called once by the initiating task.  No on
@@ -841,9 +871,11 @@ module ChapelBase {
     type taskCntType = if !forceLocalTypes && useAtomicTaskCnt then atomic int
                                            else int;
     if forceLocalTypes {
-      return new _EndCount(chpl__processorAtomicType(int), taskCntType);
+      return new _EndCount(iType=chpl__processorAtomicType(int),
+                           taskType=taskCntType);
     } else {
-      return new _EndCount(chpl__atomicType(int), taskCntType);
+      return new _EndCount(iType=chpl__atomicType(int),
+                           taskType=taskCntType);
     }
   }
 
@@ -886,8 +918,11 @@ module ChapelBase {
   pragma "no remote memory fence"
   proc _upEndCount(e: _EndCount, param countRunningTasks=true, numTasks) {
     e.i.add(numTasks:int, memory_order_release);
+
     if countRunningTasks {
       here.runningTaskCntAdd(numTasks:int-1);  // decrement is in _waitEndCount()
+    } else {
+      here.runningTaskCntSub(1);
     }
   }
 
@@ -895,21 +930,27 @@ module ChapelBase {
   // statement is needed because the call to sub() will do a remote
   // fork (on) if needed.
   pragma "dont disable remote value forwarding"
-  proc _downEndCount(e: _EndCount) {
+  pragma "down end count fn"
+  proc _downEndCount(e: _EndCount, err: Error) {
+    // save the task error
+    chpl_save_task_error(e, err);
+    // inform anybody waiting that we're done
     e.i.sub(1, memory_order_release);
   }
 
   // This function is called once by the initiating task.  As above, no
   // on statement needed.
+  // called for sync blocks (implicit or explicit), unbounded coforalls
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) {
-    // See if we can help with any of the started tasks
-    chpl_taskListExecute(e.taskList);
-
+  pragma "unchecked throws"
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true) throws {
     // Remove the task that will just be waiting/yielding in the following
     // waitFor() from the running task count to let others do real work. It is
     // re-added after the waitFor().
     here.runningTaskCntSub(1);
+
+    // See if we can help with any of the started tasks
+    chpl_taskListExecute(e.taskList);
 
     // Wait for all tasks to finish
     e.i.waitFor(0, memory_order_acquire);
@@ -922,10 +963,16 @@ module ChapelBase {
       // re-add the task that was waiting for others to finish
       here.runningTaskCntAdd(1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
+  // called for bounded coforalls and cobegins
   pragma "dont disable remote value forwarding"
-  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) {
+  pragma "unchecked throws"
+  proc _waitEndCount(e: _EndCount, param countRunningTasks=true, numTasks) throws {
     // See if we can help with any of the started tasks
     chpl_taskListExecute(e.taskList);
 
@@ -934,26 +981,44 @@ module ChapelBase {
 
     if countRunningTasks {
       here.runningTaskCntSub(numTasks:int-1);
+    } else {
+      here.runningTaskCntAdd(1);
     }
+
+    // Throw any error raised by a task this is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
-  proc _upEndCount(param countRunningTasks=true) {
-    var e = __primitive("get end count");
+  proc _upDynamicEndCount(param countRunningTasks=true) {
+    var e = __primitive("get dynamic end count");
     _upEndCount(e, countRunningTasks);
   }
 
-  proc _downEndCount() {
-    var e = __primitive("get end count");
-    _downEndCount(e);
+  pragma "dont disable remote value forwarding"
+  pragma "down end count fn"
+  proc _downDynamicEndCount(err: Error) {
+    var e = __primitive("get dynamic end count");
+    _downEndCount(e, err);
   }
 
-  proc _waitEndCount(param countRunningTasks=true) {
-    var e = __primitive("get end count");
+  // This version is called for normal sync blocks.
+  pragma "unchecked throws"
+  proc _waitDynamicEndCount(param countRunningTasks=true) throws {
+    var e = __primitive("get dynamic end count");
     _waitEndCount(e, countRunningTasks);
+
+    // Throw any error raised by a task this sync statement is waiting for
+    if ! e.errors.empty() then
+      throw new TaskErrors(e.errors);
   }
 
   pragma "command line setting"
-  proc _command_line_cast(param s: c_string, type t, x) return _cast(t, x:string);
+  proc _command_line_cast(param s: c_string, type t, x) {
+    try! {
+      return _cast(t, x:string);
+    }
+  }
 
 
   //
@@ -987,10 +1052,18 @@ module ChapelBase {
   inline proc _cast(type t, x) where t:object && x:t
     return __primitive("cast", t, x);
 
+  inline proc _cast(type t, x) where t:unmanaged object && x:t
+    return __primitive("cast", t, x);
+
   inline proc _cast(type t, x) where t:object && x:_nilType
     return __primitive("cast", t, x);
 
+  pragma "unsafe"
   inline proc _cast(type t, x) where x:object && t:x && (x.type != t)
+    return if x != nil then __primitive("dynamic_cast", t, x) else __primitive("cast", t, nil);
+
+  pragma "unsafe"
+  inline proc _cast(type t, x) where x:_unmanaged && t:_unmanaged && t:x && (x.type != t)
     return if x != nil then __primitive("dynamic_cast", t, x) else __primitive("cast", t, nil);
 
   inline proc _cast(type t, x:_nilType) where t == _nilType
@@ -1058,6 +1131,7 @@ module ChapelBase {
 
   pragma "dont disable remote value forwarding"
   pragma "no copy return"
+  pragma "suppress lvalue error"
   inline proc _createFieldDefault(type t, init) {
     pragma "no auto destroy" var x: t;
     x = init;
@@ -1085,6 +1159,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "init copy fn"
   inline proc chpl__initCopy(x: _tuple) {
     // body inserted during generic instantiation
@@ -1092,6 +1167,7 @@ module ChapelBase {
 
   // Catch-all initCopy implementation:
   pragma "compiler generated"
+  pragma "last resort"
   pragma "init copy fn"
   inline proc chpl__initCopy(const x) {
     // body adjusted during generic instantiation
@@ -1099,6 +1175,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "auto copy fn"
   inline proc chpl__autoCopy(x: _tuple) {
@@ -1106,6 +1183,7 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "unref fn"
   inline proc chpl__unref(x: _tuple) {
@@ -1113,6 +1191,7 @@ module ChapelBase {
   }
 
 
+  pragma "compiler generated"
   pragma "donor fn"
   pragma "auto copy fn"
   inline proc chpl__autoCopy(ir: _iteratorRecord) {
@@ -1121,11 +1200,14 @@ module ChapelBase {
   }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "donor fn"
   pragma "auto copy fn"
+  pragma "suppress lvalue error"
   inline proc chpl__autoCopy(const x) return chpl__initCopy(x);
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "unalias fn"
   inline proc chpl__unalias(x) {
     pragma "no copy" var ret = x;
@@ -1148,18 +1230,23 @@ module ChapelBase {
 
   inline proc chpl__maybeAutoDestroyed(x: numeric) param return false;
   inline proc chpl__maybeAutoDestroyed(x: enumerated) param return false;
-  inline proc chpl__maybeAutoDestroyed(x: object) param return false;
+  // Uses this spelling to be a peer to the below version
+  // (otherwise the below version won't be used if t coerces to object)
+  inline proc chpl__maybeAutoDestroyed(x: ?t) param where t:object return false;
   inline proc chpl__maybeAutoDestroyed(x) param return true;
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(x: object) { }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(type t)  { }
 
   pragma "compiler generated"
+  pragma "last resort"
   pragma "auto destroy fn"
   inline proc chpl__autoDestroy(x: ?t) {
     __primitive("call destructor", x);
@@ -1192,19 +1279,43 @@ module ChapelBase {
   }
 
   // implements 'delete' statement
-  inline proc chpl__delete(arg) {
+  inline proc chpl__delete(arg)
+    where isClassType(arg.type) || isExternClassType(arg.type) {
+
     if chpl_isDdata(arg.type) then
       compilerError("cannot delete data class");
-    // Todo: enable this check. Can't do it now because
-    // isClassType() returns 'false' on extern class types.
-    //if !isClassType(arg.type) then
-    //  compilerError("can delete only class types: ", arg.type:string);
-    if (isRecord(arg)) then
-      compilerError("delete not allowed on records");
 
-    arg.deinit();
-    on arg do
-      chpl_here_free(__primitive("_wide_get_addr", arg));
+    if arg.type == _nilType then
+      compilerError("should not delete 'nil'");
+
+    if (arg != nil) {
+      arg.deinit();
+
+      on arg do
+        chpl_here_free(__primitive("_wide_get_addr", arg));
+    }
+  }
+
+  proc chpl__delete(arr: []) {
+    forall a in arr do
+      chpl__delete(a);
+  }
+
+  // report an error when 'delete' is inappropriate
+  proc chpl__delete(arg) {
+    if isRecord(arg) then
+      // special case for records as a more likely occurrence
+      compilerError("'delete' is not allowed on records");
+    else
+      compilerError("'delete' is not allowed on non-class type ",
+                    arg.type:string);
+  }
+
+  // delete two or more things
+  inline proc chpl__delete(arg, args...) {
+    chpl__delete(arg);
+    for param i in 1..args.size do
+      chpl__delete(args(i));
   }
 
   // c_void_ptr operations
@@ -1293,9 +1404,15 @@ module ChapelBase {
   }
 
   inline proc %=(ref lhs:int(?w), rhs:int(w)) {
+    if (chpl_checkDivByZero) then
+      if rhs == 0 then
+        halt("Attempt to compute a modulus by zero");
     __primitive("%=", lhs, rhs);
   }
   inline proc %=(ref lhs:uint(?w), rhs:uint(w)) {
+    if (chpl_checkDivByZero) then
+      if rhs == 0 then
+        halt("Attempt to compute a modulus by zero");
     __primitive("%=", lhs, rhs);
   }
   inline proc %=(ref lhs:real(?w), rhs:real(w)) {
@@ -1401,18 +1518,22 @@ module ChapelBase {
   //
   // non-param/param and param/non-param cases -- these cases
   // are provided to support operations on runtime uint and
-  // param uint combinations.  The param/non-param int cases
-  // don't need to be explicitly given because they will default
-  // to the normal int/int cases above.  If these overloads are
-  // not provided, these functions will dispatch to the error
-  // cases just above, which is inconsistent (i.e., one should
-  // be able to add "1" to a uint variable given that "1" is a
-  // legal uint param).
-  //
+  // param uint combinations.  These are expressed in terms of int/uint
+  // functions with one param argument and one non-param argument.
+  // Since function disambiguation prefers a 'param' argument over
+  // a non-param one, if the 'int' version here is not provided,
+  // anEnumVariable + 1 (say) will resolve to the uint + here
+  // and that would give the wrong result type (uint rather than int).
   inline proc +(a: uint(64), param b: uint(64)) {
     return __primitive("+", a, b);
   }
   inline proc +(param a: uint(64), b: uint(64)) {
+    return __primitive("+", a, b);
+  }
+  inline proc +(a: int(64), param b: int(64)) {
+    return __primitive("+", a, b);
+  }
+  inline proc +(param a: int(64), b: int(64)) {
     return __primitive("+", a, b);
   }
 
@@ -1428,6 +1549,12 @@ module ChapelBase {
   inline proc -(param a: uint(64), b: uint(64)) {
     return __primitive("-", a, b);
   }
+  inline proc -(a: int(64), param b: int(64)) {
+    return __primitive("-", a, b);
+  }
+  inline proc -(param a: int(64), b: int(64)) {
+    return __primitive("-", a, b);
+  }
 
 
   // non-param/non-param
@@ -1439,6 +1566,12 @@ module ChapelBase {
     return __primitive("*", a, b);
   }
   inline proc *(param a: uint(64), b: uint(64)) {
+    return __primitive("*", a, b);
+  }
+  inline proc *(a: int(64), param b: int(64)) {
+    return __primitive("*", a, b);
+  }
+  inline proc *(param a: int(64), b: int(64)) {
     return __primitive("*", a, b);
   }
 
@@ -1464,6 +1597,12 @@ module ChapelBase {
         halt("Attempt to divide by zero");
     return __primitive("/", a, b);
   }
+  inline proc /(param a: int(64), b: int(64)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to divide by zero");
+    return __primitive("/", a, b);
+  }
 
 
   // non-param/non-param
@@ -1477,6 +1616,12 @@ module ChapelBase {
   inline proc **(param a: uint(64), b: uint(64)) {
     return __primitive("**", a, b);
   }
+  inline proc **(a: int(64), param b: int(64)) {
+    return __primitive("**", a, b);
+  }
+  inline proc **(param a: int(64), b: int(64)) {
+    return __primitive("**", a, b);
+  }
 
 
   // non-param/non-param
@@ -1485,9 +1630,24 @@ module ChapelBase {
 
   // non-param/param and param/non-param
   inline proc %(a: uint(64), param b: uint(64)) {
+    if b == 0 then compilerError("Attempt to compute a modulus by zero");
     return __primitive("%", a, b);
   }
+  // necessary to support e.g. 10 % myuint
   inline proc %(param a: uint(64), b: uint(64)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
+  inline proc %(a: int(64), param b: int(64)) {
+    if b == 0 then compilerError("Attempt to compute a modulus by zero");
+    return __primitive("%", a, b);
+  }
+  inline proc %(param a: int(64), b: int(64)) {
+    if (chpl_checkDivByZero) then
+      if b == 0 then
+        halt("Attempt to compute a modulus by zero");
     return __primitive("%", a, b);
   }
 
@@ -1508,12 +1668,9 @@ module ChapelBase {
   }
 
   // non-param/param and param/non-param
-  inline proc ==(a: uint(64), param b: uint(64)) {
-    return __primitive("==", a, b);
-  }
-  inline proc ==(param a: uint(64), b: uint(64)) {
-    return __primitive("==", a, b);
-  }
+  // not necessary since the == versions above
+  // work there (and aren't an error)
+
 
 
   // non-param/non-param
@@ -1525,12 +1682,8 @@ module ChapelBase {
   }
 
   // non-param/param and param/non-param
-  inline proc !=(a: uint(64), param b: uint(64)) {
-    return __primitive("!=", a, b);
-  }
-  inline proc !=(param a: uint(64), b: uint(64)) {
-    return __primitive("!=", a, b);
-  }
+  // not necessary since the == versions above
+  // work there (and aren't an error)
 
 
   // non-param/non-param
@@ -1542,12 +1695,14 @@ module ChapelBase {
   }
 
   // non-param/param and param/non-param
-  inline proc >(a: uint(64), param b: uint(64)) {
-    return __primitive(">", a, b);
-  }
+  // non-param/param version not necessary since > above works fine for that
   inline proc >(param a: uint(64), b: uint(64)) {
     if a == 0 then return false; else return __primitive(">", a, b);
   }
+  inline proc >(param a: int(64), b: int(64)) {
+    return __primitive(">", a, b);
+  }
+
 
   // non-param/non-param
   inline proc <(a: uint(64), b: int(64)) {
@@ -1558,12 +1713,14 @@ module ChapelBase {
   }
 
   // non-param/param and param/non-param
+  // param/non-param version not necessary since < above works fine for that
   inline proc <(a: uint(64), param b: uint(64)) {
     if b == 0 then return false; else return __primitive("<", a, b);
   }
-  inline proc <(param a: uint(64), b: uint(64)) {
+  inline proc <(a: int(64), param b: int(64)) {
     return __primitive("<", a, b);
   }
+
 
 
   // non-param/non-param
@@ -1578,7 +1735,7 @@ module ChapelBase {
   inline proc >=(a: uint(64), param b: uint(64)) {
     if b == 0 then return true; else return __primitive(">=", a, b);
   }
-  inline proc >=(param a: uint(64), b: uint(64)) {
+  inline proc >=(a: int(64), param b: int(64)) {
     return __primitive(">=", a, b);
   }
 
@@ -1592,37 +1749,66 @@ module ChapelBase {
   }
 
   // non-param/param and param/non-param
-  inline proc <=(a: uint(64), param b: uint(64)) {
-    return __primitive("<=", a, b);
-  }
   inline proc <=(param a: uint(64), b: uint(64)) {
     if a == 0 then return true; else return __primitive("<=", a, b);
   }
+  inline proc <=(param a: int(64), b: int(64)) {
+    return __primitive("<=", a, b);
+  }
 
-  proc isClassType(type t) param where t:object return true;
-  proc isClassType(type t) param return false;
 
-  proc isRecordType(type t) param where t: value {
-    // some non-record types are implemented via records - exclude those
-    if
-      isDmapType(t)   ||
-      isDomainType(t) ||
-      isArrayType(t)  ||
-      isRangeType(t)  ||
-      isTupleType(t)  ||
-      isAtomicType(t)
-    then
+  proc isClassType(type t) param return __primitive("is class type", t);
+
+  proc isRecordType(type t) param {
+    if __primitive("is record type", t) == false then
       return false;
+
+    // some non-record types are implemented via records - exclude those
+    else if isDmapType(t)   ||
+            isDomainType(t) ||
+            isArrayType(t)  ||
+            isRangeType(t)  ||
+            isTupleType(t)  ||
+            isSyncType(t)   ||
+            isSingleType(t) ||
+            isAtomicType(t) then
+      return false;
+
     else
       return true;
   }
-  proc isRecordType(type t) param return false;
 
   proc isUnionType(type t) param return __primitive("is union type", t);
 
   proc isAtomicType(type t) param return __primitive("is atomic type", t);
 
   proc isRefIterType(type t) param return __primitive("is ref iter type", t);
+
+  proc isExternClassType(type t) param return __primitive("is extern class type", t);
+
+  // extern class operations
+  inline proc =(ref a, b: a.type) where isExternClassType(a.type)
+  { __primitive("=", a, b); }
+
+  // analogously to proc =(ref a, b:_nilType) where isClassType(a.type)
+  pragma "compiler generated"
+  pragma "last resort"
+  inline proc =(ref a, b:_nilType) where isExternClassType(a.type)
+  { __primitive("=", a, nil); }
+
+  inline proc ==(a, b: a.type) where isExternClassType(a.type)
+    return __primitive("ptr_eq", a, b);
+  inline proc ==(a, b: _nilType) where isExternClassType(a.type)
+    return __primitive("ptr_eq", a, b);
+  inline proc ==(a: _nilType, b) where isExternClassType(b.type)
+    return __primitive("ptr_eq", a, b);
+
+  inline proc !=(a, b: a.type) where isExternClassType(a.type)
+    return __primitive("ptr_neq", a, b);
+  inline proc !=(a, b: _nilType) where isExternClassType(a.type)
+    return __primitive("ptr_neq", a, b);
+  inline proc !=(a: _nilType, b) where isExternClassType(b.type)
+    return __primitive("ptr_neq", a, b);
 
   // These style element #s are used in the default Writer and Reader.
   // and in e.g. implementations of those in Tuple.
@@ -1648,6 +1834,7 @@ module ChapelBase {
   extern const QIO_TUPLE_FORMAT_JSON:int;
 
   // Support for module deinit functions.
+  pragma "use default init"
   class chpl_ModuleDeinit {
     const moduleName: c_string;          // for debugging; non-null, not owned
     const deinitFun:  c_fn_ptr;          // module deinit function
@@ -1694,7 +1881,10 @@ module ChapelBase {
 
   // Classes
   pragma "no doc"
-  inline proc _defaultOf(type t) where (isClassType(t)) return nil:t;
+  inline proc _defaultOf(type t) where isClassType(t) {
+    return __primitive("cast", t, nil);
+  }
+  // Note: the above case includes _ddata and unmanaged class types
 
   // Various types whose default value is known
   pragma "no doc"
@@ -1706,11 +1896,28 @@ module ChapelBase {
   pragma "no doc"
   inline proc _defaultOf(type t) where t: _sync_aux_t return _nullSyncVarAuxFields;
 
-  pragma "no doc"
-  inline proc _defaultOf(type t) where t: _ddata
-    return __primitive("cast", t, nil);
-
   // There used to be a catch-all _defaultOf that return nil:t, but that
   // was the nexus of several tricky resolution bugs.
 
+  // type constructor for unmanaged pointers
+  // this could in principle be just _unmanaged (similar to type
+  // constructor for a record) but that is more challenging because
+  // _unmanaged is a built-in non-record type.
+  proc _to_unmanaged(type t) type {
+    type rt = __primitive("to unmanaged class", t).type;
+    return rt;
+  }
+  // type constructor for converting to a borrow
+  proc _to_borrowed(type t) type {
+    type rt = __primitive("to borrowed class", t).type;
+    return rt;
+  }
+  // cast from nil to unmanaged
+  inline proc _cast(type t, x) where t:_unmanaged && x:_nilType {
+    return __primitive("cast", t, x);
+  }
+  // cast from unmanaged to borrow
+  inline proc _cast(type t, x) where t:object && x:_unmanaged {
+    return __primitive("cast", t, x);
+  }
 }

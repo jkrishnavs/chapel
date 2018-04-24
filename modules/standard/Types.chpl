@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -168,9 +168,6 @@ proc isPODType(type t) param {
 pragma "no doc"
 proc chpl__unsignedType(type t) type 
 {
-  if ! isIntegralType(t) then
-    compilerError("range idxType is non-integral: ", t:string);
-
   return uint(numBits(t));
 }
 
@@ -179,9 +176,6 @@ proc chpl__unsignedType(type t) type
 pragma "no doc"
 proc chpl__signedType(type t) type 
 {
-  if ! isIntegralType(t) then
-    compilerError("range idxType is non-integral: ", t:string);
-
   return int(numBits(t));
 }
 
@@ -354,7 +348,8 @@ proc isTuple(e)     param  return isTupleValue(e);
 /* Returns `true` if the argument is a homogeneous tuple.
    The argument must be a tuple or any type. */
 proc isHomogeneousTuple(e: _tuple)  param  return isHomogeneousTupleValue(e);
-/* Returns `true` if the argument is a class type or value. */
+/* Returns `true` if the argument is a class type or value
+   that is not an ``extern`` class, or when the argument is ``nil``. */
 proc isClass(e)     param  return isClassValue(e);
 /* Returns `true` if the argument is a record type or value. */
 proc isRecord(e)    param  return isRecordValue(e);

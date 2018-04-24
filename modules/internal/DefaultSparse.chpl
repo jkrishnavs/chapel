@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,6 +20,7 @@
 // DefaultSparse.chpl
 //
 module DefaultSparse {
+  use ChapelStandard;
   use RangeChunk only ;
 
   config param debugDefaultSparse = false;
@@ -27,16 +28,17 @@ module DefaultSparse {
   class DefaultSparseDom: BaseSparseDomImpl {
     var dist: DefaultDist;
 
+    pragma "local field"
     var indices: [nnzDom] index(rank, idxType);
 
     proc linksDistribution() param return false;
     proc dsiLinksDistribution()     return false;
 
-    proc DefaultSparseDom(param rank, type idxType, dist: DefaultDist,
+    proc init(param rank, type idxType, dist: DefaultDist,
         parentDom: domain) {
+      super.init(rank, idxType, parentDom);
 
       this.dist = dist;
-      this.parentDom = parentDom;
     }
 
     proc dsiBuildArray(type eltType)
@@ -143,6 +145,9 @@ module DefaultSparse {
       // if the index already existed, then return
       if (found) then return 0;
 
+      if boundsChecking then
+        this.boundsCheck(ind);
+
       // increment number of nonzeroes
       nnz += 1;
 
@@ -238,7 +243,7 @@ module DefaultSparse {
     proc bulkAdd_help(inds: [?indsDom] index(rank, idxType), dataSorted=false,
         isUnique=false){
 
-      bulkAdd_prepareInds(inds, dataSorted, isUnique);
+      bulkAdd_prepareInds(inds, dataSorted, isUnique, Sort.defaultComparator);
 
       if nnz == 0 {
 
@@ -334,9 +339,14 @@ module DefaultSparse {
       halt("dimIter() not yet implemented for sparse domains");
       yield indices(1);
     }
+
+    proc dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+      chpl_assignDomainWithIndsIterSafeForRemoving(this, rhs);
+    }
   }
 
 
+  pragma "use default init"
   class DefaultSparseArr: BaseSparseArrImpl {
 
     /*proc DefaultSparseArr(type eltType, param rank, type idxType, dom) {*/
@@ -488,29 +498,29 @@ module DefaultSparse {
 
   proc DefaultSparseDom.dsiSerialWrite(f, printBrackets=true) {
     if (rank == 1) {
-      if printBrackets then f.write("{");
+      if printBrackets then f <~> "{";
       if (nnz >= 1) {
-        f.write(indices(1));
+        f <~> indices(1);
         for i in 2..nnz {
-          f.write(" ", indices(i));
+          f <~> " " <~> indices(i);
         }
       }
-      if printBrackets then f.write("}");
+      if printBrackets then f <~> "}";
     } else {
-      if printBrackets then f.writeln("{");
+      if printBrackets then f <~> "{\n";
       if (nnz >= 1) {
         var prevInd = indices(1);
-        f.write(" ", prevInd);
+        f <~> " " <~> prevInd;
         for i in 2..nnz {
           if (prevInd(1) != indices(i)(1)) {
-            f.writeln();
+            f <~> "\n";
           }
           prevInd = indices(i);
-          f.write(" ", prevInd);
+          f <~> " " <~> prevInd;
         }
-        f.writeln();
+        f <~> "\n";
       }
-      if printBrackets then f.writeln("}");
+      if printBrackets then f <~> "}\n";
     }
   }
 
@@ -518,25 +528,25 @@ module DefaultSparse {
   proc DefaultSparseArr.dsiSerialWrite(f) {
     if (rank == 1) {
       if (dom.nnz >= 1) {
-        f.write(data(1));
+        f <~> data(1);
         for i in 2..dom.nnz {
-          f.write(" ", data(i));
+          f <~> " " <~> data(i);
         }
       }
     } else {
       if (dom.nnz >= 1) {
         var prevInd = dom.indices(1);
-        f.write(data(1));
+        f <~> data(1);
         for i in 2..dom.nnz {
           if (prevInd(1) != dom.indices(i)(1)) {
-            f.writeln();
+            f <~> "\n";
           } else {
-            f.write(" ");
+            f <~> " ";
           }
           prevInd = dom.indices(i);
-          f.write(data(i));
+          f <~> data(i);
         }
-        f.writeln();
+        f <~> "\n";
       }
     }
   }

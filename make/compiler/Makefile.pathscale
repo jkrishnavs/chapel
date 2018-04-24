@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 # 
 # The entirety of this work is licensed under the Apache License,
@@ -58,8 +58,7 @@ CXX11_STD := unknown
 # Flags for turning on warnings for C++/C code
 #
 WARN_CXXFLAGS = -Wall -Werror -Wpointer-arith -Wwrite-strings
-# decl-after-stmt for non c99 compilers. See commit message 21665
-WARN_CFLAGS = $(WARN_CXXFLAGS) -Wmissing-declarations -Wmissing-prototypes -Wstrict-prototypes -Wnested-externs -Wdeclaration-after-statement -Wmissing-format-attribute
+WARN_CFLAGS = $(WARN_CXXFLAGS) -Wmissing-declarations -Wmissing-prototypes -Wstrict-prototypes -Wmissing-format-attribute
 WARN_GEN_CFLAGS = $(WARN_CFLAGS)
 SQUASH_WARN_GEN_CFLAGS = -Wno-unused
 
@@ -72,13 +71,8 @@ RUNTIME_CFLAGS += $(WARN_CFLAGS)
 # GEN_CFLAGS gets warnings added via WARN_GEN_CFLAGS in comp-generated Makefile
 endif
 
-# Fixups for XE and XT flags
+# Fixups for XE flags
 ifeq ($(CHPL_MAKE_TARGET_PLATFORM), cray-xe)
 # put XE cross-compilation pathscale-specific settings here
 XE_GEN_CFLAGS = -OPT:Olimit=0
-endif
-
-ifeq ($(CHPL_MAKE_TARGET_PLATFORM), cray-xt)
-# put XT cross-compilation pathscale-specific settings here
-XT_GEN_CFLAGS = -OPT:Olimit=0
 endif

@@ -5,9 +5,11 @@
   distributions.  To use these distributions in a Chapel program,
   the respective module must be used:
 */
-use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist;
+use BlockDist, CyclicDist, BlockCycDist;
 use DimensionalDist2D, ReplicatedDim, BlockCycDim;
 
+//
+// ``ReplicatedDist`` is covered in the :ref:`primers-replicated` primer.
 //
 // For each distribution, we'll create a distributed domain and array
 // and then initialize it just to give a brief flavor of how the
@@ -34,6 +36,8 @@ config const n = 8;
 //
 const Space = {1..n, 1..n};
 
+// Block (and distribution basics)
+// -------------------------------
 //
 // The ``Block`` distribution distributes a bounding box from
 // n-dimensional space across the target locale array viewed as an
@@ -141,6 +145,8 @@ for (L, ML) in zip(BA2.targetLocales(), MyLocales) do
 
 
 
+// Cyclic
+// ------
 //
 // Next, we'll perform a similar computation for the ``Cyclic`` distribution.
 // Cyclic distributions start at a designated n-dimensional index and
@@ -173,7 +179,8 @@ on Locales[0] {
   }
 }
 
-
+// Block-Cyclic
+// ------------
 //
 // Next, we'll use a ``BlockCyclic`` distribution.  Block-Cyclic
 // distributions also deal out indices in a round-robin fashion,
@@ -234,97 +241,8 @@ verifyID(BCA);
 verifyID(BA);
 
 
-//
-// The ``ReplicatedDist`` distribution is different: each of the
-// original domain's indices - and the corresponding array elements -
-// is replicated onto each locale. (Note: consistency among these
-// array replicands is NOT maintained automatically.)
-//
-// This replication is observable in some cases but not others,
-// as shown below. Note: this behavior may change in the future.
-//
-const ReplicatedSpace = Space dmapped ReplicatedDist();
-var RA: [ReplicatedSpace] int;
-
-// The replication is observable - this visits each replicand.
-forall ra in RA do
-  ra = here.id;
-
-writeln("Replicated Array Index Map, ", RA.numElements, " elements total");
-writeln(RA);
-writeln();
-
-//
-// The replication is observable when the replicated array is
-// on the left-hand side of an assignment. If the right-hand side is not
-// replicated, it is copied into each replicand.
-// We illustrate this using a non-distributed array.
-//
-var A: [Space] int = [(i,j) in Space] i*100 + j;
-RA = A;
-writeln("Replicated Array after being array-assigned into");
-writeln(RA);
-writeln();
-
-//
-// Analogously, each replicand will be visited and
-// other participated expressions will be computed on each locale when:
-//
-// (a) the replicated array is assigned a scalar:
-//       ``RA = 5;``
-//
-// (b) it appears first in a zippered forall loop:
-//       ``forall (ra, a) in zip(RA, A) do ...;``
-//
-// (c) it appears in a for loop:
-//       ``for ra in RA do ...;``
-//
-// Zippering ``(RA,A)`` or ``(A,RA)`` in a ``for`` loop will generate
-// an error due to their different number of elements.
-//
-
-// Let ``RA`` store the Index Map again, for the examples below.
-forall ra in RA do
-  ra = here.id;
-
-//
-// Only the local replicand is accessed - replication is NOT observable
-// and consistency is NOT maintained - when:
-//
-// (a) the replicated array is indexed - an individual element is read...
-//
-on Locales(0) do
-  writeln("on ", here, ": ", RA(Space.low));
-on Locales(LocaleSpace.high) do
-  writeln("on ", here, ": ", RA(Space.low));
-writeln();
-
-// ...or an individual element is written;
-on Locales(LocaleSpace.high) do
-  RA(Space.low) = 7777;
-
-writeln("Replicated Array after being indexed into");
-writeln(RA);
-writeln();
-
-//
-// (b) the replicated array is on the right-hand side of an assignment...
-//
-on Locales(LocaleSpace.high) do
-  A = RA + 4;
-writeln("Non-Replicated Array after assignment from Replicated Array + 4");
-writeln(A);
-writeln();
-
-//
-// (c) ...or, generally, the replicated array or domain participates
-//     in a zippered forall loop, but not in the first position.
-//     The loop could look like:
-//
-//     ``forall (a, (i,j), ra) in (A, ReplicatedSpace, RA) do ...;``
-//
-
-
+// 2D Dimensional
+// --------------
 //
 // The ``DimensionalDist2D`` distribution lets us build a 2D distribution
 // as a composition of specifiers for individual dimensions.
@@ -372,7 +290,7 @@ const DimReplicatedBlockcyclicSpace = Space
 var DRBA: [DimReplicatedBlockcyclicSpace] int;
 
 // The ``ReplicatedDim`` specifier always accesses the local replicand.
-// (This differs from how the ``ReplicatedDist`` distribution works.)
+// (This differs from how the ``Replicated`` distribution works.)
 //
 // This example visits each replicand. The behavior is the same
 // regardless of the second index into ``MyLocales`` below.

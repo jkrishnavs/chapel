@@ -1,6 +1,6 @@
 /*
  * Copyright © 2009 CNRS
- * Copyright © 2009-2017 Inria.  All rights reserved.
+ * Copyright © 2009-2018 Inria.  All rights reserved.
  * Copyright © 2009-2012 Université Bordeaux
  * Copyright © 2009-2011 Cisco Systems, Inc.  All rights reserved.
  * See COPYING in top-level directory.
@@ -77,8 +77,15 @@ extern "C" {
  * @{
  */
 
-/** \brief Indicate at build time which hwloc API version is being used. */
-#define HWLOC_API_VERSION 0x00010b00
+/** \brief Indicate at build time which hwloc API version is being used.
+ *
+ * This number is updated to (X>>16)+(Y>>8)+Z when a new release X.Y.Z
+ * actually modifies the API.
+ *
+ * Users may check for available features at build time using this number
+ * (see \ref faq_upgrade).
+ */
+#define HWLOC_API_VERSION 0x00010b06
 
 /** \brief Indicate at runtime which hwloc API version was used at build time.
  *
@@ -181,12 +188,18 @@ typedef enum {
 			  * coherency.
 			  */
   HWLOC_OBJ_NUMANODE,	/**< \brief NUMA node.
-			  * A set of processors around memory which the
-			  * processors can directly access.
+			  * An object that contains memory that is directly
+			  * and byte-accessible to the host processors.
+			  * It is usually close to some cores (the corresponding objects
+			  * are descendants of the NUMA node object in the hwloc tree).
+			  *
+			  * There is always at one such object in the topology
+			  * even if the machine is not NUMA.
 			  */
-  HWLOC_OBJ_PACKAGE,	/**< \brief Physical package, what goes into a socket.
-			  * In the physical meaning, i.e. that you can add
-			  * or remove physically.
+  HWLOC_OBJ_PACKAGE,	/**< \brief Physical package.
+			  * The physical package that usually gets inserted
+			  * into a socket on the motherboard.
+			  * A processor package usually contains multiple cores.
 			  */
   HWLOC_OBJ_CACHE,	/**< \brief Cache.
 			  * Can be L1i, L1d, L2, L3, ...
@@ -362,9 +375,19 @@ struct hwloc_obj {
 
   /* global position */
   unsigned depth;			/**< \brief Vertical index in the hierarchy.
-					 * If the topology is symmetric, this is equal to the
-					 * parent depth plus one, and also equal to the number
-					 * of parent/child links from the root object to here.
+					 *
+					 * For normal objects, this is the depth of the horizontal level
+					 * that contains this object and its cousins of the same type.
+					 * If the topology is symmetric, this is equal to the parent depth
+					 * plus one, and also equal to the number of parent/child links
+					 * from the root object to here.
+					 *
+					 * For special objects (I/O and Misc) that are not
+					 * in the main tree, this is a special negative value that
+					 * corresponds to their dedicated level,
+					 * see hwloc_get_type_depth() and ::hwloc_get_type_depth_e.
+					 * Those special values can be passed to hwloc functions such
+					 * hwloc_get_nbobjs_by_depth() as usual.
 					 */
   unsigned logical_index;		/**< \brief Horizontal index in the whole list of similar objects,
 					 * hence guaranteed unique across the entire machine.
@@ -1210,6 +1233,11 @@ enum hwloc_get_type_depth_e {
  * function returns the depth of the first "present" object typically found
  * inside \p type.
  *
+ * This function is only meaningful for normal object types.
+ * If an I/O object type is given, the corresponding virtual
+ * depth is always returned (see hwloc_get_type_depth()).
+ * If ::HWLOC_OBJ_MISC is given, the function returns ::HWLOC_TYPE_DEPTH_UNKNOWN.
+ *
  * If some objects of the given type exist in different levels, for instance
  * L1 and L2 caches, the function returns ::HWLOC_TYPE_DEPTH_MULTIPLE.
  */
@@ -1221,6 +1249,11 @@ hwloc_get_type_or_below_depth (hwloc_topology_t topology, hwloc_obj_type_t type)
  * If no object of this type is present on the underlying architecture, the
  * function returns the depth of the first "present" object typically
  * containing \p type.
+ *
+ * This function is only meaningful for normal object types.
+ * If an I/O object type is given, the corresponding virtual
+ * depth is always returned (see hwloc_get_type_depth()).
+ * If ::HWLOC_OBJ_MISC is given, the function returns ::HWLOC_TYPE_DEPTH_UNKNOWN.
  *
  * If some objects of the given type exist in different levels, for instance
  * L1 and L2 caches, the function returns ::HWLOC_TYPE_DEPTH_MULTIPLE.
@@ -1827,6 +1860,7 @@ typedef enum {
    *
    * Memory binding by CPU set cannot work for CPU-less NUMA memory nodes.
    * Binding by nodeset should therefore be preferred whenever possible.
+   * \hideinitializer
    */
   HWLOC_MEMBIND_BYNODESET =     (1<<5)
 } hwloc_membind_flags_t;
@@ -2145,12 +2179,10 @@ HWLOC_DECLSPEC int hwloc_get_area_membind(hwloc_topology_t topology, const void 
  * so this function may return something that is already
  * outdated.
  *
- * If ::HWLOC_MEMBIND_BYNODESET is specified, set is considered a nodeset.
- * Otherwise it's a cpuset.
+ * If ::HWLOC_MEMBIND_BYNODESET is specified in \p flags, set is
+ * considered a nodeset. Otherwise it's a cpuset.
  *
  * If \p len is 0, \p set is emptied.
- *
- * Flags are currently unused.
  */
 HWLOC_DECLSPEC int hwloc_get_area_memlocation(hwloc_topology_t topology, const void *addr, size_t len, hwloc_bitmap_t set, int flags);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -37,7 +37,7 @@ static bool isAssignment(FnSymbol* fn)
 {
   if (! fn->hasFlag(FLAG_ASSIGNOP))
     return false;
-  if (strcmp(fn->name, "="))
+  if (fn->name != astrSequals)
     return false;
 
   return true;

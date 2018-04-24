@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -31,11 +31,6 @@
  *
  */
 
-private module BaseStringType {
-  // TODO: figure out why I can't move this definition into `module String`
-  type bufferType = c_ptr(uint(8));
-}
-
 // Note - the I/O module has
 // :proc:`string.format` and :proc:`stringify`.
 // It might be worth moving them here for documentation - KB Feb 2016
@@ -53,26 +48,42 @@ private module BaseStringType {
 
   .. warning::
 
+    Casts from :record:`string` to the following types will throw an error
+    if they are invalid:
+
+      - ``int``
+      - ``uint``
+      - ``real``
+      - ``imag``
+      - ``complex``
+      - ``enum``
+
+    To learn more about handling these errors, see the
+    :ref:`Error Handling technical note <readme-errorHandling>`.
+
+  .. note::
+
     While :record:`string` is intended to be a Unicode string, there is much
-    left to do. As of Chapel 1.13, only ASCII strings can be expected to work
+    left to do. As of Chapel 1.17, only ASCII strings can be expected to work
     correctly with all functions.
 
     Future work involves support for both ASCII and unicode strings, and
     allowing users to specify the encoding for individual strings.
  */
 module String {
-  use BaseStringType;
+  use ChapelStandard;
   use CString;
   use SysCTypes;
   use StringCasts;
+
+  // Growth factor to use when extending the buffer for appends
+  private config param chpl_stringGrowthFactor = 1.5;
 
   //
   // Externs and constants used to implement strings
   //
 
-  private param chpl_string_min_alloc_size: int = 16;
-  // Growth factor to use when extending the buffer for appends
-  private config param chpl_stringGrowthFactor = 1.5;
+  private        param chpl_string_min_alloc_size: int = 16;
 
   // TODO (EJR: 02/25/16): see if we can remove this explicit type declaration.
   // chpl_mem_descInt_t is really a well known compiler type since the compiler
@@ -81,9 +92,34 @@ module String {
   pragma "no doc"
   extern type chpl_mem_descInt_t = int(16);
 
-  // TODO: define my own mem descriptors?
-  private extern const CHPL_RT_MD_STR_COPY_REMOTE: chpl_mem_descInt_t;
-  private extern const CHPL_RT_MD_STR_COPY_DATA: chpl_mem_descInt_t;
+  private extern proc chpl_memhook_md_num(): chpl_mem_descInt_t;
+
+  // Calls to chpl_here_alloc increment the memory descriptor by
+  // `chpl_memhook_md_num`. For internal runtime descriptors like the ones
+  // below, this would result in selecting the incorrect descriptor string.
+  //
+  // Instead, decrement the CHPL_RT_MD* descriptor and use the result when
+  // calling chpl_here_alloc.
+  private proc offset_STR_COPY_DATA {
+    extern const CHPL_RT_MD_STR_COPY_DATA: chpl_mem_descInt_t;
+    return CHPL_RT_MD_STR_COPY_DATA - chpl_memhook_md_num();
+  }
+  private proc offset_STR_COPY_REMOTE {
+    extern const CHPL_RT_MD_STR_COPY_REMOTE: chpl_mem_descInt_t;
+    return CHPL_RT_MD_STR_COPY_REMOTE - chpl_memhook_md_num();
+  }
+
+  pragma "no doc"
+  type bufferType = c_ptr(uint(8));
+
+  pragma "no doc"
+  extern const CHPL_SHORT_STRING_SIZE : c_int;
+
+  pragma "no doc"
+  extern record chpl__inPlaceBuffer {};
+
+  pragma "no doc"
+  extern proc chpl__getInPlaceBufferData(const ref data : chpl__inPlaceBuffer) : c_ptr(uint(8));
 
   private inline proc chpl_string_comm_get(dest: bufferType, src_loc_id: int(64),
                                            src_addr: bufferType, len: integral) {
@@ -91,13 +127,22 @@ module String {
   }
 
   private proc copyRemoteBuffer(src_loc_id: int(64), src_addr: bufferType, len: int): bufferType {
-      const dest = chpl_here_alloc(len+1, CHPL_RT_MD_STR_COPY_REMOTE): bufferType;
+      const dest = chpl_here_alloc(len+1, offset_STR_COPY_REMOTE): bufferType;
       chpl_string_comm_get(dest, src_loc_id, src_addr, len);
       dest[len] = 0;
       return dest;
   }
 
   private config param debugStrings = false;
+
+  pragma "no doc"
+  record __serializeHelper {
+    var len       : int;
+    var buff      : bufferType;
+    var size      : int;
+    var locale_id : chpl_nodeID.type;
+    var shortData : chpl__inPlaceBuffer;
+  }
 
   //
   // String Implementation
@@ -115,37 +160,43 @@ module String {
     pragma "no doc"
     var buff: bufferType = nil;
     pragma "no doc"
-    var owned: bool = true;
+    var isowned: bool = true;
     pragma "no doc"
     // We use chpl_nodeID as a shortcut to get at here.id without actually constructing
     // a locale object. Used when determining if we should make a remote transfer.
     var locale_id = chpl_nodeID; // : chpl_nodeID_t
 
+    pragma "no doc"
+    proc init() {
+      // Let compiler insert defaults
+    }
+
     /*
-      Construct a new string from ``s``. If ``owned`` is set to ``true`` then
+      Initialize a new string from ``s``. If ``isowned`` is set to ``true`` then
       ``s`` will be fully copied into the new instance. If it is ``false`` a
       shallow copy will be made such that any in-place modifications to the new
       string may appear in ``s``. It is the responsibility of the user to
       ensure that the underlying buffer is not freed while being used as part
       of a shallow copy.
      */
-    proc string(s: string, owned: bool = true) {
+    proc init(s: string, isowned: bool = true) {
       const sRemote = s.locale_id != chpl_nodeID;
       const sLen = s.len;
-      this.owned = owned;
+      this.isowned = isowned;
+      this.complete();
       // Don't need to do anything if s is an empty string
       if sLen != 0 {
         this.len = sLen;
         if !_local && sRemote {
-          // ignore supplied value of owned for remote strings so we don't leak
-          this.owned = true;
+          // ignore supplied value of isowned for remote strings so we don't leak
+          this.isowned = true;
           this.buff = copyRemoteBuffer(s.locale_id, s.buff, sLen);
           this._size = sLen+1;
         } else {
-          if this.owned {
+          if this.isowned {
             const allocSize = chpl_here_good_alloc_size(sLen+1);
             this.buff = chpl_here_alloc(allocSize,
-                                       CHPL_RT_MD_STR_COPY_DATA): bufferType;
+                                       offset_STR_COPY_DATA): bufferType;
             c_memcpy(this.buff, s.buff, s.len);
             this.buff[sLen] = 0;
             this._size = allocSize;
@@ -158,40 +209,45 @@ module String {
     }
 
     /*
-      Construct a new string from the `c_string` `cs`. If `owned` is set to
+      Initialize a new string from the `c_string` `cs`. If `isowned` is set to
       true, the backing buffer will be freed when the new record is destroyed.
       If `needToCopy` is set to true, the `c_string` will be copied into the
       record, otherwise it will be used directly. It is the responsibility of
       the user to ensure that the underlying buffer is not freed if the
       `c_string` is not copied in.
      */
-    proc string(cs: c_string, length: int = cs.length,
-                owned: bool = true, needToCopy:  bool = true) {
-      this.owned = owned;
+    proc init(cs: c_string, length: int = cs.length,
+                isowned: bool = true, needToCopy:  bool = true) {
+      this.isowned = isowned;
+      this.complete();
       const cs_len = length;
       this.reinitString(cs:bufferType, cs_len, cs_len+1, needToCopy);
     }
 
     /*
-      Construct a new string from `buff` ( `c_ptr(uint(8))` ). `size` indicates
+      Initialize a new string from `buff` ( `c_ptr(uint(8))` ). `size` indicates
       the total size of the buffer available, while `len` indicates the current
       length of the string in the buffer (the common case would be `size-1` for
-      a C-style string). If `owned` is set to true, the backing buffer will be
+      a C-style string). If `isowned` is set to true, the backing buffer will be
       freed when the new record is destroyed. If `needToCopy` is set to true,
       the `c_string` will be copied into the record, otherwise it will be used
       directly. It is the responsibility of the user to ensure that the
       underlying buffer is not freed if the `c_string` is not copied in.
      */
-    // This constructor can cause a leak if owned = false and needToCopy = true
-    proc string(buff: bufferType, length: int, size: int,
-                owned: bool = true, needToCopy: bool = true) {
-      this.owned = owned;
+    // This initializer can cause a leak if isowned = false and needToCopy = true
+    proc init(buff: bufferType, length: int, size: int,
+                isowned: bool = true, needToCopy: bool = true) {
+      this.isowned = isowned;
+      this.complete();
       this.reinitString(buff, length, size, needToCopy);
     }
 
     pragma "no doc"
     proc ref deinit() {
-      if owned && !this.isEmptyString() {
+      // Checking for size here isn't sufficient. A string may have been
+      // initialized from a c_string allocated from memory but beginning with
+      // a null-terminator.
+      if isowned && this.buff != nil {
         on __primitive("chpl_on_locale_num",
                        chpl_buildLocaleID(this.locale_id, c_sublocid_any)) {
           chpl_here_free(this.buff);
@@ -199,44 +255,76 @@ module String {
       }
     }
 
+    pragma "no doc"
+    proc chpl__serialize() {
+      var data : chpl__inPlaceBuffer;
+      if len <= CHPL_SHORT_STRING_SIZE {
+        chpl_string_comm_get(chpl__getInPlaceBufferData(data), locale_id, buff, len);
+      }
+      return new __serializeHelper(len, buff, _size, locale_id, data);
+    }
+
+    pragma "no doc"
+    proc type chpl__deserialize(data) {
+      if data.locale_id != chpl_nodeID {
+        if data.len <= CHPL_SHORT_STRING_SIZE {
+          return new string(chpl__getInPlaceBufferData(data.shortData), data.len,
+                            data.size, isowned=true, needToCopy=true);
+        } else {
+          var localBuff = copyRemoteBuffer(data.locale_id, data.buff, data.len);
+          return new string(localBuff, data.len, data.size,
+                            isowned=true, needToCopy=false);
+        }
+      } else {
+        return new string(data.buff, data.len, data.size, isowned = false, needToCopy=false);
+      }
+    }
+
     // This is assumed to be called from this.locale
     pragma "no doc"
     proc ref reinitString(buf: bufferType, s_len: int, size: int,
                           needToCopy:bool = true) {
-      if this.isEmptyString() {
-        if (s_len == 0) || (buf == nil) then return; // nothing to do
-      }
+      if this.isEmptyString() && buf == nil then return;
 
       // If the this.buff is longer than buf, then reuse the buffer if we are
-      // allowed to (this.owned == true)
+      // allowed to (this.isowned == true)
       if s_len != 0 {
         if needToCopy {
-          if !this.owned || s_len+1 > this._size {
+          if !this.isowned || s_len+1 > this._size {
             // If the new string is too big for our current buffer or we dont
             // own our current buffer then we need a new one.
-            if this.owned && !this.isEmptyString() then
+            if this.isowned && !this.isEmptyString() then
               chpl_here_free(this.buff);
             // TODO: should I just allocate 'size' bytes?
             const allocSize = chpl_here_good_alloc_size(s_len+1);
             this.buff = chpl_here_alloc(allocSize,
-                                       CHPL_RT_MD_STR_COPY_DATA):bufferType;
-            this.buff[s_len] = 0;
+                                       offset_STR_COPY_DATA):bufferType;
             this._size = allocSize;
             // We just allocated a buffer, make sure to free it later
-            this.owned = true;
+            this.isowned = true;
           }
           c_memmove(this.buff, buf, s_len);
+          this.buff[s_len] = 0;
         } else {
-          if this.owned && !this.isEmptyString() then
+          if this.isowned && !this.isEmptyString() then
             chpl_here_free(this.buff);
           this.buff = buf;
           this._size = size;
         }
       } else {
-        // free the old buffer
-        if this.owned && !this.isEmptyString() then chpl_here_free(this.buff);
-        this.buff = nil;
+        // If s_len is 0, 'buf' may still have been allocated. Regardless, we
+        // need to free the old buffer if 'this' is isowned.
+        if this.isowned && !this.isEmptyString() then chpl_here_free(this.buff);
         this._size = 0;
+
+        // If we need to copy, we can just set 'buff' to nil. Otherwise the
+        // implication is that the string takes ownership of the given buffer,
+        // so we need to store it and free it later.
+        if needToCopy {
+          this.buff = nil;
+        } else {
+          this.buff = buf;
+        }
       }
 
       this.len = s_len;
@@ -248,6 +336,11 @@ module String {
     inline proc length return len;
 
     /*
+      :returns: The number of characters in the string.
+      */
+    inline proc size return len;
+
+    /*
        Gets a version of the :record:`string` that is on the currently
        executing locale.
 
@@ -256,7 +349,7 @@ module String {
     */
     inline proc localize() : string {
       if _local || this.locale_id == chpl_nodeID {
-        return new string(this, owned=false);
+        return new string(this, isowned=false);
       } else {
         const x:string = this; // assignment makes it local
         return x;
@@ -348,8 +441,8 @@ module String {
       ret._size = max(chpl_string_min_alloc_size, newSize);
       ret.len = 1;
       ret.buff = chpl_here_alloc(ret._size,
-                                CHPL_RT_MD_STR_COPY_DATA): bufferType;
-      ret.owned = true;
+                                offset_STR_COPY_DATA): bufferType;
+      ret.isowned = true;
 
       const remoteThis = this.locale_id != chpl_nodeID;
       if remoteThis {
@@ -410,7 +503,7 @@ module String {
         // multi-locale and use that as the string buffer. No need to copy stuff
         // about after pulling it across.
         ret.buff = chpl_here_alloc(ret._size,
-                                  CHPL_RT_MD_STR_COPY_DATA): bufferType;
+                                  offset_STR_COPY_DATA): bufferType;
 
         var thisBuff: bufferType;
         const remoteThis = this.locale_id != chpl_nodeID;
@@ -423,10 +516,11 @@ module String {
           thisBuff = this.buff;
         }
 
+        var buff = ret.buff; // Has perf impact and our LICM can't hoist :(
         for (r2_i, i) in zip(r2, 0..) {
-          ret.buff[i] = thisBuff[r2_i-1];
+          buff[i] = thisBuff[r2_i-1];
         }
-        ret.buff[ret.len] = 0;
+        buff[ret.len] = 0;
 
         if remoteThis then chpl_here_free(thisBuff);
       }
@@ -632,7 +726,7 @@ module String {
       :arg count: an optional integer specifying the number of replacements to
                   make, values less than zero will replace all occurrences
 
-      :returns: a copy of the string where `needle` replaces `replacement` up
+      :returns: a copy of the string where `replacement` replaces `needle` up
                 to `count` times
      */
     // TODO: not ideal - count and single allocation probably faster
@@ -846,13 +940,16 @@ module String {
         var joinedSize: int = this.len * (S.size - 1);
         for s in S do joinedSize += s.length;
 
+        if joinedSize == 0 then
+          return '';
+
         var joined: string;
         joined.len = joinedSize;
         const allocSize = chpl_here_good_alloc_size(joined.len + 1);
         joined._size = allocSize;
         joined.buff = chpl_here_alloc(
           allocSize,
-          CHPL_RT_MD_STR_COPY_DATA): bufferType;
+          offset_STR_COPY_DATA): bufferType;
 
         var first = true;
         var offset = 0;
@@ -1095,10 +1192,10 @@ module String {
 
     /*
      Checks if all the characters in the string are printable. Characters are
-     defined as being printable if they are not within the range of `0x00-0x1f`
-     or are `0x7f`.
+     defined as being printable if they are within the range of `0x20 - 0x7e`
+     including the bounds.
 
-      :returns: * `true`  -- when the characters are alphanumeric.
+      :returns: * `true`  -- when the characters are printable.
                 * `false` -- otherwise
      */
     proc isPrintable() : bool {
@@ -1246,78 +1343,6 @@ module String {
   } // end record string
 
 
-  // We'd like this to be by ref, but doing so leads to an internal
-  // compiler error.  See
-  // $CHPL_HOME/test/types/records/sungeun/recordWithRefCopyFns.future
-  pragma "donor fn"
-  pragma "auto copy fn"
-  pragma "no doc"
-  proc chpl__autoCopy(s: string) {
-    // This pragma may be unnecessary.
-    pragma "no auto destroy"
-    var ret: string;
-    const slen = s.len; // cache the remote copy of len
-    if slen != 0 {
-      if _local || s.locale_id == chpl_nodeID {
-        if s.owned {
-          ret.buff = chpl_here_alloc(s._size,
-                                    CHPL_RT_MD_STR_COPY_DATA): bufferType;
-          c_memcpy(ret.buff, s.buff, s.len);
-          ret.buff[s.len] = 0;
-        } else {
-          ret.buff = s.buff;
-        }
-        ret.owned = s.owned;
-      } else {
-        ret.buff = copyRemoteBuffer(s.locale_id, s.buff, slen);
-        ret.owned = true;
-      }
-      ret.len = slen;
-      ret._size = slen+1;
-    }
-    return ret;
-  }
-
-  /*
-   * NOTES: Just a word on memory allocation in the generated code.
-   * Any function that returns a string copies the returned value
-   * including the c_string via a call to chpl__initCopy().  The
-   * copied value is returned, and the original is destroyed on the
-   * way out.  I'd really like to figure out a way to pass back the
-   * original string without copying it.  I think I might be able to
-   * do it by putting some sort of flag in the string record that is
-   * used by initCopy().
-   * TODO: Check if ^ is still true w/ the new AMM
-   * TODO: Do we need an initCopy for strings?  If not, this clause can be removed.
-   */
-  pragma "init copy fn"
-  pragma "no doc"
-  proc chpl__initCopy(s: string) {
-    // This pragma may be unnecessary.
-    pragma "no auto destroy"
-    var ret: string;
-    const slen = s.len; // cache the remote copy of len
-    if slen != 0 {
-      if _local || s.locale_id == chpl_nodeID {
-        if s.owned {
-          ret.buff = chpl_here_alloc(s._size,
-                                    CHPL_RT_MD_STR_COPY_DATA): bufferType;
-          c_memcpy(ret.buff, s.buff, s.len);
-          ret.buff[s.len] = 0;
-        } else {
-          ret.buff = s.buff;
-        }
-        ret.owned = s.owned;
-      } else {
-        ret.buff = copyRemoteBuffer(s.locale_id, s.buff, slen);
-        ret.owned = true;
-      }
-      ret.len = slen;
-      ret._size = slen+1;
-    }
-    return ret;
-  }
-
   //
   // Assignment functions
   //
@@ -1381,8 +1406,8 @@ module String {
     const allocSize = chpl_here_good_alloc_size(ret.len+1);
     ret._size = allocSize;
     ret.buff = chpl_here_alloc(allocSize,
-                              CHPL_RT_MD_STR_COPY_DATA): bufferType;
-    ret.owned = true;
+                              offset_STR_COPY_DATA): bufferType;
+    ret.isowned = true;
 
     const s0remote = s0.locale_id != chpl_nodeID;
     if s0remote {
@@ -1427,8 +1452,8 @@ module String {
     const allocSize = chpl_here_good_alloc_size(ret.len+1);
     ret._size = allocSize;
     ret.buff = chpl_here_alloc(allocSize,
-                              CHPL_RT_MD_STR_COPY_DATA): bufferType;
-    ret.owned = true;
+                              offset_STR_COPY_DATA): bufferType;
+    ret.isowned = true;
 
     const sRemote = s.locale_id != chpl_nodeID;
     if sRemote {
@@ -1565,15 +1590,15 @@ module String {
         const newSize = chpl_here_good_alloc_size(
             max(newLength+1, lhs.len*chpl_stringGrowthFactor):int);
 
-        if lhs.owned {
+        if lhs.isowned {
           lhs.buff = chpl_here_realloc(lhs.buff, newSize,
-                                      CHPL_RT_MD_STR_COPY_DATA):bufferType;
+                                      offset_STR_COPY_DATA):bufferType;
         } else {
           var newBuff = chpl_here_alloc(newSize,
-                                       CHPL_RT_MD_STR_COPY_DATA):bufferType;
+                                       offset_STR_COPY_DATA):bufferType;
           c_memcpy(newBuff, lhs.buff, lhs.len);
           lhs.buff = newBuff;
-          lhs.owned = true;
+          lhs.isowned = true;
         }
 
         lhs._size = newSize;
@@ -1711,7 +1736,7 @@ module String {
   }
 
   private inline proc byte_isAlpha(b: uint(8)) : bool {
-    return b >= uint_A  && b <= uint_z;
+    return byte_isLower(b) || byte_isUpper(b);
   }
 
   private inline proc byte_isDigit(b: uint(8)) : bool {
@@ -1747,10 +1772,10 @@ module String {
      :returns: A string with the single character with the ASCII value `i`.
   */
   inline proc asciiToString(i: uint(8)) {
-    var buffer = chpl_here_alloc(2, CHPL_RT_MD_STR_COPY_DATA): bufferType;
+    var buffer = chpl_here_alloc(2, offset_STR_COPY_DATA): bufferType;
     buffer[0] = i;
     buffer[1] = 0;
-    var s = new string(buffer, 1, 2, owned=true, needToCopy=false);
+    var s = new string(buffer, 1, 2, isowned=true, needToCopy=false);
     return s;
   }
 
@@ -1764,11 +1789,6 @@ module String {
     return __primitive("cast", t, cs);
   }
 
-  pragma "no doc"
-  inline proc _cast(type t, cs: c_string_copy) where t == bufferType {
-    return __primitive("cast", t, cs);
-  }
-
   // Cast from c_string to string
   pragma "no doc"
   proc _cast(type t, cs: c_string) where t == string {
@@ -1778,7 +1798,7 @@ module String {
     ret.buff = if ret.len > 0
       then __primitive("string_copy", cs): bufferType
       else nil;
-    ret.owned = true;
+    ret.isowned = true;
 
     return ret;
   }
@@ -1789,10 +1809,15 @@ module String {
 
   pragma "no doc"
   inline proc chpl__defaultHash(x : string): uint {
-    // Use djb2 (Dan Bernstein in comp.lang.c), XOR version
-    var hash: int(64) = 5381;
-    for c in 0..#(x.length) {
-      hash = ((hash << 5) + hash) ^ x.buff[c];
+    var hash: int(64);
+    on __primitive("chpl_on_locale_num",
+                   chpl_buildLocaleID(x.locale_id, c_sublocid_any)) {
+      // Use djb2 (Dan Bernstein in comp.lang.c), XOR version
+      var locHash: int(64) = 5381;
+      for c in 0..#(x.length) {
+        locHash = ((locHash << 5) + locHash) ^ x.buff[c];
+      }
+      hash = locHash;
     }
     return hash;
   }

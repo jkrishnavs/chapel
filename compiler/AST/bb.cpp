@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -23,6 +23,7 @@
 #include "bitVec.h"
 #include "CForLoop.h"
 #include "DoWhileStmt.h"
+#include "driver.h"
 #include "ForLoop.h"
 #include "stlUtil.h"
 #include "stmt.h"

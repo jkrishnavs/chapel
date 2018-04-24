@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -23,11 +23,6 @@
 
 // TODO
 //
-// * Implement reindexing and rank change directly within Dimensional.
-//  That will probably be more efficient than going through WrapperDist.
-//  For that, will need allow Dimensional to have smaller rank.
-//  Can use "reindexing" dimension specifiers - will only
-//  need two - one for replicated and one for any non-replicated.
 // * Ensure that reallocation works with block-cyclic 1-d distribution
 //  when the domain's stride changes.
 
@@ -135,7 +130,6 @@ and distributes using block-cyclic distribution in the second dimension.
     for loc in MyLocales do on loc {
 
       // The ReplicatedDim specifier always accesses the local replicand.
-      // (This differs from how the ReplicatedDist distribution works.)
       //
       // Therefore, 'forall a in A' when executed on MyLocales[loc1,loc2]
       // visits only the replicands on MyLocales[loc1,0..N_2-1].
@@ -190,13 +184,13 @@ When run on 6 locales, the output is:
     3 3 4 4 5 5 3 3
 
 
-**Constructor Arguments**
+**Initializer Arguments**
 
-The ``DimensionalDist2D`` class constructor is defined as follows:
+The ``DimensionalDist2D`` class initializer is defined as follows:
 
   .. code-block:: chapel
 
-    proc DimensionalDist2D.DimensionalDist2D(
+    proc DimensionalDist2D.init(
       targetLocales: [] locale,
       di1,
       di2,
@@ -229,7 +223,7 @@ and arrays.
 **Dimension Specifiers**
 
 Presently, the following dimension specifiers are available
-(shown here with their constructor arguments):
+(shown here with their initializer arguments):
 
 * :class:`ReplicatedDim(numLocales) <ReplicatedDim>`
 * :class:`BlockDim(numLocales, boundingBox, idxType=boundingBox.idxType) <BlockDim>`
@@ -276,11 +270,23 @@ class DimensionalDist2D : BaseDist {
 
 // class LocDimensionalDist - no local distribution descriptor - for now
 
+private proc locDescTypeHelper(param rank : int, type idxType, dom1, dom2) type {
+  type d1type = dom1.dsiNewLocalDom1d(idxType, 0).type;
+  type d2type = dom2.dsiNewLocalDom1d(idxType, 0).type;
+
+  proc strideHelper(dom1d) param {
+    const dummy = dom1d.dsiNewLocalDom1d(idxType, 0).dsiSetLocalIndices1d(dom1d, 0);
+    return dummy.stridable;
+  }
+
+  param str = strideHelper(dom1) || strideHelper(dom2);
+
+  return LocDimensionalDom(domain(rank, idxType, str), d1type, d2type);
+}
+
+pragma "use default init"
 class DimensionalDom : BaseRectangularDom {
   // required
-  param rank: int;
-  type idxType;
-  param stridable: bool;
   const dist; // not reprivatized
 
   // convenience
@@ -294,7 +300,7 @@ class DimensionalDom : BaseRectangularDom {
 
   // This is our index set; we store it here so we can get to it easily.
   // Although strictly speaking it is not necessary.
-  var whole: domainT;
+  var whole: domain(rank, idxType, stridable);
 
   // This is the idxType of the "storage index ranges" to be produced
   // by dsiSetLocalIndices1d(). It needs to be uniform across dimensions,
@@ -320,8 +326,10 @@ class DimensionalDom : BaseRectangularDom {
                                          dom1.dsiNewLocalDom1d(stoIndexT, 0:locIdT).type,
                                          dom2.dsiNewLocalDom1d(stoIndexT, 0:locIdT).type);
 
-  // local domain descriptors
-  var localDdescs: [dist.targetIds] locDdescType; // not reprivatized
+  // local domain descriptors, not reprivatized
+  // INIT TODO: Used to use 'locDdescType' instead of 'locDescTypeHelper'. Can
+  // we clean this up?
+  var localDdescs: [dist.targetIds] locDescTypeHelper(rank, idxType, dom1, dom2); // locDdescType
 }
 
 class LocDimensionalDom {
@@ -339,11 +347,16 @@ class LocDimensionalDom {
 
   // subordinate 1-d local domain descriptors
   var doml1, doml2;
+
+  proc deinit() {
+    if isClass(doml2) then delete doml2;
+    if isClass(doml1) then delete doml1;
+  }
 }
 
-class DimensionalArr : BaseArr {
+pragma "use default init"
+class DimensionalArr : BaseRectangularArr {
   // required
-  type eltType;
   const dom; // must be a DimensionalDom
 
   // same as 'dom'; for an alias (e.g. a slice), 'dom' of the original array
@@ -370,11 +383,11 @@ class LocDimensionalArr {
 /// distribution ////////////////////////////////////////////////////////////
 
 
-//== construction, cloning
+//== initialization, cloning
 
-// constructor
+// initializer
 // gotta list all the things we let the user set
-proc DimensionalDist2D.DimensionalDist2D(
+proc DimensionalDist2D.init(
   targetLocales: [] locale,
   di1,
   di2,
@@ -384,12 +397,19 @@ proc DimensionalDist2D.DimensionalDist2D(
   dataParIgnoreRunningTasks: bool = getDataParIgnoreRunningTasks(),
   dataParMinGranularity: int      = getDataParMinGranularity()
 ) {
+  this.targetLocales = targetLocales;
+  this.di1 = di1;
+  this.di2 = di2;
   this.name = name;
+  this.idxType = idxType;
   this.dataParTasksPerLocale = if dataParTasksPerLocale==0
                                then here.maxTaskPar
                                else dataParTasksPerLocale;
   this.dataParIgnoreRunningTasks = dataParIgnoreRunningTasks;
   this.dataParMinGranularity = dataParMinGranularity;
+
+  this.complete();
+
   checkInvariants();
 
   _passLocalLocIDsDist(di1, true, di2, true,
@@ -398,7 +418,7 @@ proc DimensionalDist2D.DimensionalDist2D(
 
 //
 // Having targetLocales be a constant means we have to reshape Locales
-// before invoking the constructor. This method does that.
+// before invoking the initializer. This method does that.
 // It also offers the convenience of passing just di1 and di2 and
 // using 'Locales' for targetLocales by default.
 // Recall that di1 and di2 determine the number of locales in each dimension.
@@ -423,7 +443,7 @@ proc newDimensionalDist2D(
 
 
 // Check all restrictions/assumptions that must be satisfied by the user
-// when constructing a DimensionalDist2D.
+// when initializing a DimensionalDist2D.
 proc DimensionalDist2D.checkInvariants(): void {
   proc ensure(param cond:bool, param msg:string) {
     if !cond then compilerError(msg, 3);
@@ -506,9 +526,9 @@ proc DimensionalDist2D.dsiPrivatize(privatizeData) {
                              dummy = 0);
 }
 
-// constructor of a privatized copy
-// ('dummy' distinguishes it from the user constructor)
-proc DimensionalDist2D.DimensionalDist2D(param dummy: int,
+// initializer of a privatized copy
+// ('dummy' distinguishes it from the user initializer)
+proc DimensionalDist2D.init(param dummy: int,
   targetLocales: [] locale,
   name,
   type idxType,
@@ -518,10 +538,17 @@ proc DimensionalDist2D.DimensionalDist2D(param dummy: int,
   dataParIgnoreRunningTasks,
   dataParMinGranularity
 ) {
+  this.targetLocales = targetLocales;
+  this.di1 = di1;
+  this.di2 = di2;
   this.name = name;
+  this.idxType = idxType;
   this.dataParTasksPerLocale     = dataParTasksPerLocale;
   this.dataParIgnoreRunningTasks = dataParIgnoreRunningTasks;
   this.dataParMinGranularity     = dataParMinGranularity;
+
+  this.complete();
+
   // should not need it, but run it for now just in case
   checkInvariants();
 }
@@ -742,7 +769,7 @@ proc DimensionalDom.dimSpecifier(param dim: int) {
 //== writing
 
 proc DimensionalDom.dsiSerialWrite(f): void {
-  f.write(whole);
+  f <~> whole;
 }
 
 
@@ -807,6 +834,10 @@ proc DimensionalDom.dsiSetIndices(newIndices: domainT): void {
 proc DimensionalDom.dsiSetIndices(newRanges: rank * rangeT): void {
   whole = {(...newRanges)};
   _dsiSetIndicesHelper(newRanges);
+}
+
+proc DimensionalDom.dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+  chpl_assignDomainWithGetSetIndices(this, rhs);
 }
 
 // not part of DSI
@@ -880,7 +911,10 @@ proc DimensionalArr.dsiPrivatize(privatizeData) {
     else chpl_getPrivatizedCopy(objectType = this.allocDom.type,
                                 objectPid  = idAllocDom);
 
-  const result = new DimensionalArr(eltType  = this.eltType,
+  const result = new DimensionalArr(rank     = this.rank,
+                                    idxType  = this.idxType,
+                                    stridable= this.stridable,
+                                    eltType  = this.eltType,
                                     dom      = privDom,
                                     allocDom = privAllocDom);
 
@@ -908,18 +942,20 @@ proc DimensionalArr.isAlias
   return this.dom != this.allocDom;
 
 
-//== creation
+//== creation and destruction
 
 // create a new array over this domain
 proc DimensionalDom.dsiBuildArray(type eltType)
-  : DimensionalArr(eltType, this.type)
 {
   _traceddd(this, ".dsiBuildArray");
   if rank != 2 then
     compilerError("DimensionalDist2D presently supports only 2 dimensions,",
                   " got ", rank, " dimensions");
 
-  const result = new DimensionalArr(eltType  = eltType,
+  const result = new DimensionalArr(rank = rank,
+                                    idxType = idxType,
+                                    stridable = stridable,
+                                    eltType  = eltType,
                                     dom      = this,
                                     allocDom = this);
   coforall (loc, locDdesc, locAdesc)
@@ -929,6 +965,16 @@ proc DimensionalDom.dsiBuildArray(type eltType)
 
   assert(!result.isAlias);
   return result;
+}
+
+
+proc DimensionalDom.dsiDestroyDom() {
+  coforall desc in localDdescs do
+    on desc do
+      delete desc;
+
+  if isClass(dom2) then delete dom2;
+  if isClass(dom1) then delete dom1;
 }
 
 
@@ -999,7 +1045,7 @@ proc DimensionalArr.dsiSerialWrite(f): void {
 }
 
 
-/// slicing, reindexing, rank change, reallocation //////////////////////////
+/// local slicing, reallocation //////////////////////////
 
 pragma "no copy return"
 proc DimensionalArr.dsiLocalSlice((sliceDim1, sliceDim2)) {
@@ -1021,13 +1067,6 @@ proc DimensionalArr.dsiLocalSlice((sliceDim1, sliceDim2)) {
   return locAdesc.myStorageArr[r1, r2];
 }
 
-/* The following are using the standalone WrapperDist, currently not provided.
-
-proc DimensionalDist2D.dsiCreateReindexDist(newSpace, oldSpace) {
-  return genericDsiCreateReindexDist(this, this.rank, newSpace, oldSpace);
-}
-
-*/
 /* do not use the above comment for chpldoc */
 
 proc DimensionalArr.dsiReallocate(d: domain) {
@@ -1037,6 +1076,12 @@ proc DimensionalArr.dsiReallocate(d: domain) {
 
 proc DimensionalArr.dsiPostReallocate() {
   // nothing for now
+}
+
+proc DimensionalArr.dsiDestroyArr() {
+  coforall desc in localAdescs do
+    on desc do
+      delete desc;
 }
 
 

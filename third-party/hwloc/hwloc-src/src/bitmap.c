@@ -1,6 +1,6 @@
 /*
  * Copyright © 2009 CNRS
- * Copyright © 2009-2015 Inria.  All rights reserved.
+ * Copyright © 2009-2017 Inria.  All rights reserved.
  * Copyright © 2009-2011 Université Bordeaux
  * Copyright © 2009-2011 Cisco Systems, Inc.  All rights reserved.
  * See COPYING in top-level directory.
@@ -317,6 +317,8 @@ int hwloc_bitmap_asprintf(char ** strp, const struct hwloc_bitmap_s * __hwloc_re
 
   len = hwloc_bitmap_snprintf(NULL, 0, set);
   buf = malloc(len+1);
+  if (!buf)
+    return -1;
   *strp = buf;
   return hwloc_bitmap_snprintf(buf, len+1, set);
 }
@@ -448,6 +450,8 @@ int hwloc_bitmap_list_asprintf(char ** strp, const struct hwloc_bitmap_s * __hwl
 
   len = hwloc_bitmap_list_snprintf(NULL, 0, set);
   buf = malloc(len+1);
+  if (!buf)
+    return -1;
   *strp = buf;
   return hwloc_bitmap_list_snprintf(buf, len+1, set);
 }
@@ -463,7 +467,7 @@ int hwloc_bitmap_list_sscanf(struct hwloc_bitmap_s *set, const char * __hwloc_re
   while (*current != '\0') {
 
     /* ignore empty ranges */
-    while (*current == ',')
+    while (*current == ',' || *current == ' ')
       current++;
 
     val = strtoul(current, &next, 0);
@@ -487,7 +491,7 @@ int hwloc_bitmap_list_sscanf(struct hwloc_bitmap_s *set, const char * __hwloc_re
 	begin = val;
       }
 
-    } else if (*next == ',' || *next == '\0') {
+    } else if (*next == ',' || *next == ' ' || *next == '\0') {
       /* single digit */
       hwloc_bitmap_set(set, val);
     }
@@ -587,6 +591,8 @@ int hwloc_bitmap_taskset_asprintf(char ** strp, const struct hwloc_bitmap_s * __
 
   len = hwloc_bitmap_taskset_snprintf(NULL, 0, set);
   buf = malloc(len+1);
+  if (!buf)
+    return -1;
   *strp = buf;
   return hwloc_bitmap_taskset_snprintf(buf, len+1, set);
 }
@@ -598,7 +604,6 @@ int hwloc_bitmap_taskset_sscanf(struct hwloc_bitmap_s *set, const char * __hwloc
   int count;
   int infinite = 0;
 
-  current = string;
   if (!strncmp("0xf...f", current, 7)) {
     /* infinite bitmap */
     infinite = 1;

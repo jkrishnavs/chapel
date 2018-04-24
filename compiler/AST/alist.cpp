@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -75,6 +75,9 @@ Expr* AList::get(int index) const {
   return NULL;
 }
 
+bool AList::empty() {
+  return length == 0;
+}
 
 void AList::insertAtHead(Expr* new_ast) {
   if (new_ast->parentSymbol || new_ast->parentExpr)

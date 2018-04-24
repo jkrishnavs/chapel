@@ -79,9 +79,8 @@ module LCALSDataTypes {
 
     var loop_chksum: [loop_length_dom] real;
 
-    proc LoopStat() {
-      for i in loop_length_dom do
-        loop_run_time[i] = new vector(real);
+    proc init() {
+      loop_run_time = for i in loop_length_dom do new vector(real);
     }
 
     proc deinit() {
@@ -120,7 +119,7 @@ module LCALSDataTypes {
     var real_zones: [zoneDom] int;
     var n_real_zones: int;
 
-    proc ADomain(ilen: LoopLength, ndims: int) {
+    proc init(ilen: LoopLength, ndims: int) {
       var rzmax: int;
       this.ndims = ndims;
       NPNL = 2;
@@ -179,7 +178,7 @@ module LCALSDataTypes {
       lpz = lrn;
 
       zoneDom = {0..#nnalls};
-      for i in 0..#nnalls do real_zones[i] = -1;
+      real_zones = -1;
 
       n_real_zones = 0;
 

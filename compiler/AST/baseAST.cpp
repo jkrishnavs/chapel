@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -17,18 +17,19 @@
  * limitations under the License.
  */
 
-#include <ostream>
-#include <sstream>
-#include <string>
-
 #include "baseAST.h"
 
 #include "astutil.h"
 #include "CForLoop.h"
 #include "CatchStmt.h"
+#include "DeferStmt.h"
+#include "driver.h"
 #include "expr.h"
+#include "ForallStmt.h"
 #include "ForLoop.h"
 #include "log.h"
+#include "UnmanagedClassType.h"
+#include "ModuleSymbol.h"
 #include "ParamForLoop.h"
 #include "parser.h"
 #include "passes.h"
@@ -39,6 +40,10 @@
 #include "TryStmt.h"
 #include "type.h"
 #include "WhileStmt.h"
+
+#include <ostream>
+#include <sstream>
+#include <string>
 
 //
 // declare global vectors gSymExprs, gCallExprs, gFnSymbols, ...
@@ -52,6 +57,23 @@ static int uid = 1;
   int n##type = g##type##s.n, k##type = n##type*sizeof(type)/1024
 
 #define sum_gvecs(type) g##type##s.n
+
+#define def_vec_hash(SomeType) \
+    template<> \
+    uintptr_t _vec_hasher(SomeType* obj) { \
+      if (obj == NULL) { \
+        return 0; \
+      } else { \
+        return (uintptr_t)((BaseAST*)obj)->id; \
+      } \
+    }
+
+foreach_ast(def_vec_hash);
+def_vec_hash(Symbol);
+def_vec_hash(Type);
+def_vec_hash(BaseAST);
+
+#undef def_vec_hash
 
 //
 // Throughout printStatistics(), "n" indicates the number of nodes;
@@ -77,16 +99,16 @@ void printStatistics(const char* pass) {
 
   foreach_ast(decl_counters);
 
-  int nStmt = nCondStmt + nBlockStmt + nGotoStmt + nUseStmt + nTryStmt;
-  int kStmt = kCondStmt + kBlockStmt + kGotoStmt + kUseStmt + kExternBlockStmt + kTryStmt + kForwardingStmt + kCatchStmt;
+  int nStmt = nBlockStmt + nCondStmt + nDeferStmt + nGotoStmt + nUseStmt + nExternBlockStmt + nForallStmt + nTryStmt + nForwardingStmt + nCatchStmt;
+  int kStmt = kBlockStmt + kCondStmt + kDeferStmt + kGotoStmt + kUseStmt + kExternBlockStmt + kForallStmt + kTryStmt + kForwardingStmt + kCatchStmt;
   int nExpr = nUnresolvedSymExpr + nSymExpr + nDefExpr + nCallExpr +
     nContextCallExpr + nForallExpr + nNamedExpr;
   int kExpr = kUnresolvedSymExpr + kSymExpr + kDefExpr + kCallExpr +
     kContextCallExpr + kForallExpr + kNamedExpr;
-  int nSymbol = nModuleSymbol+nVarSymbol+nArgSymbol+nTypeSymbol+nFnSymbol+nEnumSymbol+nLabelSymbol;
-  int kSymbol = kModuleSymbol+kVarSymbol+kArgSymbol+kTypeSymbol+kFnSymbol+kEnumSymbol+kLabelSymbol;
-  int nType = nPrimitiveType+nEnumType+nAggregateType;
-  int kType = kPrimitiveType+kEnumType+kAggregateType;
+  int nSymbol = nModuleSymbol+nVarSymbol+nArgSymbol+nShadowVarSymbol+nTypeSymbol+nFnSymbol+nEnumSymbol+nLabelSymbol;
+  int kSymbol = kModuleSymbol+kVarSymbol+kArgSymbol+kShadowVarSymbol+kTypeSymbol+kFnSymbol+kEnumSymbol+kLabelSymbol;
+  int nType = nPrimitiveType+nEnumType+nAggregateType+nUnmanagedClassType;
+  int kType = kPrimitiveType+kEnumType+kAggregateType+kUnmanagedClassType;
 
   fprintf(stderr, "%7d asts (%6dK) %s\n", nStmt+nExpr+nSymbol+nType, kStmt+kExpr+kSymbol+kType, pass);
 
@@ -117,14 +139,14 @@ void printStatistics(const char* pass) {
             kExpr, kUnresolvedSymExpr, kSymExpr, kDefExpr, kCallExpr, kForallExpr, kNamedExpr);
 
   if (strstr(fPrintStatistics, "n"))
-    fprintf(stderr, "    Sym  %9d  Mod  %9d  Var   %9d  Arg   %9d  Type %9d  Fn %9d  Enum %9d  Label %9d\n",
-            nSymbol, nModuleSymbol, nVarSymbol, nArgSymbol, nTypeSymbol, nFnSymbol, nEnumSymbol, nLabelSymbol);
+    fprintf(stderr, "    Sym  %9d  Mod  %9d  Var   %9d  Arg   %9d  Shd   %9d  Type %9d  Fn %9d  Enum %9d  Label %9d\n",
+            nSymbol, nModuleSymbol, nVarSymbol, nArgSymbol, nShadowVarSymbol, nTypeSymbol, nFnSymbol, nEnumSymbol, nLabelSymbol);
   if (strstr(fPrintStatistics, "k") && strstr(fPrintStatistics, "n"))
-    fprintf(stderr, "    Sym  %9dK Mod  %9dK Var   %9dK Arg   %9dK Type %9dK Fn %9dK Enum %9dK Label %9dK\n",
-            kSymbol, kModuleSymbol, kVarSymbol, kArgSymbol, kTypeSymbol, kFnSymbol, kEnumSymbol, kLabelSymbol);
+    fprintf(stderr, "    Sym  %9dK Mod  %9dK Var   %9dK Arg   %9dK Shd   %9dK Type %9dK Fn %9dK Enum %9dK Label %9dK\n",
+            kSymbol, kModuleSymbol, kVarSymbol, kArgSymbol, kShadowVarSymbol, kTypeSymbol, kFnSymbol, kEnumSymbol, kLabelSymbol);
   if (strstr(fPrintStatistics, "k") && !strstr(fPrintStatistics, "n"))
-    fprintf(stderr, "    Sym  %6dK Mod  %6dK Var   %6dK Arg   %6dK Type %6dK Fn %6dK Enum %6dK Label %6dK\n",
-            kSymbol, kModuleSymbol, kVarSymbol, kArgSymbol, kTypeSymbol, kFnSymbol, kEnumSymbol, kLabelSymbol);
+    fprintf(stderr, "    Sym  %6dK Mod  %6dK Var   %6dK Arg  %6dK Shd    %6dK Type %6dK Fn %6dK Enum %6dK Label %6dK\n",
+            kSymbol, kModuleSymbol, kVarSymbol, kArgSymbol, kShadowVarSymbol, kTypeSymbol, kFnSymbol, kEnumSymbol, kLabelSymbol);
 
   if (strstr(fPrintStatistics, "n"))
     fprintf(stderr, "    Type %9d  Prim  %9d  Enum %9d  Class %9d \n",
@@ -171,11 +193,13 @@ void trace_remove(BaseAST* ast, char flag) {
 
 static void clean_modvec(Vec<ModuleSymbol*>& modvec) {
   int aliveMods = 0;
+
   forv_Vec(ModuleSymbol, mod, modvec) {
     if (isAlive(mod) || isRootModuleWithType(mod, ModuleSymbol)) {
       modvec.v[aliveMods++] = mod;
     }
   }
+
   modvec.n = aliveMods;
 }
 
@@ -184,29 +208,43 @@ void cleanAst() {
   // clear back pointers to dead ast instances
   //
   forv_Vec(TypeSymbol, ts, gTypeSymbols) {
-    for(int i = 0; i < ts->type->methods.n; i++) {
+    for (int i = 0; i < ts->type->methods.n; i++) {
       FnSymbol* method = ts->type->methods.v[i];
-      if (method && !isAliveQuick(method))
+
+      if (method && !isAliveQuick(method)) {
         ts->type->methods.v[i] = NULL;
+      }
+
       if (AggregateType* ct = toAggregateType(ts->type)) {
-        if (ct->defaultInitializer && !isAliveQuick(ct->defaultInitializer))
+        if (ct->defaultInitializer               != NULL &&
+            isAliveQuick(ct->defaultInitializer) == false) {
           ct->defaultInitializer = NULL;
-        if (ct->destructor && !isAliveQuick(ct->destructor))
-          ct->destructor = NULL;
+        }
+
+        if (ct->hasDestructor()                  == true &&
+            isAliveQuick(ct->getDestructor())    == false) {
+          ct->setDestructor(NULL);
+        }
       }
     }
-    for(int i = 0; i < ts->type->dispatchChildren.n; i++) {
-      Type* type = ts->type->dispatchChildren.v[i];
-      if (type && !isAlive(type))
-        ts->type->dispatchChildren.v[i] = NULL;
+
+    if (AggregateType* at = toAggregateType(ts->type)) {
+      for (int i = 0; i < at->dispatchChildren.n; i++) {
+        if (AggregateType* type = at->dispatchChildren.v[i]) {
+          if (isAlive(type) == false) {
+            at->dispatchChildren.v[i] = NULL;
+          }
+        }
+      }
     }
   }
 
   removedIterResumeLabels.clear();
+
   copiedIterResumeGotos.clear();
 
-  // clean the other module vectors, without deleting the ast instances (they
-  // will be deleted with the clean_gvec call for ModuleSymbols.)
+  // clean the other module vectors, without deleting the ast instances
+  // (they will be deleted with the clean_gvec call for ModuleSymbols.)
   clean_modvec(allModules);
   clean_modvec(userModules);
 
@@ -450,12 +488,20 @@ const char* BaseAST::astTagAsString() const {
       retval = "CondStmt";
       break;
 
+    case E_DeferStmt:
+      retval = "DeferStmt";
+      break;
+
     case E_GotoStmt:
       retval = "GotoStmt";
       break;
 
     case E_ForwardingStmt:
       retval = "ForwardingStmt";
+      break;
+
+    case E_ForallStmt:
+      retval = "ForallStmt";
       break;
 
     case E_ExternBlockStmt:
@@ -480,6 +526,10 @@ const char* BaseAST::astTagAsString() const {
 
     case E_ArgSymbol:
       retval = "ArgSymbol";
+      break;
+
+    case E_ShadowVarSymbol:
+      retval = "ShadowVarSymbol";
       break;
 
     case E_TypeSymbol:
@@ -508,6 +558,10 @@ const char* BaseAST::astTagAsString() const {
 
     case E_AggregateType:
       retval = "AggregateType";
+      break;
+    
+    case E_UnmanagedClassType:
+      retval = "UnmanagedClassType";
       break;
   }
 
@@ -544,9 +598,6 @@ void BaseAST::printDocsDescription(const char *doc, std::ostream *file, unsigned
 
 
 astlocT currentAstLoc(0,NULL);
-
-Vec<ModuleSymbol*> userModules; // Contains user + main modules
-Vec<ModuleSymbol*> allModules;  // Contains all modules
 
 void registerModule(ModuleSymbol* mod) {
   switch (mod->modTag) {
@@ -602,6 +653,15 @@ void update_symbols(BaseAST* ast, SymbolMap* map) {
       }
     }
 
+  } else if (ForallStmt* forall = toForallStmt(ast)) {
+    if (forall->fContinueLabel) {
+      if (LabelSymbol* y = toLabelSymbol(map->get(forall->fContinueLabel)))
+          forall->fContinueLabel = y;
+    } else if (forall->fErrorHandlerLabel) {
+      if (LabelSymbol* y = toLabelSymbol(map->get(forall->fErrorHandlerLabel)))
+          forall->fErrorHandlerLabel = y;
+    }
+
   } else if (VarSymbol* ps = toVarSymbol(ast)) {
     SUB_TYPE(ps->type);
 
@@ -613,6 +673,9 @@ void update_symbols(BaseAST* ast, SymbolMap* map) {
 
   } else if (ArgSymbol* ps = toArgSymbol(ast)) {
     SUB_TYPE(ps->type);
+
+  } else if (ShadowVarSymbol* ss = toShadowVarSymbol(ast)) {
+    SUB_TYPE(ss->type);
   }
 
   AST_CHILDREN_CALL(ast, update_symbols, map);

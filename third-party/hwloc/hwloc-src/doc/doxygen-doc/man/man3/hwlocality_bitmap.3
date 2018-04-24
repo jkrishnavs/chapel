@@ -1,8 +1,11 @@
-.TH "hwlocality_bitmap" 3 "Thu Feb 23 2017" "Version 1.11.6" "Hardware Locality (hwloc)" \" -*- nroff -*-
+.TH "hwlocality_bitmap" 3 "Tue Mar 20 2018" "Version 1.11.10" "Hardware Locality (hwloc)" \" -*- nroff -*-
 .ad l
 .nh
 .SH NAME
-hwlocality_bitmap \- The bitmap API
+hwlocality_bitmap
+.SH SYNOPSIS
+.br
+.PP
 .SS "Macros"
 
 .in +1c
@@ -245,6 +248,13 @@ And bitmap \fCbitmap1\fP and the negation of \fCbitmap2\fP and store the result 
 
 .PP
 Stringify a bitmap into a newly allocated string\&. 
+.PP
+\fBReturns:\fP
+.RS 4
+-1 on error\&. 
+.RE
+.PP
+
 .SS "void hwloc_bitmap_clr (\fBhwloc_bitmap_t\fP bitmap, unsigned id)"
 
 .PP
@@ -356,6 +366,13 @@ Compute the last index (most significant bit) in bitmap \fCbitmap\fP\&.
 
 .PP
 Stringify a bitmap into a newly allocated list string\&. 
+.PP
+\fBReturns:\fP
+.RS 4
+-1 on error\&. 
+.RE
+.PP
+
 .SS "int hwloc_bitmap_list_snprintf (char *restrict buf, size_t buflen, \fBhwloc_const_bitmap_t\fP bitmap)"
 
 .PP
@@ -435,6 +452,13 @@ Parse a bitmap string and stores it in bitmap \fCbitmap\fP\&.
 
 .PP
 Stringify a bitmap into a newly allocated taskset-specific string\&. 
+.PP
+\fBReturns:\fP
+.RS 4
+-1 on error\&. 
+.RE
+.PP
+
 .SS "int hwloc_bitmap_taskset_snprintf (char *restrict buf, size_t buflen, \fBhwloc_const_bitmap_t\fP bitmap)"
 
 .PP

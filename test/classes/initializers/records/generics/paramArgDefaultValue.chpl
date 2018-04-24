@@ -6,14 +6,11 @@ record Foo {
 
   proc init(param pVal = 3) {
     p = pVal;
-    super.init();
   }
 }
 
 var foo1: Foo(1); // specifies a different value
-var foo2: Foo(); // relies on the default value
 var foo3: Foo(3); // specifies the same value as the default
 
 writeln(foo1.type:string);
-writeln(foo2.type:string);
 writeln(foo3.type:string);

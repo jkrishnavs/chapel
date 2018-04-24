@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -316,6 +316,7 @@ module Atomics {
   /*
      The boolean atomic type.
   */
+  pragma "use default init"
   record atomicbool {
     pragma "no doc"
     var _v:atomic_bool = create_atomic_bool();
@@ -426,7 +427,7 @@ module Atomics {
 
     pragma "no doc"
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -439,6 +440,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit" 
   pragma "no doc"
+  pragma "use default init"
   record atomic_uint8 {
     var _v:atomic_uint_least8_t = create_atomic_uint_least8();
     inline proc deinit() {
@@ -529,7 +531,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -542,6 +544,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_uint16 {
     var _v:atomic_uint_least16_t = create_atomic_uint_least16();
     inline proc deinit() {
@@ -632,7 +635,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -645,6 +648,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_uint32 {
     var _v:atomic_uint_least32_t = create_atomic_uint_least32();
     inline proc deinit() {
@@ -735,7 +739,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -748,6 +752,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_uint64 {
     var _v:atomic_uint_least64_t = create_atomic_uint_least64();
     inline proc deinit() {
@@ -838,7 +843,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -851,6 +856,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_int8 {
     var _v:atomic_int_least8_t = create_atomic_int_least8();
     inline proc deinit() {
@@ -941,7 +947,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -954,6 +960,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_int16 {
     var _v:atomic_int_least16_t = create_atomic_int_least16();
     inline proc deinit() {
@@ -1044,7 +1051,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -1057,6 +1064,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_int32 {
     var _v:atomic_int_least32_t = create_atomic_int_least32();
     inline proc deinit() {
@@ -1146,7 +1154,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 
@@ -1158,6 +1166,7 @@ module Atomics {
 
   pragma "atomic type"
   pragma "ignore noinit"
+  pragma "use default init"
   record atomic_int64 {
     pragma "no doc"
     var _v:atomic_int_least64_t = create_atomic_int_least64();
@@ -1360,7 +1369,7 @@ module Atomics {
 
     pragma "no doc"
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
 
   }
@@ -1374,6 +1383,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_real64 {
     var _v:atomic__real64 = create_atomic__real64();
     inline proc deinit() {
@@ -1440,7 +1450,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
   
@@ -1454,6 +1464,7 @@ module Atomics {
   pragma "atomic type"
   pragma "ignore noinit"
   pragma "no doc"
+  pragma "use default init"
   record atomic_real32 {
     var _v:atomic__real32 = create_atomic__real32();
     inline proc deinit() {
@@ -1519,7 +1530,7 @@ module Atomics {
     }
 
     proc const writeThis(x) {
-      x.write(read());
+      x <~> read();
     }
   }
 

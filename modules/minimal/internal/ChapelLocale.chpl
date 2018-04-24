@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,6 +20,8 @@
 // ChapelLocale.chpl
 //
 module ChapelLocale {
+  use ChapelBase;
+
   pragma "no doc"
   type chpl_sublocID_t = int(32);
 
@@ -45,10 +47,17 @@ module ChapelLocale {
   // The runtime calls these to adjust the running task count.
   //
   pragma "insert line file info"
+  pragma "inc running task"
   export
   proc chpl_taskRunningCntInc() { }
 
   pragma "insert line file info"
+  pragma "dec running task"
   export
   proc chpl_taskRunningCntDec() { }
+
+  pragma "insert line file info"
+  export
+  proc chpl_taskRunningCntReset() { }
+
 }

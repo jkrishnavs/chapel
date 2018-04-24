@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,18 +20,17 @@
 #ifndef _INITIALIZER_RESOLUTION_H_
 #define _INITIALIZER_RESOLUTION_H_
 
-// Defines the resolution strategy for initializers.  This is different than
-// how normal generic functions are handled and how generic constructors are
-// handled, as we want to have the this argument for the type in the initializer
-// argument list, and want to utilize Phase 1 of the initializer body to
-// determine the generic instantiation of it.
-class AggregateType;
+// Defines the resolution strategy for initializers.
+
+// This is different than how normal generic functions are handled
+// and how generic constructors are handled, as we want to have the
+// this argument for the type in the initializer argument list,
+// and want to utilize Phase 1 of the initializer body to determine
+//  the generic instantiation of it.
+
 class CallExpr;
+class FnSymbol;
 
-void modAndResolveInitCall (CallExpr* call, AggregateType* typeToNew);
-
-void temporaryInitializerFixup(CallExpr* call);
-
-void removeAggTypeFieldInfo();
+FnSymbol* resolveInitializer(CallExpr* call);
 
 #endif

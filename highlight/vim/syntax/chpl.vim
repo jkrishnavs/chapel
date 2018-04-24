@@ -241,7 +241,7 @@ endif
 "  - Ranges need better support eg: [.., ..)
 
 " Chapel extentions
-syn keyword chplStatement	goto break return continue compilerWarning delete
+syn keyword chplStatement	break return continue compilerWarning delete
 syn keyword chplStatement	noinit new delete this these use except only require
 syn keyword chplStatement	as module yield compilerError zip
 syn keyword chplIntent		param type in out inout ref
@@ -253,11 +253,13 @@ syn keyword chplOperator	on reduce scan by align
 syn keyword chplStructure	class record union enum
 syn keyword chplStructure	proc iter cobegin begin local sync let select where
 syn keyword chplStructure	pragma inline with private public forwarding
+syn keyword chplStructure	prototype
 syn keyword chplBoolean		true false
 syn keyword chplConditional	if then else
 syn keyword chplConstant	nil
 syn keyword chplRepeat		while for do coforall forall in serial
 syn keyword chplLabel	        when otherwise label
+syn keyword chplErrorHandling   throw throws try catch
 
 " Folding
 syn region scopeFold start="{" end="}" fold transparent
@@ -274,6 +276,7 @@ if version >= 508 || !exists("did_chpl_syntax_inits")
     command -nargs=+ HiLink hi def link <args>
   endif
   HiLink chplCast		chplStatement
+  HiLink chplErrorHandling	chplStatement
   HiLink chplOperator		Operator
   HiLink chplStatement		Statement
   HiLink chplIntent		StorageClass

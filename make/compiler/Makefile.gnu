@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -74,7 +74,9 @@ SHARED_LIB_CFLAGS = -fPIC
 # Set the target architecture for optimization
 ifneq ($(CHPL_MAKE_TARGET_ARCH), none)
 ifneq ($(CHPL_MAKE_TARGET_ARCH), unknown)
-SPECIALIZE_CFLAGS = -march=$(CHPL_MAKE_TARGET_ARCH)
+ifneq ($(CHPL_MAKE_TARGET_ARCH_FLAG), none)
+SPECIALIZE_CFLAGS = -m$(CHPL_MAKE_TARGET_ARCH_FLAG)=$(CHPL_MAKE_TARGET_BACKEND_ARCH)
+endif
 endif
 endif
 
@@ -145,8 +147,7 @@ GEN_CFLAGS += $(C_STD)
 # Flags for turning on warnings for C++/C code
 #
 WARN_CXXFLAGS = -Wall -Werror -Wpointer-arith -Wwrite-strings -Wno-strict-aliasing
-# decl-after-stmt for non c99 compilers. See commit message 21665
-WARN_CFLAGS = $(WARN_CXXFLAGS) -Wmissing-prototypes -Wstrict-prototypes -Wnested-externs -Wdeclaration-after-statement -Wmissing-format-attribute
+WARN_CFLAGS = $(WARN_CXXFLAGS) -Wmissing-prototypes -Wstrict-prototypes -Wmissing-format-attribute
 WARN_GEN_CFLAGS = $(WARN_CFLAGS)
 SQUASH_WARN_GEN_CFLAGS = -Wno-unused -Wno-uninitialized
 
@@ -165,12 +166,23 @@ SQUASH_WARN_GEN_CFLAGS += -Wno-tautological-compare
 endif
 
 #
+# Avoid false positive warnings about string overflows
+#
+ifeq ($(shell test $(GNU_GPP_MAJOR_VERSION) -eq 7; echo "$$?"),0)
+SQUASH_WARN_GEN_CFLAGS += -Wno-stringop-overflow
+endif
+
+#
 # 2016/03/28: Help to protect the Chapel compiler from a partially
 # characterized GCC optimizer regression when the compiler is being
-# compiled with gcc 5.X.  Issue will be pursued after the release
+# compiled with gcc 5.X.
+#
+# 2017-06-14: Regression apparently fixed since gcc 5.X.  Turning
+# off VRP interferes with operation of gcc 7, especially static
+# analysis.  The test below was "-ge 5", now changing it to "-eq 5".
 #
 # Note that 0 means "SUCCESS" rather than "false".
-ifeq ($(shell test $(GNU_GPP_MAJOR_VERSION) -ge 5; echo "$$?"),0)
+ifeq ($(shell test $(GNU_GPP_MAJOR_VERSION) -eq 5; echo "$$?"),0)
 
 ifeq ($(OPTIMIZE),1)
 COMP_CXXFLAGS += -fno-tree-vrp
@@ -188,7 +200,7 @@ endif
 ifeq ($(GNU_GCC_SUPPORTS_STRICT_OVERFLOW),1)
 # -Wno-strict-overflow is needed only because the way we code range iteration
 # (ChapelRangeBase.chpl:793) generates code which can overflow.
-GEN_CFLAGS += -Wno-strict-overflow
+SQUASH_WARN_GEN_CFLAGS += -Wno-strict-overflow
 # -fstrict-overflow was introduced in GCC 4.2 and is on by default.  When on,
 # it allows the compiler to assume that integer sums will not overflow, which
 #  can change the programs runtime behavior (when -O2 or greater is tossed).
@@ -215,15 +227,33 @@ RUNTIME_CXXFLAGS += $(WARN_CXXFLAGS)
 # -Wno-strict-prototypes has to be used because most GASNet prototypes
 # aren't strict.
 #
-# -Wno-unused has to be used due to _dummy_checkalign variables in
-# -gasnet_atomicops.h
-#
 CHPL_GASNET_MORE_CFLAGS = -Wno-strict-prototypes -Wno-missing-prototypes
-ifndef CHPL_COMM_DEBUG
-CHPL_GASNET_MORE_CFLAGS += -Wno-unused
 endif
-endif
+
 ifdef CHPL_COMM_DEBUG
-CHPL_GASNET_MORE_CFLAGS += -O0
+CHPL_GASNET_MORE_CFLAGS += -O0 -UNDEBUG
 CHPL_GASNET_MORE_GEN_CFLAGS += -Wno-uninitialized
+endif
+
+
+#
+# Look for the libmvec.a static library
+#
+ifneq ($(WANT_LIBMVEC), no)
+  # Try known locations.
+  ifeq ($(CHPL_MAKE_TARGET_PLATFORM), linux64)
+    ifeq ($(shell test -e /usr/lib64/libmvec.a; echo "$$?"), 0)
+      FOUND_LIBMVEC = yes
+    else ifeq ($(shell test -e /usr/lib/x86_64-linux-gnu/libmvec.a; echo "$$?"), 0)
+      FOUND_LIBMVEC = yes
+    endif
+  else ifeq ($(CHPL_MAKE_TARGET_PLATFORM), linux32)
+    ifeq ($(shell test -e /usr/libx32/libmvec.a; echo "$$?"), 0)
+      FOUND_LIBMVEC = yes
+    endif
+  endif
+
+  ifeq ($(FOUND_LIBMVEC), yes)
+    LIBMVEC = -lmvec
+  endif
 endif

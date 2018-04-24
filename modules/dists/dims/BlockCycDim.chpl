@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -33,11 +33,11 @@ type bcdPosInt = int;
 
 // chpldoc TODO
 // * Get the BlockCyclic distribution references to be presented
-//   as links. Currently they are not perhaps because chpldoc does not find
-//   that module while creating this documentation.
-//   Cf. it finds ReplicatedDist while processing ReplicatedDim.
-//   That is perhaps because the name of the class and the name of the file
-//   match in the ReplicatedDist case.
+//   as links. At some point in the past they were not perhaps because
+//   chpldoc did not find that module while creating this documentation.
+//   Cf. it found ReplicatedDist while processing ReplicatedDim.
+//   That may have been because the name of the class and the name of the file
+//   used to match in the ReplicatedDist case.
 //
 /*
 This Block-Cyclic dimension specifier is for use with the
@@ -664,10 +664,11 @@ iter BlockCyclic1locdom.dsiMyDensifiedRangeForSingleTask1d(globDD) {
       halt("range with non-unit stride is cast to non-stridable range");
     r1._low       = r2._low: r1.idxType;
     r1._high      = r2._high: r1.idxType;
-    if r1.stridable then
+    if r1.stridable {
       r1._stride  = r2.stride: r1.strType;
-    r1._alignment = r2._alignment: r1.idxType;
-    r1._aligned = r2._aligned;
+      r1._alignment = r2._alignment: r1.idxType;
+      r1._aligned = r2._aligned;
+    }
   }
 
   // todo: make a cheaper densify() for this case, where

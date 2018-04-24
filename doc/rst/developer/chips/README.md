@@ -21,4 +21,8 @@ See the first CHIP for an overview.
 * [17 GPU Programming Features](17.rst)
 * [18 NUMA-Aware Array Storage](18.rst)
 * [19 Dynamically Loading Chapel Code](19.rst)
+* [20 Function Hijacking](20.rst)
+* [21 Chapel's Cryptography Library](21.rst)
+* [22 Chapel GPU Language Support](22.rst)
+* [23 Initializers :- Experiences, Concerns, Proposals](23.rst)
 

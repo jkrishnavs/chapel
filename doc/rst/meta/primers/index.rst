@@ -16,6 +16,7 @@ Language Basics
    Variadic Arguments (var args) <varargs>
    Modules <modules>
    Void Variables <voidVariables>
+   Error Handling <errorHandling>
 
 Iterators
 ---------
@@ -58,9 +59,10 @@ Data Parallelism
    Array Vector Operations <arrayVectorOps>
    Sparse Domains and Arrays <sparse>
    Associative Domains and Arrays <associative>
-   Opaque Domains and Arrays <opaque>
+   Opaque Domains and Arrays <opaque-domains>
    Reductions <reductions>
    Distributions <distributions>
+   Replicated Distribution <replicated>
 
 Library Utilities
 -----------------
@@ -77,6 +79,7 @@ Numerical Libraries
 .. toctree::
    :maxdepth: 1
 
+   LinearAlgebra <LinearAlgebralib>
    LAPACK <LAPACKlib>
    FFTW <FFTWlib>
    Random <randomNumbers>

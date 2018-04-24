@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -76,7 +76,7 @@ static void      cacheExtend(FnSymbol* fn, FnSymbol* expansion);
 *                                                                             *
 *    1) Construct the required tuple within the body of the procedure         *
 *                                                                             *
-*    2) Convert the references to the typle to references to the formals      *
+*    2) Convert the references to the tuple to references to the formals      *
 *                                                                             *
 * The current implementation selects between these strategies based on the    *
 * way in which the varArg is used.                                            *
@@ -223,6 +223,7 @@ static FnSymbol* expandVarArgsQuery(FnSymbol* fn, CallInfo& info) {
 
         retval = fn->copy(&substitutions);
         retval->addFlag(FLAG_INVISIBLE_FN);
+        retval->instantiatedFrom = fn;
 
         fn->defPoint->insertBefore(new DefExpr(retval));
 

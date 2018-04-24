@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -50,6 +50,7 @@ class DefExpr;
 class EnumSymbol;
 class Expr;
 class FnSymbol;
+class UnmanagedClassType;
 class Symbol;
 class TypeSymbol;
 class VarSymbol;
@@ -57,50 +58,56 @@ class IteratorInfo;
 
 class Type : public BaseAST {
 public:
-  virtual Type*    copy(SymbolMap* map = NULL, bool internal = false) = 0;
+  virtual Type*          copy(SymbolMap* map      = NULL,
+                              bool       internal = false)                 = 0;
 
   // Interface for BaseAST
-  virtual GenRet   codegen();
-  virtual bool     inTree();
-  virtual QualifiedType qualType();
-  virtual void     verify();
+  virtual GenRet         codegen();
+          bool           inTree();
+  virtual QualifiedType  qualType();
+  virtual void           verify();
 
-  virtual void     codegenDef();
-  virtual void     codegenPrototype();
+  virtual void           codegenDef();
+  virtual void           codegenPrototype();
 
   // only used for heterogeneous compilations in which we need to define
   // what our data structures are for the point of conversions
-  virtual int      codegenStructure(FILE* outfile, const char* baseoffset);
+  virtual int            codegenStructure(FILE*       outfile,
+                                          const char* baseoffset);
 
-  virtual Symbol*  getField(const char* name, bool fatal = true);
+  virtual Symbol*        getField(const char* name, bool fatal = true)   const;
 
-  void             addSymbol(TypeSymbol* newSymbol);
+  const char*            name()                                          const;
 
-  bool             isDefaultIntentConst()                                const;
+  void                   addSymbol(TypeSymbol* newSymbol);
 
-  TypeSymbol*      symbol;
-  AggregateType*   refType;  // pointer to references for non-reference types
-  Vec<FnSymbol*>   methods;
+  bool                   isDefaultIntentConst()                          const;
+  bool                   isWidePtrType()                                 const;
 
-  bool             hasGenericDefaults; // all generic fields have defaults
+  // get/set on the type destructor
+  bool                   hasDestructor()                                 const;
+  FnSymbol*              getDestructor()                                 const;
+  void                   setDestructor(FnSymbol* fn);
 
-  Symbol*          defaultValue;
-  FnSymbol*        defaultInitializer; // This is the compiler-supplied
-                                       // default-initializer.
-                                       // It provides initial values for the
-                                       // fields in an aggregate type.
-  FnSymbol*        defaultTypeConstructor;
-  FnSymbol*        destructor;
+  TypeSymbol*            symbol;
+
+  // pointer to references for non-reference types
+  AggregateType*         refType;
+
+  Vec<FnSymbol*>         methods;
+
+  // all generic fields have defaults
+  bool                   hasGenericDefaults;
+
+  Symbol*                defaultValue;
 
   // Used only in PrimitiveType; replace with flag?
-  bool             isInternalType;
+  bool                   isInternalType;
 
-  Type*            instantiatedFrom;
-  Type*            scalarPromotionType;
+  // TODO: can this move to AggregateType?
+  Type*                  scalarPromotionType;
 
-  SymbolMap        substitutions;
-  Vec<Type*>       dispatchChildren;   // dispatch hierarchy
-  Vec<Type*>       dispatchParents;    // dispatch hierarchy
+  SymbolMap              substitutions;
 
   // Only used for LLVM.
   std::map<std::string, int> GEPMap;
@@ -111,10 +118,19 @@ protected:
 
 private:
   virtual void     replaceChild(BaseAST* old_ast, BaseAST* new_ast) = 0;
+
+  FnSymbol*        destructor;
 };
 
 #define forv_Type(_p, _v) forv_Vec(Type, _p, _v)
 
+const char* toString(Type* type);
+
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 // a Qualifier allows the compiler to distinguish between
 // different properties of a variable (const or ref-ness in particular)
@@ -146,6 +162,8 @@ enum Qualifier {
   QUAL_CONST_NARROW_REF,
   QUAL_CONST_WIDE_REF
 };
+
+const char* qualifierToStr(Qualifier q);
 
 // A QualifiedType is basically a tuple of (qualifier, type).
 // Shorter names, such as QualType and QualT have been proposed.
@@ -219,27 +237,33 @@ public:
     return (_qual == QUAL_UNKNOWN || _qual == QUAL_CONST ||
             _qual == QUAL_REF || _qual == QUAL_CONST_REF);
   }
+
   bool isVal() const {
     return (_qual == QUAL_VAL || _qual == QUAL_CONST_VAL);
   }
+
   bool isRef() const {
     return (_qual == QUAL_REF || _qual == QUAL_CONST_REF ||
             _qual == QUAL_NARROW_REF || _qual == QUAL_CONST_NARROW_REF ||
             isRefType());
   }
+
   bool isWideRef() const {
     return (_qual == QUAL_WIDE_REF || _qual == QUAL_CONST_WIDE_REF ||
             isWideRefType());
   }
+
   bool isRefOrWideRef() const {
     return isRef() || isWideRef();
   }
+
   bool isConst() const {
     return qualifierIsConst(_qual);
   }
   // TODO: isImmutable
 
   bool isRefType() const;
+
   bool isWideRefType() const;
 
   QualifiedType toRef() {
@@ -250,8 +274,6 @@ public:
     return QualifiedType(QUAL_VAL, _type->getValType());
   }
 
-
-
   QualifiedType toConst() {
     return QualifiedType(qualifierToConst(_qual), _type);
   }
@@ -259,53 +281,29 @@ public:
   Type* type() const {
     return _type;
   }
+
   Qualifier getQual() const {
     return _qual;
   }
 
-  const char* qualStr() const {
-    Qualifier q = _qual;
+  const char* qualStr() const;
 
-    if (isRefType()) {
-      q = QUAL_REF;
-    } else if (isWideRefType()) {
-      q = QUAL_WIDE_REF;
-    }
-
-    switch (q) {
-      case QUAL_UNKNOWN:
-        return "unknown";
-      case QUAL_CONST:
-        return "const";
-      case QUAL_REF:
-        return "ref";
-      case QUAL_CONST_REF:
-        return "const-ref";
-      case QUAL_PARAM:
-        return "param";
-      case QUAL_VAL:
-        return "val";
-      case QUAL_NARROW_REF:
-        return "narrow-ref";
-      case QUAL_WIDE_REF:
-        return "wide-ref";
-
-      case QUAL_CONST_VAL:
-        return "const-val";
-      case QUAL_CONST_NARROW_REF:
-        return "const-narrow-ref";
-      case QUAL_CONST_WIDE_REF:
-        return "const-wide-ref";
-    }
-    INT_FATAL("Unhandled Qualifier");
-    return "UNKNOWN-QUAL";
-  }
-
+  // If isRef() is true, returns a QualifiedType with
+  // a ref type (i.e. with FLAG_REF). This is useful for
+  // working with parts of the compiler that haven't fully
+  // transferred to QualifiedType.
+  QualifiedType refToRefType() const;
 
 private:
   Type*      _type;
   Qualifier  _qual;
 };
+
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 class EnumType : public Type {
  public:
@@ -315,7 +313,11 @@ class EnumType : public Type {
   // what integer type contains all of this enum values?
   // if this is NULL it will just be recomputed when needed.
   PrimitiveType* integerType;
+ private:
+  Immediate minConstant;
+  Immediate maxConstant;
 
+ public:
   const char* doc;
 
   EnumType();
@@ -332,6 +334,8 @@ class EnumType : public Type {
   // This will only really work after the function resolution.
   void sizeAndNormalize();
   PrimitiveType* getIntegerType();
+  Immediate* getMinConstant();
+  Immediate* getMaxConstant();
 
   virtual void printDocs(std::ostream *file, unsigned int tabs);
 
@@ -382,52 +386,49 @@ private:
 #endif
 
 // internal types
-TYPE_EXTERN Type* dtAny;
-TYPE_EXTERN Type* dtIteratorRecord;
-TYPE_EXTERN Type* dtIteratorClass;
-TYPE_EXTERN Type* dtIntegral;
-TYPE_EXTERN Type* dtAnyComplex;
-TYPE_EXTERN Type* dtNumeric;
-TYPE_EXTERN Type* dtAnyEnumerated;
-TYPE_EXTERN PrimitiveType* dtNil;
-TYPE_EXTERN PrimitiveType* dtUnknown;
-TYPE_EXTERN PrimitiveType* dtVoid;
-TYPE_EXTERN PrimitiveType* dtValue;
-TYPE_EXTERN PrimitiveType* dtMethodToken;
-TYPE_EXTERN PrimitiveType* dtTypeDefaultToken;
-TYPE_EXTERN PrimitiveType* dtModuleToken;
+TYPE_EXTERN Type*             dtAny;
+TYPE_EXTERN Type*             dtIteratorRecord;
+TYPE_EXTERN Type*             dtIteratorClass;
+TYPE_EXTERN Type*             dtIntegral;
+TYPE_EXTERN Type*             dtAnyComplex;
+TYPE_EXTERN Type*             dtNumeric;
+TYPE_EXTERN Type*             dtAnyEnumerated;
+
+TYPE_EXTERN PrimitiveType*    dtNil;
+TYPE_EXTERN PrimitiveType*    dtUnknown;
+TYPE_EXTERN PrimitiveType*    dtVoid;
+TYPE_EXTERN PrimitiveType*    dtValue;
+TYPE_EXTERN PrimitiveType*    dtUnmanaged;
+TYPE_EXTERN PrimitiveType*    dtMethodToken;
+TYPE_EXTERN PrimitiveType*    dtTypeDefaultToken;
+TYPE_EXTERN PrimitiveType*    dtModuleToken;
 
 // primitive types
 // Anything declared as PrimitiveType* can now also be declared as Type*
 // This change was made to allow dtComplex to be represented by a record.
-TYPE_EXTERN PrimitiveType* dtBool;
-TYPE_EXTERN PrimitiveType* dtBools[BOOL_SIZE_NUM];
-TYPE_EXTERN PrimitiveType* dtInt[INT_SIZE_NUM];
-TYPE_EXTERN PrimitiveType* dtUInt[INT_SIZE_NUM];
-TYPE_EXTERN PrimitiveType* dtReal[FLOAT_SIZE_NUM];
-TYPE_EXTERN PrimitiveType* dtImag[FLOAT_SIZE_NUM];
-TYPE_EXTERN Type* dtComplex[COMPLEX_SIZE_NUM];
-TYPE_EXTERN PrimitiveType* dtSymbol;
-TYPE_EXTERN PrimitiveType* dtFile;
-TYPE_EXTERN PrimitiveType* dtOpaque;
-TYPE_EXTERN PrimitiveType* dtTaskID;
-TYPE_EXTERN PrimitiveType* dtSyncVarAuxFields;
-TYPE_EXTERN PrimitiveType* dtSingleVarAuxFields;
+TYPE_EXTERN PrimitiveType*    dtBool;
+TYPE_EXTERN PrimitiveType*    dtBools[BOOL_SIZE_NUM];
+TYPE_EXTERN PrimitiveType*    dtInt[INT_SIZE_NUM];
+TYPE_EXTERN PrimitiveType*    dtUInt[INT_SIZE_NUM];
+TYPE_EXTERN PrimitiveType*    dtReal[FLOAT_SIZE_NUM];
+TYPE_EXTERN PrimitiveType*    dtImag[FLOAT_SIZE_NUM];
+TYPE_EXTERN PrimitiveType*    dtSymbol;
+TYPE_EXTERN PrimitiveType*    dtFile;
+TYPE_EXTERN PrimitiveType*    dtOpaque;
+TYPE_EXTERN PrimitiveType*    dtTaskID;
+TYPE_EXTERN PrimitiveType*    dtSyncVarAuxFields;
+TYPE_EXTERN PrimitiveType*    dtSingleVarAuxFields;
 
-TYPE_EXTERN PrimitiveType* dtStringC; // the type of a C string (unowned)
-TYPE_EXTERN PrimitiveType* dtStringCopy; // the type of a C string (owned)
-TYPE_EXTERN PrimitiveType* dtCVoidPtr; // the type of a C void* (unowned)
-TYPE_EXTERN PrimitiveType* dtCFnPtr;   // a C function pointer (unowned)
+TYPE_EXTERN PrimitiveType*    dtStringC; // the type of a C string (unowned)
+TYPE_EXTERN PrimitiveType*    dtCVoidPtr; // the type of a C void* (unowned)
+TYPE_EXTERN PrimitiveType*    dtCFnPtr;   // a C function pointer (unowned)
 
-// base object type (for all classes)
-TYPE_EXTERN Type* dtObject;
+TYPE_EXTERN Type*             dtComplex[COMPLEX_SIZE_NUM];
 
-
-TYPE_EXTERN Map<Type*,Type*> wideClassMap; // class -> wide class
-TYPE_EXTERN Map<Type*,Type*> wideRefMap;   // reference -> wide reference
+TYPE_EXTERN Map<Type*, Type*> wideClassMap; // class -> wide class
+TYPE_EXTERN Map<Type*, Type*> wideRefMap;   // reference -> wide reference
 
 void     initPrimitiveTypes();
-DefExpr* defineObjectClass();
 void     initChplProgram(DefExpr* objectDef);
 void     initCompilerGlobals();
 
@@ -440,10 +441,14 @@ bool is_real_type(Type*);
 bool is_imag_type(Type*);
 bool is_complex_type(Type*);
 bool is_enum_type(Type*);
-#define is_arithmetic_type(t) (is_int_type(t) || is_uint_type(t) || is_real_type(t) || is_imag_type(t) || is_complex_type(t))
 bool isLegalParamType(Type*);
 int  get_width(Type*);
+int  get_mantissa_width(Type*);
+int  get_exponent_width(Type*);
 bool isClass(Type* t);
+bool isClassOrNil(Type* t);
+bool isClassLike(Type* t); // includes UnmanagedClassType & ClassType
+bool isClassLikeOrNil(Type* t);
 bool isRecord(Type* t);
 bool isUnion(Type* t);
 
@@ -454,6 +459,7 @@ bool isRecordWrappedType(const Type* t);
 bool isDomImplType(Type* t);
 bool isArrayImplType(Type* t);
 bool isDistImplType(Type* t);
+bool isManagedPtrType(const Type* t);
 bool isSyncType(const Type* t);
 bool isSingleType(const Type* t);
 bool isAtomicType(const Type* t);
@@ -481,6 +487,11 @@ bool isGenericRecord(Type* type);
 bool isGenericClassWithInitializers (Type* type);
 bool isGenericRecordWithInitializers(Type* type);
 
+bool isClassWithInitializers (Type* type);
+bool isRecordWithInitializers(Type* type);
+
+bool needsGenericRecordInitializer(Type* type);
+
 void registerTypeToStructurallyCodegen(TypeSymbol* type);
 GenRet genTypeStructureIndex(TypeSymbol* typesym);
 void codegenTypeStructures(FILE* hdrfile);
@@ -495,11 +506,22 @@ bool isPOD(Type* t);
 
 // defined in codegen.cpp
 GenRet codegenImmediate(Immediate* i);
+
+
+
+
 #define CLASS_ID_TYPE dtInt[INT_SIZE_32]
 #define UNION_ID_TYPE dtInt[INT_SIZE_64]
 #define SIZE_TYPE dtInt[INT_SIZE_64]
-#define LOCALE_TYPE dtLocale->typeInfo()
-#define LOCALE_ID_TYPE dtLocaleID->typeInfo()
 #define NODE_ID_TYPE dtInt[INT_SIZE_32]
+#define LOCALE_ID_TYPE dtLocaleID->typeInfo()
+
+#define is_arithmetic_type(t)                        \
+        (is_int_type(t)        ||                    \
+         is_uint_type(t)       ||                    \
+         is_real_type(t)       ||                    \
+         is_imag_type(t)       ||                    \
+         is_complex_type(t))
+
 
 #endif

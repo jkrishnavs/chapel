@@ -15,9 +15,9 @@
 
 //
 // We want to use block-distributed arrays (BlockDist), barrier
-// synchronization (Barrier), and timers (Time).
+// synchronization (Barriers), and timers (Time).
 //
-use BlockDist, Barrier, Time;
+use BlockDist, AllLocalesBarriers, Time;
 
 //
 // The type of key to use when sorting.
@@ -144,10 +144,11 @@ const DistTaskSpace = LocTaskSpace dmapped Block(LocTaskSpace);
 var allBucketKeys: [DistTaskSpace] [0..#recvBuffSize] keyType;
 var recvOffset: [DistTaskSpace] atomic int;
 var totalTime, inputTime, bucketCountTime, bucketOffsetTime, bucketizeTime,
-    exchangeKeysTime, countKeysTime: [DistTaskSpace] [1..numTrials] real;
+    exchangeKeysTime, exchangeKeysOnlyTime, exchangeKeysBarrierTime,
+    countKeysTime: [DistTaskSpace] [1..numTrials] real;
 var verifyKeyCount: atomic int;
 
-var barrier = new Barrier(numTasks);
+allLocalesBarrier.reset(perBucketMultiply);
 
 // should result in one loop iteration per task
 proc main() {
@@ -195,7 +196,7 @@ proc bucketSort(taskID : int, trial: int, time = false, verify = false) {
   }
 
   var bucketSizes: [0..#numTasks] int;
-  local countLocalBucketSizes(myKeys, bucketSizes);
+  local do countLocalBucketSizes(myKeys, bucketSizes);
   if debug then writeln(taskID, ": bucketSizes = ", bucketSizes);
 
   if subtime {
@@ -215,7 +216,7 @@ proc bucketSort(taskID : int, trial: int, time = false, verify = false) {
   }
 
   var myBucketedKeys: [0..#keysPerTask] keyType;
-  local bucketizeLocalKeys(taskID, myKeys, sendOffsets, myBucketedKeys);
+  local do bucketizeLocalKeys(taskID, myKeys, sendOffsets, myBucketedKeys);
 
   if subtime {
     bucketizeTime.localAccess[taskID][trial] = subTimer.elapsed();
@@ -223,17 +224,25 @@ proc bucketSort(taskID : int, trial: int, time = false, verify = false) {
   }
   
   exchangeKeys(taskID, sendOffsets, bucketSizes, myBucketedKeys);
-  barrier.barrier();
 
   if subtime {
+    exchangeKeysOnlyTime.localAccess[taskID][trial] = subTimer.elapsed();
     exchangeKeysTime.localAccess[taskID][trial] = subTimer.elapsed();
+    subTimer.clear();
+  }
+
+  allLocalesBarrier.barrier();
+
+  if subtime {
+    exchangeKeysBarrierTime.localAccess[taskID][trial] = subTimer.elapsed();
+    exchangeKeysTime.localAccess[taskID][trial] += subTimer.elapsed();
     subTimer.clear();
   }
 
   const keysInMyBucket = recvOffset[taskID].read();
   const myMinKeyVal = taskID * bucketWidth;
   var myLocalKeyCounts: [myMinKeyVal..#bucketWidth] int;
-  local countLocalKeys(taskID, keysInMyBucket, myLocalKeyCounts);
+  local do countLocalKeys(taskID, keysInMyBucket, myLocalKeyCounts);
 
   if time {
     if subtime then
@@ -248,7 +257,7 @@ proc bucketSort(taskID : int, trial: int, time = false, verify = false) {
   // reset the receive offsets for the next iteration
   //
   recvOffset[taskID].write(0);
-  barrier.barrier();
+  allLocalesBarrier.barrier();
 }
 
 
@@ -291,10 +300,10 @@ proc exchangeKeys(taskID, sendOffsets, bucketSizes, myBucketedKeys) {
     //         myBucketedKeys[srcOffset..#transferSize];
     ref LHS = allBucketKeys[dstlocid]._instance;
     var Lidx = LHS.getDataIndex(dstOffset);
-    var Ldata = _ddata_shift(keyType, LHS.theDataChunk(0), Lidx);
+    var Ldata = _ddata_shift(keyType, LHS.theData, Lidx);
 
     var Ridx = myBucketedKeys._instance.getDataIndex(srcOffset);
-    var Rdata = _ddata_shift(keyType, myBucketedKeys._instance.theDataChunk(0), Ridx);
+    var Rdata = _ddata_shift(keyType, myBucketedKeys._instance.theData, Ridx);
     __primitive("chpl_comm_array_put", Rdata[0], Ldata.locale.id, Ldata[0], transferSize);
   }
 
@@ -338,7 +347,7 @@ proc verifyResults(taskID, myBucketSize, myLocalKeyCounts) {
   //
   //
   verifyKeyCount.add(myBucketSize);
-  barrier.barrier();
+  allLocalesBarrier.barrier();
   if verifyKeyCount.read() != totalKeys then
     halt("total key count mismatch: " + verifyKeyCount.read() + " != " + totalKeys);
 
@@ -365,7 +374,7 @@ proc makeInput(taskID, myKeys) {
   //
 
   local {
-    for key in myKeys do key = pcg.bounded_random(inc, maxKeyVal:uint(32)):int(32);
+    for key in myKeys do key = pcg.bounded_random(inc, maxKeyVal:uint(32)):keyType;
   }
     
   if (debug) then
@@ -404,6 +413,8 @@ proc printTimingData(units) {
       printTimeTable(bucketOffsetTime, units, "bucket offset");
       printTimeTable(bucketizeTime, units, "bucketize");
       printTimeTable(exchangeKeysTime, units, "exchange");
+      printTimeTable(exchangeKeysOnlyTime, units, "exchange only");
+      printTimeTable(exchangeKeysBarrierTime, units, "exchange barrier");
       printTimeTable(countKeysTime, units, "count keys");
     }
     printTimeTable(totalTime, units, "total");
@@ -417,6 +428,8 @@ proc printTimingData(units) {
     printTimingStats(bucketOffsetTime, "bucket offset");
     printTimingStats(bucketizeTime, "bucketize");
     printTimingStats(exchangeKeysTime, "exchange");
+    printTimingStats(exchangeKeysOnlyTime, "exchange only");
+    printTimingStats(exchangeKeysBarrierTime, "exchange barrier");
     printTimingStats(countKeysTime, "count keys");
   }
   printTimingStats(totalTime, "total");
@@ -440,24 +453,23 @@ proc printTimeTable(timeTable, units, timerName) {
 }
 
 //
-// print timing statistics (avg/min/max across tasks of min across
-// trials)
+// print timing statistics (avg/min/max across tasks and trials)
 //
 proc printTimingStats(timeTable, timerName) {
-  var minMinTime, maxMinTime, totMinTime: real;
+  var minTime = max(real),
+      maxTime = min(real),
+      totTime: real;
 
   //
-  // iterate over the buckets, computing the min/max/total of the
-  // min times across trials.
+  // iterate over the buckets, computing the min/max/total
   //
-  forall timings in timeTable with (min reduce minMinTime,
-                                    max reduce maxMinTime,
-                                    + reduce totMinTime) {
-    const minTime = min reduce timings;
-    totMinTime += minTime;
-    minMinTime = min(minMinTime, minTime);
-    maxMinTime = max(maxMinTime, minTime);
+  forall timings in timeTable with (min reduce minTime,
+                                    max reduce maxTime,
+                                    + reduce totTime) {
+    totTime += + reduce timings;
+    minTime = min(minTime, min reduce timings);
+    maxTime = max(maxTime, max reduce timings);
   }
-  var avgTime = totMinTime / numTasks;
-  writeln(timerName, " = ", avgTime, " (", minMinTime, "..", maxMinTime, ")");
+  var avgTime = totTime / (numTasks * numTrials) ;
+  writeln(timerName, " = ", avgTime, " (", minTime, "..", maxTime, ")");
 }

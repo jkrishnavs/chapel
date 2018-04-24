@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -84,7 +84,6 @@
 //#include <ntddk.h>
 //#include <winternl.h>
 //#include <ntifs.h>
-#include "chpl-mem-no-warning-macros.h"
 #include <windows.h>
 #include <sys/cygwin.h> // for cygwin_internal
 

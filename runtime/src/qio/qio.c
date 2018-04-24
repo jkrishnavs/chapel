@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -769,12 +769,22 @@ qioerr qio_file_init(qio_file_t** file_out, FILE* fp, fd_t fd, qio_hint_t iohint
              ftype == S_IFBLK ) {
     // regular file or block device can seek
     seekable = 1;
+  } else if( ftype == S_IFDIR ) {
+    if( fd == 0 ) {
+      QIO_RETURN_CONSTANT_ERROR(EINVAL, "fd 0 (stdin) is a directory");
+    } else if( fd == 1 ) {
+      QIO_RETURN_CONSTANT_ERROR(EINVAL, "fd 1 (stdout) is a directory");
+    } else if( fd == 2 ) {
+      QIO_RETURN_CONSTANT_ERROR(EINVAL, "fd 2 (stderr) is a directory");
+    } else {
+      QIO_RETURN_CONSTANT_ERROR(EINVAL, "cannot openfd a directory");
+    }
+  } else if( ftype == S_IFLNK ) {
+    QIO_RETURN_CONSTANT_ERROR(EINVAL, "cannot openfd a symbolic link");
   } else {
-    // ftype == S_IFDIR
-    // ftype == S_IFLNK
     // ftype == S_IFWHT on Mac OS X
-    // can't open symlink/dir/whiteout
-    QIO_RETURN_CONSTANT_ERROR(EINVAL, "file type not openable");
+    // can't open a whiteout
+    QIO_RETURN_CONSTANT_ERROR(EINVAL, "unhandled file type in openfd");
   }
 
   if( seekable ) {
@@ -836,6 +846,7 @@ qioerr qio_file_init(qio_file_t** file_out, FILE* fp, fd_t fd, qio_hint_t iohint
   file->use_fp = usefilestar;
   file->buf = NULL;
   file->fdflags = fdflags;
+  file->closed = false;
   file->initial_length = initial_length;
   file->initial_pos = initial_pos;
   file->fsfns = NULL; // Dont have anything so set it to NULL
@@ -931,6 +942,7 @@ qioerr qio_file_init_usr(qio_file_t** file_out, void* file_info, qio_hint_t iohi
   file->use_fp = 0;
   file->buf = NULL;
   file->fdflags = (qio_fdflag_t) flags;
+  file->closed = false;
   file->initial_length = initial_length;
   file->initial_pos = initial_pos;
   file->fs_info = fs_info;
@@ -1021,6 +1033,8 @@ qioerr _qio_file_do_close(qio_file_t* f)
     f->fd = -1;
   }
 
+  f->closed = true;
+
   qio_unlock(& f->lock);
 
   return err;
@@ -1028,17 +1042,6 @@ qioerr _qio_file_do_close(qio_file_t* f)
 
 qioerr qio_file_close(qio_file_t* f)
 {
-  // TODO - we could check to see if
-  // there are references to the file
-  // but we'd have to do it with
-  // atomic-safe load.
-  //
-  // This check is currently disabled
-  // b/c of reference counting bugs
-  // in Chapel.
-  //
-  //if( f->ref_cnt > 1 ) return EINVAL;
-
   return _qio_file_do_close(f);
 }
 
@@ -1232,6 +1235,7 @@ qioerr qio_file_open_mem_ext(qio_file_t** file_out, qbuffer_t* buf, qio_fdflag_t
   file->fp = NULL;
   file->fd = -1;
   file->fdflags = fdflags;
+  file->closed = false;
   file->hints = choose_io_method(file, iohints, 0, qbuffer_len(file->buf),
                                  (fdflags & QIO_FDFLAG_READABLE) > 0,
                                  (fdflags & QIO_FDFLAG_WRITEABLE) > 0,
@@ -1358,8 +1362,7 @@ qioerr qio_file_path_for_fd(fd_t fd, const char** string_out)
   const char* result;
   sprintf(pathbuf, "/proc/self/fd/%i", fd);
   err = qio_int_to_err(sys_readlink(pathbuf, &result));
-  // result is owned by sys_readlink, so has to be copied.
-  *string_out = qio_strdup(result);
+  *string_out = result;
   return err;
 #else
 #ifdef __APPLE__
@@ -1818,6 +1821,15 @@ qioerr _qio_channel_final_flush_unlocked(qio_channel_t* ch)
   if( type == QIO_CHTYPE_CLOSED ) return 0;
   if( ! ch->file ) return 0;
 
+  // Raise an error if the file was closed before a writing channel,
+  // because otherwise any buffered data can never be written.
+  // This error is not necessary for reading channels (and some
+  // leaves a reading channel with a buffer when the file is closed).
+  if ( ch->file->closed && (ch->flags & QIO_FDFLAG_WRITEABLE) )
+    QIO_RETURN_CONSTANT_ERROR(EINVAL,
+        "file closed before writing channel closed --"
+        " please close all writing channels before closing the file");
+
   err = _qio_channel_flush_unlocked(ch);
   if( ! err ) {
     // If we have a buffered writing MMAP channel, we need to truncate
@@ -1907,7 +1919,11 @@ void _qio_channel_destroy(qio_channel_t* ch)
 
   err = _qio_channel_final_flush_unlocked(ch);
   if( err ) {
-    fprintf(stderr, "qio_channel_final_flush returned fatal error %i\n", qio_err_to_int(err));
+    const char* msg = qio_err_msg(err);
+    if (msg == NULL)
+      msg = "system error";
+    fprintf(stderr, "qio_channel_final_flush returned fatal error %i %s\n",
+        qio_err_to_int(err), msg);
     assert( !err );
     abort();
   }
@@ -3435,6 +3451,51 @@ error:
   return err;
 }
 
+qioerr qio_channel_advance_past_byte(const int threadsafe, qio_channel_t* ch, int byte)
+{
+  qioerr err=0;
+
+  if( threadsafe ) {
+    err = qio_lock(&ch->lock);
+    if( err ) {
+      return err;
+    }
+  }
+
+  // Is there room in our fast path buffer?
+  while (err==0) {
+    if( qio_space_in_ptr_diff(1, ch->cached_end, ch->cached_cur) ) {
+      size_t len = qio_ptr_diff(ch->cached_end, ch->cached_cur);
+      void* found = memchr(ch->cached_cur, byte, len);
+      if (found != NULL) {
+        ssize_t off = qio_ptr_diff(found, ch->cached_cur);
+        off += 1;
+        ch->cached_cur = qio_ptr_add(ch->cached_cur, off);
+        break;
+      } else {
+        // We checked the data in the buffer, advance to the next section.
+        ch->cached_cur = ch->cached_end;
+      }
+    } else {
+      // There's not enough data in the buffer, apparently. Try it the slow way.
+      ssize_t amt_read;
+      uint8_t tmp;
+      err = _qio_slow_read(ch, &tmp, 1, &amt_read);
+      if( err == 0 ) {
+        if (tmp == byte) break;
+        if (amt_read != 1) err = QIO_ESHORT;
+      }
+    }
+  }
+
+  if( threadsafe ) {
+    qio_unlock(&ch->lock);
+  }
+
+  return err;
+}
+
+
 qioerr qio_channel_mark_maybe_flush_bits(const int threadsafe, qio_channel_t* ch, int flushbits)
 {
   qioerr err;
@@ -3592,6 +3653,10 @@ qioerr qio_channel_advance_unlocked(qio_channel_t* ch, int64_t nbytes)
     // _qio_buffered_behind calls _qio_buffered_setup_cached
     if( use_buffered ) {
       err = _qio_buffered_behind(ch, false);
+    }
+  } else {
+    if( use_buffered ) {
+      _qio_buffered_setup_cached(ch);
     }
   }
   return err;

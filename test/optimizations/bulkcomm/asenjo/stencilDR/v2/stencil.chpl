@@ -62,10 +62,16 @@ class GlobalInfo {
 }
 
 // constructor for GlobalInfo
-proc GlobalInfo.GlobalInfo() {
+proc GlobalInfo.init() {
+  this.complete();
   forall ((ix,iy), inf) in zip(gridDist, infos) {
     inf = new LocalInfo(mygx=ix, mygy=iy);
   }
+}
+
+proc GlobalInfo.deinit() {
+  forall inf in infos do
+    delete inf;
 }
 
 // Here are all our local domains. WI <- "Working Indices".
@@ -95,8 +101,9 @@ class GlobalData {
 }
 
 // constructor for GlobalData
-proc GlobalData.GlobalData(nameArg: string) {
+proc GlobalData.init(nameArg: string) {
   name=nameArg;
+  this.complete();
   forall (inf, dat, loc) in zip(WI.infos, datas, gridLocales) {
     dat = new LocalData(inf);
     // sanity checks
@@ -134,9 +141,20 @@ proc GlobalData.GlobalData(nameArg: string) {
   }  // forall
 }  // GlobalData constructor
 
+proc GlobalData.deinit() {
+  forall dat in datas do
+    delete dat;
+}
+
 // Our two global arrays, to switch between.
 const WA = new GlobalData("WA"),
       WB = new GlobalData("WB");
+
+proc deinit() {
+  delete WA;
+  delete WB;
+  delete WI;
+}
 
 // Reuse the name for an indexing operation.
 // This does not access neighbor caches.

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -22,8 +22,10 @@
 #include "astutil.h"
 #include "caches.h"
 #include "chpl.h"
+#include "driver.h"
 #include "expr.h"
 #include "PartialCopyData.h"
+#include "resolveFunction.h"
 #include "resolveIntents.h"
 #include "stmt.h"
 #include "stringutil.h"
@@ -41,6 +43,10 @@
 static int             explainInstantiationLine   = -2;
 static ModuleSymbol*   explainInstantiationModule = NULL;
 static Vec<FnSymbol*>  whereStack;
+
+static bool            fixupDefaultInitCopy(FnSymbol* fn,
+                                            FnSymbol* newFn,
+                                            CallExpr* call);
 
 static void
 explainInstantiation(FnSymbol* fn) {
@@ -261,37 +267,35 @@ void renameInstantiatedTypeString(TypeSymbol* sym, VarSymbol* var)
  * \param call The call that is being resolved (used for scope)
  * \param type The generic type we wish to instantiate
  */
-static Type*
-instantiateTypeForTypeConstructor(FnSymbol* fn, SymbolMap& subs, CallExpr* call, Type* type) {
-  INT_ASSERT(isAggregateType(type));
-  AggregateType* ct = toAggregateType(type);
+static AggregateType* instantiateTypeForTypeConstructor(FnSymbol*      fn,
+                                                        SymbolMap&     subs,
+                                                        CallExpr*      call,
+                                                        AggregateType* ct) {
+  Type*          newType     = ct->symbol->copy()->type;
+  AggregateType* newCt       = toAggregateType(newType);
 
-  Type* newType = NULL;
-  newType = ct->symbol->copy()->type;
-
-  Type *oldParentTy = NULL;
-  Type* newParentTy = NULL;
-  AggregateType* newCt = toAggregateType(newType);
+  AggregateType* oldParentTy = NULL;
+  AggregateType* newParentTy = NULL;
 
   // Get the right super type if we are using a super constructor.
   // This only matters for generic parent types.
   if (ct->dispatchParents.n > 0) {
-    if(AggregateType *parentTy = toAggregateType(ct->dispatchParents.v[0])){
+    if (AggregateType* parentTy = ct->dispatchParents.v[0]) {
       if (parentTy->symbol->hasFlag(FLAG_GENERIC)) {
-        // Set the type of super to be the instantiated
-        // parent with substitutions.
-
-        CallExpr* parentTyCall = new CallExpr(astr("_type_construct_",
-                                                   parentTy->symbol->name));
+        // Set the type of super to be the instantiated parent with subs
+        const char* parentName   = parentTy->symbol->name;
+        const char* parentTyName = astr("_type_construct_", parentName);
+        CallExpr*   parentTyCall = new CallExpr(parentTyName);
+        DefExpr*    superDef     = NULL;
+        FnSymbol*   parentFn     = NULL;
 
         // Pass the special formals to the superclass type constructor.
         for_formals(arg, fn) {
           if (arg->hasFlag(FLAG_PARENT_FIELD)) {
             Symbol* value = subs.get(arg);
 
-            if (!value) {
+            if (value == NULL) {
               value = arg;
-              // Or error?
             }
 
             parentTyCall->insertAtTail(value);
@@ -299,30 +303,31 @@ instantiateTypeForTypeConstructor(FnSymbol* fn, SymbolMap& subs, CallExpr* call,
         }
 
         call->insertBefore(parentTyCall);
+
         resolveCallAndCallee(parentTyCall);
 
+        parentFn    = parentTyCall->resolvedFunction();
+
         oldParentTy = parentTy;
-        newParentTy = parentTyCall->resolvedFunction()->retType;
+        newParentTy = toAggregateType(parentFn->retType);
+
+        INT_ASSERT(newParentTy != NULL);
 
         parentTyCall->remove();
 
-        // Now adjust the super field's type.
-
-        DefExpr* superDef = NULL;
-
-        // Find the super field
         for_alist(tmp, newCt->fields) {
           DefExpr* def = toDefExpr(tmp);
+
           INT_ASSERT(def);
 
           if (VarSymbol* field = toVarSymbol(def->sym)) {
-            if (field->hasFlag(FLAG_SUPER_CLASS)) {
+            if (field->hasFlag(FLAG_SUPER_CLASS) == true) {
               superDef = def;
             }
           }
         }
 
-        if (superDef) {
+        if (superDef != NULL) {
           superDef->sym->type = newParentTy;
           INT_ASSERT(newCt->getField("super")->typeInfo() == newParentTy);
         }
@@ -331,47 +336,59 @@ instantiateTypeForTypeConstructor(FnSymbol* fn, SymbolMap& subs, CallExpr* call,
     }
   }
 
-  newType->symbol->renameInstantiatedMulti(subs, fn);
+  newCt->symbol->renameInstantiatedMulti(subs, fn);
 
-  fn->retType->symbol->defPoint->insertBefore(new DefExpr(newType->symbol));
+  fn->retType->symbol->defPoint->insertBefore(new DefExpr(newCt->symbol));
 
-  newType->symbol->copyFlags(fn);
+  newCt->symbol->copyFlags(fn);
 
-  if (isSyncType(newType) || isSingleType(newType))
-    newType->defaultValue = NULL;
+  if (isSyncType(newCt) == true || isSingleType(newCt) == true) {
+    newCt->defaultValue = NULL;
+  }
 
-  newType->substitutions.copy(fn->retType->substitutions);
+  newCt->substitutions.copy(fn->retType->substitutions);
 
   // Add dispatch parents, but replace parent type with
   // instantiated parent type.
-  forv_Vec(Type, t, fn->retType->dispatchParents) {
-    Type *useT = t;
+  if (AggregateType* at = toAggregateType(fn->retType)) {
+    forv_Vec(AggregateType, t, at->dispatchParents) {
+      AggregateType* useT = t;
 
-    if (t == oldParentTy)
-      useT = newParentTy;
+      if (t == oldParentTy) {
+        useT = newParentTy;
+      }
 
-    newType->dispatchParents.add(useT);
+      newCt->dispatchParents.add(useT);
+    }
+
+    forv_Vec(AggregateType, t, at->dispatchParents) {
+      AggregateType* useT = t;
+
+      if (t == oldParentTy) {
+        useT = newParentTy;
+      }
+
+      if (useT->dispatchChildren.add_exclusive(newCt) == false) {
+        INT_ASSERT(false);
+      }
+    }
   }
 
-  forv_Vec(Type, t, fn->retType->dispatchParents) {
-    Type *useT = t;
-
-    if (t == oldParentTy)
-      useT = newParentTy;
-
-    bool inserted = useT->dispatchChildren.add_exclusive(newType);
-
-    INT_ASSERT(inserted);
-  }
-
-  if (newType->dispatchChildren.n)
+  if (newCt->dispatchChildren.n > 0) {
     INT_FATAL(fn, "generic type has subtypes");
 
-  newType->instantiatedFrom = fn->retType;
-  newType->substitutions.map_union(subs);
-  newType->symbol->removeFlag(FLAG_GENERIC);
+  } else if (AggregateType* at = toAggregateType(fn->retType)) {
+    newCt->instantiatedFrom = at;
 
-  return newType;
+  } else {
+    INT_ASSERT(false);
+  }
+
+  newCt->substitutions.map_union(subs);
+
+  newCt->symbol->removeFlag(FLAG_GENERIC);
+
+  return newCt;
 }
 
 /** Fully instantiate a generic function given a map of substitutions and a
@@ -399,7 +416,7 @@ FnSymbol* instantiate(FnSymbol* fn, SymbolMap& subs) {
  * \param fn   Generic function to finish instantiating
  */
 void instantiateBody(FnSymbol* fn) {
-  if (getPartialCopyData(fn)) {
+  if (getPartialCopyData(fn) != NULL) {
     fn->finalizeCopy();
   }
 }
@@ -420,16 +437,14 @@ FnSymbol* instantiateSignature(FnSymbol*  fn,
   // Handle tuples explicitly
   // (_build_tuple, tuple type constructor, tuple default constructor)
   //
-  if (FnSymbol* tupleFn = createTupleSignature(fn, subs, call)) {
-    retval = tupleFn;
+
+  if (fn->hasFlag(FLAG_TUPLE)            == true ||
+      fn->hasFlag(FLAG_BUILD_TUPLE_TYPE) == true) {
+    retval = createTupleSignature(fn, subs, call);
 
   } else {
     form_Map(SymbolMapElem, e, subs) {
       if (TypeSymbol* ts = toTypeSymbol(e->value)) {
-        if (ts->type->symbol->hasFlag(FLAG_GENERIC)) {
-          INT_FATAL(fn, "illegal instantiation with a generic type");
-        }
-
         TypeSymbol* nts = getNewSubType(fn, e->key, ts);
 
         if (ts != nts) {
@@ -438,9 +453,7 @@ FnSymbol* instantiateSignature(FnSymbol*  fn,
       }
     }
 
-    //
     // determine root function in the case of partial instantiation
-    //
     FnSymbol* root = determineRootFunc(fn);
 
     //
@@ -452,61 +465,52 @@ FnSymbol* instantiateSignature(FnSymbol*  fn,
 
     determineAllSubs(fn, root, subs, allSubs);
 
-    //
     // use cached instantiation if possible
-    //
     if (FnSymbol* cached = checkCache(genericsCache, root, &allSubs)) {
       if (cached != (FnSymbol*) gVoid) {
         checkInfiniteWhereInstantiation(cached);
 
         retval = cached;
-      } else {
-        retval = NULL;
       }
+
     } else {
       SET_LINENO(fn);
 
-      //
       // copy generic class type if this function is a type constructor
-      //
-      Type* newType = NULL;
+      SymbolMap      map;
+      AggregateType* newType = NULL;
+      FnSymbol*      newFn   = NULL;
 
-      if (fn->hasFlag(FLAG_TYPE_CONSTRUCTOR)) {
-        newType = instantiateTypeForTypeConstructor(fn,
-                                                    subs,
-                                                    call,
-                                                    fn->retType);
+      if (fn->hasFlag(FLAG_TYPE_CONSTRUCTOR) == true) {
+        AggregateType* ct = toAggregateType(fn->retType);
+
+        if (ct->initializerStyle          != DEFINES_INITIALIZER &&
+            ct->wantsDefaultInitializer() == false) {
+          newType = instantiateTypeForTypeConstructor(fn, subs, call, ct);
+
+        } else {
+          newType = ct->generateType(subs);
+        }
       }
 
-      //
       // instantiate function
-      //
-      SymbolMap map;
-
-      if (newType) {
+      if (newType != NULL) {
         map.put(fn->retType->symbol, newType->symbol);
       }
 
-      FnSymbol* newFn = instantiateFunction(fn,
-                                            root,
-                                            allSubs,
-                                            call,
-                                            subs,
-                                            map);
+      newFn = instantiateFunction(fn, root, allSubs, call, subs, map);
 
-      if (newType) {
-        newType->defaultTypeConstructor = newFn;
-        newFn->retType                  = newType;
+      if (newType != NULL) {
+        newType->typeConstructor = newFn;
+        newFn->retType           = newType;
       }
 
-      bool fixedTuple = fixupTupleFunctions(fn, newFn, call);
-
-      // Fix up chpl__initCopy for user-defined records
-      if (fixedTuple                           == false &&
-          fn->hasFlag(FLAG_INIT_COPY_FN)       ==  true &&
-          fn->hasFlag(FLAG_COMPILER_GENERATED) ==  true) {
-        // Generate the initCopy function based upon initializer
-        fixupDefaultInitCopy(fn, newFn, call);
+      if (fixupTupleFunctions(fn, newFn, call) == false) {
+        // Fix up chpl__initCopy for user-defined records
+        if (fn->hasFlag(FLAG_INIT_COPY_FN)       ==  true &&
+            fn->hasFlag(FLAG_COMPILER_GENERATED) ==  true) {
+          fixupDefaultInitCopy(fn, newFn, call);
+        }
       }
 
       if (newFn->numFormals()       >  1 &&
@@ -522,8 +526,90 @@ FnSymbol* instantiateSignature(FnSymbol*  fn,
     }
   }
 
+  if (retval != NULL && fn->throwsError() == true) {
+    retval->throwsErrorInit();
+  }
+
   return retval;
 }
+
+// This function is called by generic instantiation
+// for the default initCopy function in ChapelBase.chpl.
+static bool fixupDefaultInitCopy(FnSymbol* fn,
+                                 FnSymbol* newFn,
+                                 CallExpr* call) {
+  ArgSymbol* arg    = newFn->getFormal(1);
+  bool       retval = false;
+
+  if (AggregateType* ct = toAggregateType(arg->type)) {
+    if (isUserDefinedRecord(ct) == true &&
+        ct->initializerStyle    == DEFINES_INITIALIZER) {
+      // If the user has defined any initializer,
+      // initCopy function should call the copy-initializer.
+      //
+      // If no copy-initializer exists, we should make initCopy
+      // be a dummy function that generates an error
+      // if it remains in the AST after callDestructors. We do
+      // that since callDestructors can remove some initCopy calls
+      // and we'd like types that cannot be copied to survive
+      // compilation until callDestructors has a chance to
+      // remove those calls.
+
+      // Go ahead and instantiate the body now so we can fix
+      // it up completely...
+      instantiateBody(newFn);
+
+      if (FnSymbol* initFn = findCopyInit(ct)) {
+        Symbol*   thisTmp  = newTemp(ct);
+        DefExpr*  def      = new DefExpr(thisTmp);
+        CallExpr* initCall = new CallExpr(initFn, gMethodToken, thisTmp, arg);
+
+        newFn->insertBeforeEpilogue(def);
+
+        def->insertAfter(initCall);
+
+        if (ct->hasPostInitializer() == true) {
+          CallExpr* post = new CallExpr("postinit", gMethodToken, thisTmp);
+
+          initCall->insertAfter(post);
+        }
+
+        // Replace the other setting of the return-value-variable
+        // with what we have now...
+
+        // find the RVV
+        Symbol* retSym = newFn->getReturnSymbol();
+
+        // Remove other PRIM_MOVEs to the RVV
+        for_alist(stmt, newFn->body->body) {
+          if (CallExpr* callStmt = toCallExpr(stmt)) {
+            if (callStmt->isPrimitive(PRIM_MOVE) == true) {
+              SymExpr* se = toSymExpr(callStmt->get(1));
+
+              INT_ASSERT(se);
+
+              if (se->symbol() == retSym) {
+                stmt->remove();
+              }
+            }
+          }
+        }
+
+        // Set the RVV to the copy
+        newFn->insertBeforeEpilogue(new CallExpr(PRIM_MOVE, retSym, thisTmp));
+
+      } else {
+        // No copy-initializer could be found
+        newFn->addFlag(FLAG_ERRONEOUS_INITCOPY);
+      }
+
+      retval = true;
+    }
+  }
+
+  return retval;
+}
+
 
 //
 // determine root function in the case of partial instantiation
@@ -689,7 +775,7 @@ bool evaluateWhereClause(FnSymbol* fn) {
   if (fn->where) {
     whereStack.add(fn);
 
-    resolveFormals(fn);
+    resolveSignature(fn);
 
     resolveBlockStmt(fn->where);
 

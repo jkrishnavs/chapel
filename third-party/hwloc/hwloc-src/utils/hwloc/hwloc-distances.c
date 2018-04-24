@@ -1,5 +1,5 @@
 /*
- * Copyright © 2009-2016 Inria.  All rights reserved.
+ * Copyright © 2009-2018 Inria.  All rights reserved.
  * Copyright © 2009-2010 Université Bordeaux
  * Copyright © 2009-2011 Cisco Systems, Inc.  All rights reserved.
  * See COPYING in top-level directory.
@@ -44,8 +44,8 @@ int main(int argc, char *argv[])
   int err;
 
   /* enable verbose backends */
-  putenv("HWLOC_XML_VERBOSE=1");
-  putenv("HWLOC_SYNTHETIC_VERBOSE=1");
+  putenv((char *) "HWLOC_XML_VERBOSE=1");
+  putenv((char *) "HWLOC_SYNTHETIC_VERBOSE=1");
 
   hwloc_topology_init(&topology);
 
@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
     err = hwloc_topology_restrict (topology, restrictset, 0);
     if (err) {
       perror("Restricting the topology");
-      /* fallthrough */
+      /* FALLTHRU */
     }
     hwloc_bitmap_free(restrictset);
     free(restrictstring);

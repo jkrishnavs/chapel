@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -21,7 +21,9 @@
 
 #include "astutil.h"
 #include "build.h"
+#include "clangUtil.h"
 #include "codegen.h"
+#include "driver.h"
 #include "expr.h"
 #include "stmt.h"
 #include "stringutil.h"
@@ -30,6 +32,9 @@
 #include "vec.h"
 
 #ifdef HAVE_LLVM
+// clang headers
+#include "clang/AST/Decl.h"
+#include "clang/AST/Type.h"
 
 // Functions for converting parsed Clang AST (ie C declarations)
 // into Chapel. Note that these functions might create new
@@ -202,15 +207,26 @@ static Expr* convertToChplType(ModuleSymbol* module, const clang::Type *type, Ve
 static void convertMacroToChpl(ModuleSymbol* module,
                                const char*   name,
                                Type*         chplType,
+                               Expr*         chplTypeExpr,
                                Vec<Expr*>&   results) {
   if( ! module->extern_info ) return;
 
-  VarSymbol* v = new VarSymbol(name, chplType);
+  VarSymbol* v = NULL;
+  if (chplType)
+    v = new VarSymbol(name, chplType);
+  else
+    v = new VarSymbol(name);
 
   v->addFlag(FLAG_EXTERN);
   v->addFlag(FLAG_CONST);
 
-  results.add(new DefExpr(v));
+  DefExpr* def = NULL;
+  if (chplTypeExpr)
+    def = new DefExpr(v, NULL, chplTypeExpr);
+  else
+    def = new DefExpr(v);
+
+  results.add(def);
 
   forv_Vec(Expr*, result, results) {
     if (!result->inTree()) {
@@ -282,7 +298,7 @@ static const char* convertTypedef(ModuleSymbol*           module,
 void convertDeclToChpl(ModuleSymbol* module,
                        const char*   name,
                        Vec<Expr*>&   results) {
-  if (name == NULL || !externC || !strcmp(".", name) || !strcmp("", name))
+  if (name == NULL || !externC || name == astrSdot || !strcmp("", name))
    return;
 
   //If module doesn't have an extern block, we shouldn't be here.
@@ -294,14 +310,23 @@ void convertDeclToChpl(ModuleSymbol* module,
 
   clang::TypeDecl* cType = NULL;
   clang::ValueDecl* cValue = NULL;
+  const char* cCastedToType = NULL;
   Type* chplType = NULL;
 
   // If we've got nothing... give up.
-  if(!lookupInExternBlock(module, name, &cType, &cValue, &chplType)) return;
+  if(!lookupInExternBlock(module, name, &cType, &cValue, &cCastedToType, &chplType)) return;
 
   // Now, if we have no cdecl, it may be a macro.
   if( (!cType) && (!cValue) ) {
-    convertMacroToChpl(module, name, chplType, results);
+    Expr* chplTypeExpr = NULL;
+    if (cCastedToType) {
+      // If the macro contained a cast, replace the Chapel type
+      // with a type expression.
+      chplType = NULL;
+      chplTypeExpr = new UnresolvedSymExpr(cCastedToType);
+    }
+
+    convertMacroToChpl(module, name, chplType, chplTypeExpr, results);
     return;
   }
 
@@ -342,11 +367,7 @@ void convertDeclToChpl(ModuleSymbol* module,
   //functions
   if (clang::FunctionDecl *fd =
       llvm::dyn_cast_or_null<clang::FunctionDecl>(cValue)) {
-#if HAVE_LLVM_VER >= 35
     clang::QualType resultType = fd->getReturnType();
-#else
-    clang::QualType resultType = fd->getResultType();
-#endif
     FnSymbol* f = new FnSymbol(name);
     f->addFlag(FLAG_EXTERN);
     f->addFlag(FLAG_LOCAL_ARGS);

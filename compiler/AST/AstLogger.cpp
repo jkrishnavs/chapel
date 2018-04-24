@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -35,6 +35,14 @@ bool AstLogger::enterAggrType(AggregateType* node) {
 
 void AstLogger::exitAggrType(AggregateType* node) {
 }
+
+bool AstLogger::enterUnmanagedClassType(UnmanagedClassType* node) {
+  return true;
+}
+
+void AstLogger::exitUnmanagedClassType(UnmanagedClassType* node) {
+}
+
 
 bool AstLogger::enterEnumType(EnumType* node) {
   return true;
@@ -130,6 +138,13 @@ void AstLogger::exitBlockStmt(BlockStmt* node) {
 void AstLogger::visitForallIntents(ForallIntents* clause) {
 }
 
+bool AstLogger::enterForallStmt(ForallStmt* node) {
+  return true;
+}
+
+void AstLogger::exitForallStmt(ForallStmt* node) {
+}
+
 bool AstLogger::enterWhileDoStmt(WhileDoStmt* node) {
   return true;
 }
@@ -187,6 +202,13 @@ bool AstLogger::enterForwardingStmt(ForwardingStmt* node) {
 }
 
 void AstLogger::exitForwardingStmt(ForwardingStmt* node) {
+}
+
+bool AstLogger::enterDeferStmt(DeferStmt* node) {
+  return true;
+}
+
+void AstLogger::exitDeferStmt(DeferStmt* node) {
 }
 
 bool AstLogger::enterTryStmt(TryStmt* node) {

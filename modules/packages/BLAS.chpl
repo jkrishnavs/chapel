@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -631,7 +631,7 @@ module BLAS {
     uplo : Uplo = Uplo.Upper,  trans : Op = Op.N,
     side : Side = Side.Left, diag : Diag = Diag.NonUnit,
     order : Order = Order.Row)
-    where (Adom.rank == 2) && (Bdom.rank==2)
+    throws where (Adom.rank == 2) && (Bdom.rank==2)
   {
 
 
@@ -640,7 +640,7 @@ module BLAS {
         n = Bdom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to trmm".format(m, n));
+      throw new IllegalArgumentError("B", "Non-square array of dimensions %ix%i passed to trmm".format(m, n));
 
     // Set strides if necessary
     var _ldA = getLeadingDim(A, order),
@@ -688,7 +688,7 @@ module BLAS {
     uplo : Uplo = Uplo.Upper,  trans : Op = Op.N,
     side : Side = Side.Left, diag : Diag = Diag.NonUnit,
     order : Order = Order.Row)
-    where (Adom.rank == 2) && (Bdom.rank==2)
+    throws where (Adom.rank == 2) && (Bdom.rank==2)
   {
     // Types
     type eltType = A.eltType;
@@ -698,7 +698,7 @@ module BLAS {
         n = Bdom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to TRSM".format(m, n));
+      throw new IllegalArgumentError("B", "Non-square array of dimensions %ix%i passed to trsm".format(m, n));
 
     // Set strides if necessary
     var _ldA = getLeadingDim(A, order),
@@ -974,13 +974,13 @@ module BLAS {
             ref alpha: eltType, ref beta: eltType,
             order : Order = Order.Row,
             uplo : Uplo = Uplo.Upper, incx : c_int = 1, incy : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
     {
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to hemv".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to hemv".format(m, n));
 
     // Set strides if necessary
     var _ldA = getLeadingDim(A, order);
@@ -1007,13 +1007,13 @@ module BLAS {
   proc her(A: [?Adom] ?eltType, X: [?vDom] eltType, alpha,
             order : Order = Order.Row,
             uplo : Uplo = Uplo.Upper, incx : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to her".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to her".format(m, n));
 
     // TODO -- Assert alpha is real
 
@@ -1042,13 +1042,13 @@ module BLAS {
             ref alpha: eltType,
             order : Order = Order.Row,
             uplo : Uplo = Uplo.Upper, incx : c_int = 1, incy : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
     {
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to her2".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to her2".format(m, n));
 
 
     // Set strides if necessary
@@ -1312,13 +1312,13 @@ module BLAS {
             order : Order = Order.Row,
             uplo : Uplo = Uplo.Upper,
             incx : c_int = 1, incy : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to symv".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to symv".format(m, n));
 
     var _ldA = getLeadingDim(A, order);
 
@@ -1346,14 +1346,14 @@ module BLAS {
            order : Order = Order.Row,
            uplo : Uplo = Uplo.Upper,
            incx : c_int = 1)
-           where (Adom.rank == 2) && (vDom.rank == 1)
+           throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
 
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to syr".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to syr".format(m, n));
 
     var _ldA = getLeadingDim(A, order);
 
@@ -1381,14 +1381,14 @@ module BLAS {
             order : Order = Order.Row,
             uplo : Uplo = Uplo.Upper,
             incx : c_int = 1, incy : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
 
     var m = Adom.dim(1).size : c_int,
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to syr2".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to syr2".format(m, n));
 
     var _ldA = getLeadingDim(A, order);
 
@@ -1597,7 +1597,7 @@ module BLAS {
             uplo : Uplo = Uplo.Upper,
             diag : Diag = Diag.NonUnit,
             incx : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
 
     // Determine sizes
@@ -1605,7 +1605,7 @@ module BLAS {
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to trmv".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to trmv".format(m, n));
 
     // Set strides if necessary
     var _ldA = getLeadingDim(A, order);
@@ -1641,7 +1641,7 @@ module BLAS {
             uplo : Uplo = Uplo.Upper,
             diag : Diag = Diag.NonUnit,
             incx : c_int = 1)
-            where (Adom.rank == 2) && (vDom.rank == 1)
+            throws where (Adom.rank == 2) && (vDom.rank == 1)
   {
 
     // Determine sizes
@@ -1649,7 +1649,7 @@ module BLAS {
         n = Adom.dim(2).size : c_int;
 
     if m != n then
-      halt("Non-square array of dimensions %ix%i passed to trsv".format(m, n));
+      throw new IllegalArgumentError("A", "Non-square array of dimensions %ix%i passed to trsv".format(m, n));
 
     // Set strides if necessary
     var _ldA = getLeadingDim(A, order);
@@ -1763,10 +1763,10 @@ module BLAS {
 
 
   */
-  proc rotmg(ref d1: ?eltType, ref d2: eltType, ref b1: eltType, b2: eltType, P: []eltType) {
+  proc rotmg(ref d1: ?eltType, ref d2: eltType, ref b1: eltType, b2: eltType, P: []eltType) throws {
 
     if P.size != 5 then
-      halt("P parameter must consist of 5 elements");
+      throw new IllegalArgumentError("P", "must consist of 5 elements, passed to rotmg");
 
     select eltType {
       when real(32) do{
@@ -1862,11 +1862,10 @@ module BLAS {
       - ``Y``: Vector with updated elements
 
   */
-  proc rotm(X: [?D]?eltType,  Y: [D]eltType,  P: []eltType, incY: c_int = 1, incX: c_int = 1)
-   where D.rank == 1 {
+  proc rotm(X: [?D]?eltType,  Y: [D]eltType,  P: []eltType, incY: c_int = 1, incX: c_int = 1) throws where D.rank == 1 {
 
     if P.size != 5 then
-      halt("P parameter must consist of 5 elements");
+      throw new IllegalArgumentError("P", "must consist of 5 elements, passed to rotm");
 
     const N = D.size: c_int;
 
@@ -2070,10 +2069,10 @@ module BLAS {
 
       :returns: Scalar value of dot product
   */
-  proc dot(X: [?D]?eltType,  Y: [D]eltType, incY: c_int = 1, incX: c_int = 1):eltType
-  where D.rank == 1 {
+  proc dot(X: [?xD]?eltType,  Y: [?yD] eltType, incY: c_int = 1, incX: c_int = 1) : eltType
+  where xD.rank == 1 && yD.rank == 1 {
 
-    const N = D.size: c_int;
+    const N = xD.size: c_int;
 
     select eltType {
       when real(32) do{

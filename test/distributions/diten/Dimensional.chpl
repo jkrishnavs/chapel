@@ -77,11 +77,19 @@ class DimensionalDomain {
   var dist:Dimensional(nDims, idxType);
   var locDoms: [dist.localeDomain] LocDimensionalDomain(nDims, idxType);
 
-  proc initialize() {
+  proc postinit() {
     for loc in dist.localeDomain {
       on dist.localeArray(loc) {
         var locDist = dist.getLocRanges(loc);
         locDoms(loc) = new LocDimensionalDomain(nDims, idxType, this, whole((...locDist)));
+      }
+    }
+  }
+
+  proc deinit() {
+    for loc in dist.localeDomain {
+      on dist.localeArray(loc) {
+        delete locDoms(loc);
       }
     }
   }
@@ -125,10 +133,18 @@ class DimensionalArray {
   var dom: DimensionalDomain(nDims, idxType);
   var locArrs: [dom.dist.localeDomain] LocDimensionalArray(nDims, idxType, eltType);
 
-  proc initialize() {
+  proc postinit() {
     for loc in dom.dist.localeDomain {
       on loc {
         locArrs(loc) = new LocDimensionalArray(nDims, idxType, eltType, this, dom.locDoms(loc));
+      }
+    }
+  }
+
+  proc deinit() {
+    for loc in dom.dist.localeDomain {
+      on loc {
+        delete locArrs(loc);
       }
     }
   }
@@ -193,4 +209,10 @@ proc main {
   for i in dom {
     writeln(i, (arr(i), arr2(i)));
   }
+  delete arr2;
+  delete arr;
+  delete dom;
+  delete dist;
+  delete dims(1);
+  delete dims(2);
 }

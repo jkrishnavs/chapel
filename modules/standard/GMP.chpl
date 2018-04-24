@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -1087,21 +1087,24 @@ module GMP {
   extern proc chpl_gmp_mpz_print(const ref x: mpz_t);
 
   /* Get an mpz_t as a string */
-  extern proc chpl_gmp_mpz_get_str(base: c_int, const ref x: mpz_t) : c_string_copy;
+  extern proc chpl_gmp_mpz_get_str(base: c_int, const ref x: mpz_t) : c_string;
 
   class GMPRandom {
     var state: gmp_randstate_t;
 
-    proc GMPRandom() {
+    proc init() {
+      this.complete();
       gmp_randinit_default(this.state);
     }
 
     // Creates a Mersenne Twister (probably same as init_default)
-    proc GMPRandom(twister: bool) {
+    proc init(twister: bool) {
+      this.complete();
       gmp_randinit_mt(this.state);
     }
 
-    proc GMPRandom(a: bigint, c: uint, m2exp: uint) {
+    proc init(a: bigint, c: uint, m2exp: uint) {
+      this.complete();
       // Rely on bigint assignment operator to obtain a local copy
       var a_ = a;
 
@@ -1111,11 +1114,13 @@ module GMP {
                            m2exp.safeCast(c_ulong));
     }
 
-    proc GMPRandom(size: uint) {
+    proc init(size: uint) {
+      this.complete();
       gmp_randinit_lc_2exp_size(this.state, size.safeCast(c_ulong));
     }
 
-    proc GMPRandom(a: GMPRandom) {
+    proc init(a: GMPRandom) {
+      this.complete();
       if a.locale == here {
         gmp_randinit_set(this.state, a.state);
       } else {
@@ -1222,9 +1227,9 @@ module GMP {
     }
   }
 
-  /* FUTURE -- GMP numbers with record semantics,
-      expression and operator overloads.
-  */
+  if CHPL_GMP == "none" {
+    compilerError("Cannot use GMP with CHPL_GMP=none");
+  }
 
   // calls mp_set_memory_functions to use chpl_malloc, etc.
   chpl_gmp_init();

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -18,6 +18,7 @@
  */
 
 #include "LoopStmt.h"
+#include "ForallStmt.h"
 
 LoopStmt::LoopStmt(BlockStmt* initBody) : BlockStmt(initBody)
 {
@@ -66,19 +67,64 @@ void LoopStmt::orderIndependentSet(bool orderIndependent)
   mOrderIndependent = orderIndependent;
 }
 
+// what if the nearest enclosing loop is a forall?
 LoopStmt* LoopStmt::findEnclosingLoop(Expr* expr)
 {
   LoopStmt* retval = NULL;
 
   if (LoopStmt* loop = toLoopStmt(expr))
+  {
     retval = loop;
+  }
 
   else if (expr->parentExpr)
+  {
     retval = findEnclosingLoop(expr->parentExpr);
+  }
 
   else
+  {
     retval = NULL;
+  }
 
   return retval;
 
+}
+
+LoopStmt* LoopStmt::findEnclosingLoop(Expr* expr, const char* name)
+{
+  LoopStmt* retval = LoopStmt::findEnclosingLoop(expr);
+
+  while (retval != NULL && retval->isNamed(name) == false)
+  {
+    retval = LoopStmt::findEnclosingLoop(retval->parentExpr);
+  }
+
+  return retval;
+}
+
+Stmt* LoopStmt::findEnclosingLoopOrForall(Expr* expr)
+{
+  for (Expr* curr = expr; curr != NULL; curr = curr->parentExpr) {
+    if (LoopStmt* loop = toLoopStmt(curr)) {
+      return loop;
+    }
+    if (ForallStmt* forall = toForallStmt(curr)) {
+      return forall;
+    }
+  }
+  // no enclosing loops
+  return NULL;
+}
+
+bool LoopStmt::isNamed(const char* name) const
+{
+  bool retval = false;
+
+  if (userLabel != NULL)
+  {
+    retval = (strcmp(userLabel, name) == 0) ? true : false;
+  }
+
+  return retval;
 }

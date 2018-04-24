@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 # 
 # The entirety of this work is licensed under the Apache License,
@@ -41,6 +41,9 @@ printstuff:
 	@echo CHPL_MAKE_MEM = $(CHPL_MAKE_MEM)
 	@echo CHPL_MAKE_HOST_TARGET = $(CHPL_MAKE_HOST_TARGET)
 	@echo CHPL_MAKE_TARGET_ARCH = $(CHPL_MAKE_TARGET_ARCH)
+	@echo CHPL_MAKE_RUNTIME_ARCH = $(CHPL_MAKE_RUNTIME_ARCH)
+	@echo CHPL_MAKE_TARGET_ARCH_FLAG = $(CHPL_MAKE_TARGET_ARCH_FLAG)
+	@echo CHPL_MAKE_TARGET_BACKEND_ARCH = $(CHPL_MAKE_TARGET_BACKEND_ARCH)
 	@echo CHPL_ORIG_TARGET_COMPILER = $(CHPL_ORIG_TARGET_COMPILER)
 	@echo CXX_STD = $(CXX_STD)
 	@echo RUNTIME_CXXFLAGS += $(RUNTIME_CXXFLAGS)
@@ -130,13 +133,26 @@ include $(RUNTIME_ROOT)/make/Makefile.runtime.rules
 #
 
 RUNTIME_CHPLCONFIG = $(RUNTIME_DIR)/chplconfig
+RUNTIME_LIST_INCLUDESANDDEFINES = $(RUNTIME_DIR)/list-includes-and-defines
+RUNTIME_LIST_LIBRARIES = $(RUNTIME_DIR)/list-libraries
+RUNTIME_OVERRIDE_LD = $(RUNTIME_DIR)/override-ld
 
-$(RUNTIME_LIB): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
+$(RUNTIME_LIB): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP) $(RUNTIME_LIST_INCLUDESANDDEFINES) $(RUNTIME_LIST_LIBRARIES) $(RUNTIME_OVERRIDE_LD)
 	@rm -f $@
 	$(AR) -rc $@ $(RUNTIME_OBJS)
 	$(RANLIB) $@
 	$(TAGS_COMMAND)
-	../util/printchplenv --simple > $(RUNTIME_CHPLCONFIG)
+	../util/printchplenv --runtime --no-tidy --anonymize --simple > $(RUNTIME_CHPLCONFIG)
+
+
+$(RUNTIME_LIST_INCLUDESANDDEFINES): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
+	$(MAKE) -f Makefile.config printincludesanddefines > $(RUNTIME_LIST_INCLUDESANDDEFINES)
+
+$(RUNTIME_LIST_LIBRARIES): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
+	$(MAKE) -f Makefile.config printlibraries > $(RUNTIME_LIST_LIBRARIES)
+
+$(RUNTIME_OVERRIDE_LD): $(RUNTIME_OBJS) $(RUNTIME_DIR_TIMESTAMP)
+	$(MAKE) -f Makefile.config printoverrideld > $(RUNTIME_OVERRIDE_LD)
 
 $(RUNTIME_DIR)/main.o: $(RUNTIME_OBJDIR)/src/main.o
 	cp $< $@

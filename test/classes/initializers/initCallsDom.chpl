@@ -4,8 +4,9 @@ record R {
   var d: domain(1);
   var a: [d] real;
 
-  proc init(x) {
+  proc init(x) where !x: R {
     d = x.domain;
+    this.complete();
     for i in d do
       a[i] = i/10.0;
   }

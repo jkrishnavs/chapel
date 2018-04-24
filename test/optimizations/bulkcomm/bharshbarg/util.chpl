@@ -43,9 +43,9 @@ proc stridedAssign(A : [], sa, B : [], sb, debug=false) {
 
     if debug then writeln(ldom, " = ", right.domain);
 
-    assert(chpl__getActualArray(left).oneDData);  // fend off multi-ddata
-    assert(chpl__getActualArray(right).oneDData); // fend off multi-ddata
-    left._value.doiBulkTransferStride(right, chpl__getViewDom(left));
+    const success = chpl__bulkTransferArray(left, right);
+    if !success then
+      writeln("FAILURE: bulk transfer did not happen!");
 
     var failOut = false,
         failIn  = false;

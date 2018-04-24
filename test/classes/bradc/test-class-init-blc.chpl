@@ -2,8 +2,9 @@ class Params {
   var numProbSizes: int;
   var N: [1..numProbSizes] int;
 
-  proc Params() {
+  proc init() {
     numProbSizes = 3;
+    this.complete();
     for n in N do n = 10;
   }
 }

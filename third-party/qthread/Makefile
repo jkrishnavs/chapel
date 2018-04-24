@@ -19,7 +19,7 @@ QTHREAD_DIR = $(QTHREAD_ABS_DIR)
 # Cray X* builds are cross-compilations
 #
 ifneq (, $(filter cray-x%,$(CHPL_MAKE_TARGET_PLATFORM)))
-CHPL_QTHREAD_CFG_OPTIONS += --host=x86_64-cle-linux-gnu
+CHPL_QTHREAD_CFG_OPTIONS += --host=$(shell uname -m)-cle-linux-gnu
 else ifneq ($(CHPL_MAKE_HOST_PLATFORM),$(CHPL_MAKE_TARGET_PLATFORM))
 CHPL_QTHREAD_CFG_OPTIONS += --host=$(CHPL_MAKE_TARGET_PLATFORM)-unknown-linux-gnu
 endif
@@ -27,6 +27,10 @@ endif
 ifeq ($(CHPL_MAKE_HWLOC),hwloc)
 CHPL_QTHREAD_CFG_OPTIONS += --with-topology=hwloc --with-hwloc=$(HWLOC_INSTALL_DIR)
 endif
+ifeq ($(CHPL_MAKE_HWLOC),system)
+CHPL_QTHREAD_CFG_OPTIONS += --with-topology=hwloc
+endif
+
 
 # Have qthreads use Chapel's allocator, unless directed not to
 ifeq (, $(call isTrue, $(CHPL_QTHREAD_NO_CHPL_ALLOC)))
@@ -109,7 +113,9 @@ qthread-config: FORCE
 #
 	cd $(QTHREAD_SUBDIR) && touch -c configure.ac
 	cd $(QTHREAD_SUBDIR) && find . -name "*.m4" | xargs touch
+	sleep 1
 	cd $(QTHREAD_SUBDIR) && touch -c aclocal.m4
+	sleep 1
 	cd $(QTHREAD_SUBDIR) && touch configure
 	cd $(QTHREAD_SUBDIR) && find . -name "*.in" | xargs touch
 

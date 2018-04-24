@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -31,9 +31,9 @@ extern char saveCDir[FILENAME_MAX+1];
 extern std::string ccflags;
 extern std::string ldflags;
 extern bool ccwarnings;
-extern Vec<const char*> incDirs;
-extern int numLibFlags;
-extern const char** libFlag;
+extern std::vector<const char*> incDirs;
+extern std::vector<const char*> libDirs;
+extern std::vector<const char*> libFiles;
 
 struct fileinfo {
   FILE* fptr;
@@ -76,7 +76,8 @@ bool isObjFile(const char* filename);
 void addSourceFiles(int numFilenames, const char* filename[]);
 void addSourceFile(const char* filename);
 const char* nthFilename(int i);
-void addLibInfo(const char* filename);
+void addLibPath(const char* filename);
+void addLibFile(const char* filename);
 void addIncInfo(const char* incDir);
 
 void genIncludeCommandLineHeaders(FILE* outfile);
@@ -84,15 +85,18 @@ void genIncludeCommandLineHeaders(FILE* outfile);
 const char* createDebuggerFile(const char* debugger, int argc, char* argv[]);
 
 std::string runPrintChplEnv(std::map<std::string, const char*> varMap);
-std::string getChplPythonVersion();
+std::string getVenvDir();
+bool compilingWithPrgEnv();
 std::string runCommand(std::string& command);
 
 const char* filenameToModulename(const char* filename);
 
 const char* getIntermediateDirName();
 
-void        readArgsFromCommand(const char*               cmd,
-                                std::vector<std::string>& cmds);
+void readArgsFromCommand(std::string path, std::vector<std::string>& args);
+void readArgsFromFile(std::string path, std::vector<std::string>& cmds);
+void expandInstallationPaths(std::string& arg);
+void expandInstallationPaths(std::vector<std::string>& args);
 
 char*       dirHasFile(const char* dir, const char* file);
 char*       findProgramPath(const char* argv0);

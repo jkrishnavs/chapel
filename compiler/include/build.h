@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -45,7 +45,6 @@ CallExpr* buildTuple(CallExpr* call);
 Expr* buildSquareCallExpr(Expr* base, CallExpr* args);
 
 Expr* buildNamedActual(const char* name, Expr* expr);
-Expr* buildNamedAliasActual(const char* name, Expr* expr);
 
 Expr* buildFormalArrayType(Expr* iterator, Expr* eltType, Expr* index = NULL);
 
@@ -59,6 +58,8 @@ Expr* buildDotExpr(BaseAST* base, const char* member);
 Expr* buildDotExpr(const char* base, const char* member);
 
 BlockStmt* buildChapelStmt(Expr* expr = NULL);
+BlockStmt* buildErrorStandin();
+
 BlockStmt* buildUseStmt(CallExpr* modules);
 BlockStmt* buildUseStmt(Expr* mod, std::vector<OnlyRename*>* names, bool except);
 bool processStringInRequireStmt(const char* str, bool parseTime);
@@ -72,6 +73,7 @@ ModuleSymbol* buildModule(const char* name,
                           BlockStmt*  block,
                           const char* filename,
                           bool        priv,
+                          bool        prototype,
                           const char* docs);
 
 CallExpr* buildPrimitiveExpr(CallExpr* exprs);
@@ -79,6 +81,7 @@ CallExpr* buildPrimitiveExpr(CallExpr* exprs);
 FnSymbol* buildIfExpr(Expr* e, Expr* e1, Expr* e2 = NULL);
 CallExpr* buildLetExpr(BlockStmt* decls, Expr* expr);
 BlockStmt* buildSerialStmt(Expr* cond, BlockStmt* body);
+void       checkControlFlow(Expr* expr, const char* context);
 void       checkIndices(BaseAST* indices);
 void       destructureIndices(BlockStmt* block,
                               BaseAST*   indices,
@@ -91,6 +94,7 @@ BlockStmt* buildCoforallLoopStmt(Expr* indices,
                                  bool zippered = false);
 BlockStmt* buildGotoStmt(GotoTag tag, const char* name);
 BlockStmt* buildPrimitiveStmt(PrimitiveTag tag, Expr* e1 = NULL, Expr* e2 = NULL);
+BlockStmt* buildDeleteStmt(CallExpr* exprlist);
 CallExpr* zipToTuple(CallExpr* zipExpr);
 BlockStmt* buildForallLoopStmt(Expr* indices,
                                Expr* iterator,
@@ -155,6 +159,7 @@ void applyPrivateToBlock(BlockStmt* block);
 BlockStmt* buildForwardingStmt(Expr* expr);
 BlockStmt* buildForwardingStmt(Expr* expr, std::vector<OnlyRename*>* names, bool except);
 BlockStmt* buildForwardingDeclStmt(BlockStmt*);
+BlockStmt* buildLocalStmt(Expr* condExpr, Expr* stmt);
 BlockStmt* buildLocalStmt(Expr* stmt);
 BlockStmt* buildOnStmt(Expr* expr, Expr* stmt);
 BlockStmt* buildBeginStmt(CallExpr* byref_vars, Expr* stmt);
@@ -165,5 +170,12 @@ BlockStmt* buildExternBlockStmt(const char* c_code);
 CallExpr*  buildPreDecIncWarning(Expr* expr, char sign);
 BlockStmt* convertTypesToExtern(BlockStmt*);
 BlockStmt* handleConfigTypes(BlockStmt*);
+
+Expr* tryExpr(Expr*);
+Expr* tryBangExpr(Expr*);
+
+// Intended to help issue better compile errors
+// Converts a misuse of 'if a=b' into 'if a==b' and warns.
+Expr* convertAssignmentAndWarn(Expr* a, const char* op, Expr* b);
 
 #endif

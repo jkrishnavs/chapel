@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -99,7 +99,7 @@ static void chpl_stack_unwind(void){
 #endif
 
   // Check if we need to print the stack trace (default = yes)
-  if(! chpl_get_rt_env_bool("UNWIND", true)) {
+  if(! chpl_env_rt_get_bool("UNWIND", true)) {
     return;
   }
 
@@ -211,11 +211,73 @@ void chpl_error_explicit(const char *message, int32_t lineno,
   chpl_exit_any(1);
 }
 
+
+static
+void msg_explicit_vs(char *restrict, size_t,
+                     int32_t, const char *restrict,
+                     const char *restrict,
+                     const char *restrict, va_list)
+       __attribute__((format(printf, 5, 0)));
+
+static
+void msg_explicit_vs(char *restrict str, size_t size,
+                     int32_t lineno, const char *restrict filename,
+                     const char *restrict warn_or_err,
+                     const char *restrict format, va_list ap) {
+  int len;
+
+  if (lineno > 0)
+    len = snprintf(str, size, "%s:%" PRId32 ": %s: ", filename, lineno,
+                   warn_or_err);
+  else if (filename)
+    len = snprintf(str, size, "%s: %s: ", filename, warn_or_err);
+  else
+    len = snprintf(str, size, "%s: ", warn_or_err);
+
+  if (len < size) {
+    str += len;
+    size -= len;
+
+    len = vsnprintf(str, size, format, ap);
+
+    if (len < size) {
+      str[len] = '\n';
+      str[len + 1] = '\0';
+    }
+  }
+}
+
+
+void chpl_error_preformatted(const char* message) {
+  spinhaltIfAlreadyExiting();
+  fflush(stdout);
+  fprintf(stderr, "%s\n", message);
+
+#ifdef CHPL_UNWIND_NOT_LAUNCHER
+  chpl_stack_unwind();
+#endif
+
+  chpl_exit_any(1);
+}
+
 void chpl_error(const char *message, int32_t lineno, int32_t filenameIdx) {
   const char *filename = NULL;
   if (filenameIdx != 0)
     filename= chpl_lookupFilename(filenameIdx);
   chpl_error_explicit(message, lineno, filename);
+}
+
+
+void chpl_error_vs(char *restrict str, size_t size,
+                   int32_t lineno, int32_t filenameIdx,
+                   const char *restrict format, ...) {
+  const char *restrict filename = (filenameIdx == 0)
+                                  ? NULL
+                                  : chpl_lookupFilename(filenameIdx);
+  va_list ap;
+  va_start(ap, format);
+  msg_explicit_vs(str, size, lineno, filename, "error", format, ap);
+  va_end(ap);
 }
 
 

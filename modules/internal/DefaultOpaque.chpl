@@ -1,15 +1,15 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
- * 
+ *
  * The entirety of this work is licensed under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License.
- * 
+ *
  * You may obtain a copy of the License at
- * 
+ *
  *     http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,6 +20,7 @@
 // DefaultOpaque.chpl
 //
 module DefaultOpaque {
+  use ChapelStandard;
 
   // record _OpaqueIndex is defined in ChapelArray
 
@@ -68,7 +69,8 @@ module DefaultOpaque {
     proc linksDistribution() param return false;
     proc dsiLinksDistribution()     return false;
   
-    proc DefaultOpaqueDom(dist: DefaultDist, param parSafe: bool) {
+    proc init(dist: DefaultDist, param parSafe: bool) {
+      this.parSafe = parSafe;
       this.dist = dist;
       adomain = new DefaultAssociativeDom(_OpaqueIndex, dist, parSafe=parSafe);
     }
@@ -97,6 +99,10 @@ module DefaultOpaque {
       adomain.dsiSetIndices(b);
     }
   
+    proc dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+      chpl_assignDomainWithIndsIterSafeForRemoving(this, rhs);
+    }
+
     iter these() {
       for i in adomain do
         yield i;
@@ -111,7 +117,13 @@ module DefaultOpaque {
       for i in adomain.these(tag=iterKind.follower, followThis) do
         yield i;
     }
-  
+
+    iter dsiIndsIterSafeForRemoving() {
+      for i in adomain.dsiIndsIterSafeForRemoving() {
+        yield i;
+      }
+    }
+
     proc dsiMember(ind: idxType) {
       return adomain.dsiMember(ind);
     }
@@ -142,6 +154,7 @@ module DefaultOpaque {
   }
   
   
+  pragma "use default init"
   class DefaultOpaqueArr: BaseArr {
     type eltType;
     type idxType;

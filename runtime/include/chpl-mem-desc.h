@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -48,6 +48,7 @@
   m(SET_WIDE_STRING,      "set wide string",                          true ), \
   m(GET_WIDE_STRING,      "get wide string",                          true ), \
   m(COMMAND_BUFFER,       "command buffer",                           true ), \
+  m(COMM_UTIL,            "comm layer utility space",                 false), \
   m(COMM_XMIT_RCV_BUF,    "comm layer transmit/receive buffer",       false), \
   m(COMM_FRK_SND_INFO,    "comm layer sent remote fork info",         false), \
   m(COMM_FRK_SND_ARG,     "comm layer sent remote fork arg",          false), \
@@ -57,6 +58,7 @@
   m(COMM_PER_LOC_INFO,    "comm layer per-locale information",        false), \
   m(COMM_PRV_OBJ_ARRAY,   "comm layer private objects array",         false), \
   m(COMM_PRV_BCAST_DATA,  "comm layer private broadcast data",        false), \
+  m(MEM_HEAP_SPACE,       "mem layer heap expansion space",           false), \
   m(GLOM_STRINGS_DATA,    "glom strings data",                        true ), \
   m(STR_COPY_DATA,        "string copy data",                         true ), \
   m(STR_COPY_REMOTE,      "remote string copy",                       true ), \

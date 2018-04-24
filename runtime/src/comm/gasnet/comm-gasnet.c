@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -35,6 +35,7 @@
 #include "chpl-linefile-support.h"
 #include "error.h"
 #include "chpl-mem-desc.h"
+#include "chpl-mem-sys.h" // mem layer not initialized in init, need sys alloc
 #include "chpl-cache.h" // to call chpl_cache_init()
 
 // Don't get warning macros for chpl_comm_get etc
@@ -170,10 +171,11 @@ typedef struct {
 
   void*         ack;
 
-  chpl_bool     serial_state; // true if not allowed to spawn new threads
   chpl_fn_int_t fid;
   uint16_t      payload_size;
 
+  // TODO: is there a way to "compress" this?
+  chpl_task_ChapelData_t state;
 } small_fork_hdr_t;
 
 typedef struct {
@@ -246,6 +248,7 @@ typedef enum {
   PRIV_BCAST_LARGE,     // put data at addr (used for private broadcast)
   FREE,                 // free data at addr
   EXIT_ANY,             // <unused> to be used for exit_any() cleanup
+  SHUTDOWN,             // tell nodes to get ready for shutdown
   BCAST_SEGINFO,        // broadcast for segment info table
   DO_REPLY_PUT,         // do a PUT here from another locale
   DO_COPY_PAYLOAD       // copy AM payload to another address
@@ -272,6 +275,9 @@ size_t setup_small_fork_task(small_fork_task_t* dst, small_fork_hdr_t* f, size_t
   chpl_comm_on_bundle_t *bptr  = &dst->bundle;
   size_t payload_size = nbytes - sizeof(small_fork_hdr_t);
 
+  // Copy task-local data to the new task
+  bundle.task_bundle.state = f->state;
+
   dst->bundle = bundle;
 
   // Copy the payload into the special task
@@ -287,7 +293,9 @@ size_t setup_large_fork_task(large_fork_task_t* dst, large_fork_t* f, size_t nby
   chpl_comm_bundleData_t comm  = { .caller = f->hdr.caller,
                                    .ack    = f->hdr.ack };
   chpl_comm_on_bundle_t bundle = { .comm =  comm };
-  chpl_comm_on_bundle_t *bptr  = &dst->bundle;
+
+  // Copy task-local data to the new task
+  bundle.task_bundle.state = f->hdr.state;
 
   dst->bundle = bundle;
   // Copy the large fork info into the task bundle
@@ -327,8 +335,7 @@ static void AM_fork(gasnet_token_t token, void* buf, size_t nbytes) {
   chpl_task_startMovedTask(f->task_bundle.requested_fid,
                            (chpl_fn_p)fork_wrapper,
                            chpl_comm_on_bundle_task_bundle(f), nbytes,
-                           f->task_bundle.requestedSubloc, chpl_nullTaskID,
-                           f->task_bundle.serial_state);
+                           f->task_bundle.requestedSubloc, chpl_nullTaskID);
 }
 
 static void AM_fork_small(gasnet_token_t token, void* buf, size_t nbytes) {
@@ -343,8 +350,7 @@ static void AM_fork_small(gasnet_token_t token, void* buf, size_t nbytes) {
   chpl_task_startMovedTask(f->fid, (chpl_fn_p)fork_wrapper,
                            chpl_comm_on_bundle_task_bundle(bptr),
                            size,
-                           f->subloc, chpl_nullTaskID,
-                           f->serial_state);
+                           f->subloc, chpl_nullTaskID);
 }
 
 
@@ -396,8 +402,7 @@ static void AM_fork_large(gasnet_token_t token, void* buf, size_t nbytes) {
 
   chpl_task_startMovedTask(f->hdr.fid, (chpl_fn_p)fork_large_wrapper,
                            chpl_comm_on_bundle_task_bundle(bptr), size,
-                           f->hdr.subloc, chpl_nullTaskID,
-                           f->hdr.serial_state);
+                           f->hdr.subloc, chpl_nullTaskID);
 }
 
 static void fork_nb_wrapper(chpl_comm_on_bundle_t *f) {
@@ -412,8 +417,7 @@ static void AM_fork_nb(gasnet_token_t  token,
   chpl_task_startMovedTask(f->task_bundle.requested_fid,
                            (chpl_fn_p)fork_nb_wrapper,
                            chpl_comm_on_bundle_task_bundle(f), nbytes,
-                           f->task_bundle.requestedSubloc, chpl_nullTaskID,
-                           f->task_bundle.serial_state);
+                           f->task_bundle.requestedSubloc, chpl_nullTaskID);
 }
 
 static void AM_fork_nb_small(gasnet_token_t  token,
@@ -429,8 +433,7 @@ static void AM_fork_nb_small(gasnet_token_t  token,
  
   chpl_task_startMovedTask(f->fid, (chpl_fn_p)fork_nb_wrapper,
                            chpl_comm_on_bundle_task_bundle(bptr), size,
-                           f->subloc, chpl_nullTaskID,
-                           f->serial_state);
+                           f->subloc, chpl_nullTaskID);
 }
 
 
@@ -478,8 +481,7 @@ static void AM_fork_nb_large(gasnet_token_t token, void* buf, size_t nbytes) {
 
   chpl_task_startMovedTask(f->hdr.fid, (chpl_fn_p)fork_nb_large_wrapper,
                            chpl_comm_on_bundle_task_bundle(bptr), size,
-                           f->hdr.subloc, chpl_nullTaskID,
-                           f->hdr.serial_state);
+                           f->hdr.subloc, chpl_nullTaskID);
 }
 
 static void AM_signal(gasnet_token_t token, gasnet_handlerarg_t a0, gasnet_handlerarg_t a1) {
@@ -532,6 +534,17 @@ static void AM_exit_any(gasnet_token_t token, void* buf, size_t nbytes) {
   chpl_internal_error("clean exit_any is not implemented.");
   // here we basically need to call chpl_exit_all, but we need to
   // ensure only one thread calls chpl_exit_all on this locale.
+}
+
+static chpl_bool can_shutdown = false;
+static pthread_mutex_t shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t shutdown_cond = PTHREAD_COND_INITIALIZER;
+
+static void AM_shutdown(gasnet_token_t token) {
+  pthread_mutex_lock(&shutdown_mutex);
+  can_shutdown = true;
+  pthread_cond_signal(&shutdown_cond);
+  pthread_mutex_unlock(&shutdown_mutex);
 }
 
 //
@@ -589,6 +602,7 @@ static gasnet_handlerentry_t ftable[] = {
   {PRIV_BCAST_LARGE, AM_priv_bcast_large},
   {FREE,          AM_free},
   {EXIT_ANY,      AM_exit_any},
+  {SHUTDOWN,      AM_shutdown},
   {BCAST_SEGINFO, AM_bcast_seginfo},
   {DO_REPLY_PUT,  AM_reply_put},
   {DO_COPY_PAYLOAD, AM_copy_payload}
@@ -751,10 +765,9 @@ static void set_max_segsize_env_var(size_t size) {
 }
 
 static void set_max_segsize() {
-  FILE* file = NULL;
   size_t size;
 
-  if ((size = chpl_comm_getenvMaxHeapSize()) != 0) {
+  if ((size = (size_t) chpl_comm_getenvMaxHeapSize()) != 0) {
     set_max_segsize_env_var(size);
     return;
   }
@@ -767,13 +780,44 @@ static void set_max_segsize() {
   }
 
   // Use 90% of the available memory as the maximum segment size,
-  // heuristically
-  if ((size = chpl_bytesAvailOnThisLocale()) != 0) {
-    set_max_segsize_env_var((size_t) (0.9 * size));
-    return;
+  // heuristically.  But if that's less than the 2g GASNet default
+  // segment size, just let GASNet choose the segment size.
+  if ((size = (size_t) chpl_sys_availMemoryBytes()) != 0) {
+    size_t dst_size = 0.9 * size;
+    if (dst_size >= (1UL << 31)) {
+      if (dst_size > (size_t) chpl_sys_physicalMemoryBytes())
+        chpl_internal_error("Overflow/underflow determining max segment size");
+      set_max_segsize_env_var(dst_size);
+    }
+  }
+#endif
+}
+
+static void set_num_comm_domains() {
+#if defined(GASNET_CONDUIT_GEMINI) || defined(GASNET_CONDUIT_ARIES)
+  char num_cpus_val[22]; // big enough for an unsigned 64-bit quantity
+  int num_cpus;
+
+  num_cpus = chpl_getNumPhysicalCpus(true) + 1;
+
+  snprintf(num_cpus_val, sizeof(num_cpus_val), "%d", num_cpus);
+  if (setenv("GASNET_DOMAIN_COUNT", num_cpus_val, 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_DOMAIN_COUNT\")", 0, 0);
   }
 
-  chpl_internal_error("Could not determine maximum segment size");
+  if (setenv("GASNET_AM_DOMAIN_POLL_MASK", "3", 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_AM_DOMAIN_POLL_MASK\")", 0, 0);
+  }
+
+  // GASNET_DOMAIN_COUNT increases the shutdown time. Work around this for now.
+  // See https://github.com/chapel-lang/chapel/issues/7251 and
+  // https://upc-bugs.lbl.gov/bugzilla/show_bug.cgi?id=3621
+  if (setenv("GASNET_EXITTIMEOUT_FACTOR", "0.5", 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_EXITTIMEOUT_FACTOR\")", 0, 0);
+  }
+  if (setenv("GASNET_EXITTIMEOUT_MIN", "10.0", 0) != 0) {
+    chpl_error("Cannot setenv(\"GASNET_EXITTIMEOUT_MIN\")", 0, 0);
+  }
 #endif
 }
 
@@ -781,7 +825,7 @@ void chpl_comm_init(int *argc_p, char ***argv_p) {
 //  int status; // Some compilers complain about unused variable 'status'.
 
   set_max_segsize();
-
+  set_num_comm_domains();
   assert(sizeof(gasnet_handlerarg_t)==sizeof(uint32_t));
 
   gasnet_init(argc_p, argv_p);
@@ -791,11 +835,9 @@ void chpl_comm_init(int *argc_p, char ***argv_p) {
                             sizeof(ftable)/sizeof(gasnet_handlerentry_t),
                             gasnet_getMaxLocalSegmentSize(),
                             0));
-  // memory layer hasn't been initialized, need to use the system allocator
-#include "chpl-mem-no-warning-macros.h"
   // TODO (EJR: 03/03/16): we currently "leak" seginfo_table. We should
   // probably free it on exit (but only for "clean" exits.)
-  seginfo_table = (gasnet_seginfo_t*)malloc(chpl_numNodes*sizeof(gasnet_seginfo_t));
+  seginfo_table = (gasnet_seginfo_t*)sys_malloc(chpl_numNodes*sizeof(gasnet_seginfo_t));
   //
   // The following call has no real effect on the .addr and .size
   // fields for GASNET_SEGMENT_EVERYTHING, but is recommended to be
@@ -824,7 +866,7 @@ void chpl_comm_init(int *argc_p, char ***argv_p) {
     // locale 0 sets up its segment to an appropriate size:
     //
     int global_table_size = chpl_numGlobalsOnHeap * sizeof(wide_ptr_t) + GASNETT_PAGESIZE;
-    void* global_table = malloc(global_table_size);
+    void* global_table = sys_malloc(global_table_size);
     seginfo_table[0].addr = ((void *)(((uint8_t*)global_table) + 
                                       (((((uintptr_t)global_table)%GASNETT_PAGESIZE) == 0)? 0 : 
                                        (GASNETT_PAGESIZE-(((uintptr_t)global_table)%GASNETT_PAGESIZE)))));
@@ -857,7 +899,6 @@ void chpl_comm_init(int *argc_p, char ***argv_p) {
   GASNET_BLOCKUNTIL(bcast_seginfo_done);
   chpl_comm_barrier("making sure everyone's done with the broadcast");
 #endif
-#include "chpl-mem-warning-macros.h"
 
   gasnet_set_waitmode(GASNET_WAIT_BLOCK);
 
@@ -901,7 +942,7 @@ void chpl_comm_rollcall(void) {
            chpl_numNodes, chpl_nodeName());
 }
 
-void chpl_comm_desired_shared_heap(void** start_p, size_t* size_p) {
+void chpl_comm_impl_regMemHeapInfo(void** start_p, size_t* size_p) {
 #if defined(GASNET_SEGMENT_FAST) || defined(GASNET_SEGMENT_LARGE)
   *start_p = chpl_numGlobalsOnHeap * sizeof(wide_ptr_t) 
              + (char*)seginfo_table[chpl_nodeID].addr;
@@ -1007,6 +1048,22 @@ void chpl_comm_barrier(const char *msg) {
 
 void chpl_comm_pre_task_exit(int all) {
   if (all) {
+
+    if (chpl_nodeID == 0) {
+     int node;
+     for (node = 0; node < chpl_numNodes; node++) {
+       if (node != chpl_nodeID) {
+          GASNET_Safe(gasnet_AMRequestShort0(node, SHUTDOWN));
+        }
+      }
+    } else {
+      pthread_mutex_lock(&shutdown_mutex);
+      while (!can_shutdown) {
+        pthread_cond_wait(&shutdown_cond, &shutdown_mutex);
+      }
+      pthread_mutex_unlock(&shutdown_mutex);
+    }
+
     chpl_comm_barrier("stop polling");
 
     //
@@ -1216,7 +1273,6 @@ void  chpl_comm_get(void* addr, c_nodeid_t node, void* raddr,
       // the registered memory segment.
       int local_in_segment;
       void* local_buf = NULL;
-      size_t buf_sz = 0;
       size_t max_chunk = gasnet_AMMaxLongReply();
       size_t start;
 
@@ -1435,7 +1491,7 @@ void  execute_on_common(c_nodeid_t node, c_sublocid_t subloc,
 
   int op;
 
-  chpl_bool serial_state = chpl_task_getSerial();
+  chpl_task_ChapelData_t state = *chpl_task_getChapelData();
 
   if (blocking)
     init_done_obj(&done, 1);
@@ -1471,7 +1527,7 @@ void  execute_on_common(c_nodeid_t node, c_sublocid_t subloc,
     small_fork_hdr_t hdr = { .caller = chpl_nodeID,
                              .subloc = subloc,
                              .ack = blocking ? &done : NULL,
-                             .serial_state = serial_state,
+                             .state = state,
                              .fid = fid,
                              .payload_size = payload_size };
 
@@ -1522,7 +1578,7 @@ void  execute_on_common(c_nodeid_t node, c_sublocid_t subloc,
   } else {
     // Neither small nor large
 
-    arg->task_bundle.serial_state = serial_state;
+    arg->task_bundle.state = state;
     arg->task_bundle.requestedSubloc = subloc;
     arg->task_bundle.requested_fid = fid;
     arg->comm.caller = chpl_nodeID;
@@ -1540,8 +1596,6 @@ void  execute_on_common(c_nodeid_t node, c_sublocid_t subloc,
 void  chpl_comm_execute_on(c_nodeid_t node, c_sublocid_t subloc,
                      chpl_fn_int_t fid,
                      chpl_comm_on_bundle_t *arg, size_t arg_size) {
-  done_t  done;
-
   if (chpl_nodeID == node) {
     assert(0);
     chpl_ftable_call(fid, arg);
@@ -1572,17 +1626,7 @@ void  chpl_comm_execute_on_nb(c_nodeid_t node, c_sublocid_t subloc,
                         chpl_comm_on_bundle_t *arg, size_t arg_size) {
 
   if (chpl_nodeID == node) {
-    chpl_bool serial_state = chpl_task_getSerial();
-
     assert(0); // locale model code should prevent this...
-
-    if (serial_state)
-      chpl_ftable_call(fid, arg);
-    else
-      chpl_task_startMovedTask(fid, (chpl_fn_p)fork_nb_wrapper,
-                               chpl_comm_on_bundle_task_bundle(arg), arg_size,
-                               subloc, chpl_nullTaskID,
-                               serial_state);
   } else {
     // Communications callback support
     if (chpl_comm_have_callbacks(chpl_comm_cb_event_kind_executeOn_nb)) {
@@ -1609,8 +1653,6 @@ void  chpl_comm_execute_on_nb(c_nodeid_t node, c_sublocid_t subloc,
 void  chpl_comm_execute_on_fast(c_nodeid_t node, c_sublocid_t subloc,
                           chpl_fn_int_t fid,
                           chpl_comm_on_bundle_t *arg, size_t arg_size) {
-  done_t  done;
-
   if (chpl_nodeID == node) {
     assert(0);
     chpl_ftable_call(fid, arg);

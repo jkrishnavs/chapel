@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -17,14 +17,24 @@
  * limitations under the License.
  */
 
-#ifndef _misc_H_
-#define _misc_H_
-
-#include "driver.h"
+#ifndef _MISC_H_
+#define _MISC_H_
 
 #include <cstdio>
+#include <cstdlib>
 
+#ifdef HAVE_LLVM
+#define exit(x) clean_exit(x)
+#else
+// This interferes with uses of exit() in LLVM header files.
 #define exit(x) dont_use_exit_use_clean_exit_instead
+#endif
+
+#if defined(__GNUC__) && __GNUC__ >= 3
+#define chpl_noreturn __attribute__((__noreturn__))
+#else
+#define chpl_noreturn
+#endif
 
 // INT_FATAL(ast, format, ...)
 //   where ast         == BaseAST* or NULL
@@ -34,11 +44,15 @@
 
 #define INT_FATAL      gdbShouldBreakHere(), \
                        setupError(__FILE__, __LINE__, 1), handleError
+
 #define USR_FATAL      gdbShouldBreakHere(), \
                        setupError(__FILE__, __LINE__, 2), handleError
+
 #define USR_FATAL_CONT gdbShouldBreakHere(), \
                        setupError(__FILE__, __LINE__, 3), handleError
+
 #define USR_WARN       setupError(__FILE__, __LINE__, 4), handleError
+
 #define USR_PRINT      setupError(__FILE__, __LINE__, 5), handleError
 
 #define USR_STOP       exitIfFatalErrorsEncountered
@@ -54,29 +68,35 @@
 
 class BaseAST;
 
-bool forceWidePtrsForLocal();
-bool requireWideReferences();
-bool requireOutlinedOn();
+bool        forceWidePtrsForLocal();
+bool        requireWideReferences();
+bool        requireOutlinedOn();
 
-const char* cleanFilename(BaseAST*    ast);
-const char* cleanFilename(const char* name);
+const char* cleanFilename(const BaseAST* ast);
+const char* cleanFilename(const char*    name);
 
-void setupError(const char* filename, int lineno, int tag);
-void handleError(const char* fmt, ...);
-void handleError(BaseAST* ast, const char* fmt, ...);
-void handleError(FILE* file, BaseAST* ast, const char* fmt, ...);
-void exitIfFatalErrorsEncountered(void);
-void considerExitingEndOfPass(void);
-void printCallStack(bool force, bool shortModule, FILE* out);
+void        setupError(const char* filename, int lineno, int tag);
 
-void startCatchingSignals(void);
-void stopCatchingSignals(void);
+void        handleError(const char* fmt, ...);
+void        handleError(const BaseAST* ast, const char* fmt, ...);
+void        handleError(FILE* file, const BaseAST* ast, const char* fmt, ...);
 
-void clean_exit(int status);
+void        exitIfFatalErrorsEncountered();
 
-void gdbShouldBreakHere(void); // must be exposed to avoid dead-code elim.
+void        considerExitingEndOfPass();
 
-void printCallStack();
-void printCallStackCalls();
+void        printCallStack(bool force, bool shortModule, FILE* out);
+
+void        startCatchingSignals();
+void        stopCatchingSignals();
+
+void        clean_exit(int status) chpl_noreturn;
+
+void        printCallStack();
+void        printCallStackCalls();
+
+
+// must be exported to avoid dead-code elimination by C++ compiler
+void        gdbShouldBreakHere();
 
 #endif

@@ -32,18 +32,18 @@ def get(flag='target'):
             # support 64 bit atomics on 32 bit platforms and the cray compiler
             # will never run on a 32 bit machine. For pgi or 32 bit platforms
             # with an older gcc, we fall back to locks
-            if compiler_val in ['gnu', 'cray-prgenv-gnu', 'mpi-gnu']:
+            if compiler_val in ['gnu', 'cray-prgenv-gnu', 'mpi-gnu', 'aarch64-gnu']:
                 version = get_compiler_version('gnu')
                 if version >= CompVersion('4.8'):
                     atomics_val = 'intrinsics'
                 elif version >= CompVersion('4.1') and not platform_val.endswith('32'):
                     atomics_val = 'intrinsics'
-            elif compiler_val == 'aarch64-gnu':
-                atomics_val = 'cstdlib'
             elif compiler_val == 'intel' or compiler_val == 'cray-prgenv-intel':
                 atomics_val = 'intrinsics'
             elif compiler_val == 'cray-prgenv-cray':
                 atomics_val = 'intrinsics'
+            elif compiler_val == 'cray-prgenv-allinea':
+                atomics_val = 'cstdlib'
             elif compiler_val == 'clang':
                 atomics_val = 'intrinsics'
             elif compiler_val == 'clang-included':

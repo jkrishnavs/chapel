@@ -10,6 +10,8 @@ class Force {
 
   var wipetime, maintime: real;
 
+  proc init() {}
+
   proc compute(store : bool) : void {}
 }
 
@@ -45,7 +47,8 @@ class ForceEAM : Force  {
 
   var funcfl : Funcfl;
 
-  proc ForceEAM(cf : real) {
+  proc init(cf : real) {
+    this.complete();
     // use the fluff domain already calculated for communication
     cutforcesq = cf*cf;
     coeff("Cu_u6.eam");
@@ -307,7 +310,8 @@ class ForceEAM : Force  {
 
 // Lennard-Jones potential
 class ForceLJ : Force {
-  proc ForceLJ(cf : real) {
+  proc init(cf : real) {
+    this.complete();
     cutforcesq = cf * cf;
   }
 
@@ -338,7 +342,7 @@ class ForceLJ : Force {
     const cfsq = cutforcesq;
 
     var t_eng, t_vir : real;
-    forall (b,p,c,r) in zip(Bins, RealPos, RealCount, binSpace) with (in cfsq, + reduce t_eng, + reduce t_vir) {
+    forall (b,p,c,r) in zip(Bins, RealPos, RealCount, binSpace) with (const in cfsq, + reduce t_eng, + reduce t_vir) {
       for (a, x, j) in zip(b[1..c],p[1..c],1..c) {
         for(n,i) in a.neighs[1..a.ncount] {
           const del = x - Pos[n][i];

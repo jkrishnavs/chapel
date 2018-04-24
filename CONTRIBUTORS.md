@@ -7,34 +7,33 @@ Chapel release:
 Contributors to the current release
 -----------------------------------
 * Ben Albrecht, [Cray Inc.]
+* Nimit Bhardwaj, individual contributor
 * Paul Cassella, [Cray Inc.]
 * [Brad Chamberlain], [Cray Inc.]
-* Sung-Eun Choi, [Cray Inc.]
 * Lydia Duncan, [Cray Inc.]
 * Michael Ferguson, [Cray Inc.]
 * Ben Harshbarger, [Cray Inc.]
 * David Iten, [Cray Inc.]
+* Andrea Francesco Iuorio, [Università degli Studi di Milano] / [GSoC 2016] / [GSoC 2017] mentor
+* Louis Jenkins, individual contributor / [GSoC 2017]
 * David Keaton, [Cray Inc.]
-* Engin Kayraklioglu, [George Washington University] / [Cray Inc.]
-* Przemysław Leśniak, individual contributor
 * Vassily Litvinov, [Cray Inc.]
-* Tom MacDonald, [Cray Inc.]
-* [Phil Nelson], [Western Washington University] / [Cray Inc.]
+* Sarthak Munshi, individual contributor / [GSoC 2017]
 * Michael Noakes, [Cray Inc.]
 * Nikhil Padmanabhan, [Yale University]
-* Nicholas Park, [DOD]
-* Sriraj Paul, [Rice University]
-* Kumar Prasun, individual contributor
+* Unnati Parekh, individual contributor
+* Prithvi Patel, individual contributor
+* Surya Priy, individual contributor
+* David Qian, individual contributor
 * Elliot Ronaghan, [Cray Inc.]
-* Sagar Khatri, individual contributor
 * Preston Sahabu, [Cray Inc.]
-* [Kenjiro Taura], [University of Tokyo]
 * Greg Titus, [Cray Inc.]
-* Rob Upcraft, individual contributor
+* Thomas Van Doren, individual contributor / [Cray Inc.]
 * Tony Wallace, [Cray Inc.]
 
 Contributors to previous releases
 ---------------------------------
+* Sean Geronimo Anderson, [University of Minnesota] / [Cray Inc.]
 * Rafael Asenjo, [Universidad de Málaga (University of Malaga)]
 * Matthew Baker, [ORNL]
 * Steve Balensiefer, [University of Washington]
@@ -46,6 +45,8 @@ Contributors to previous releases
 * Kyle Brady, [Cray Inc.]
 * Daniel Buettner, [LTS]
 * David Callahan, [Cray Inc.]
+* Sung-Eun Choi, [Cray Inc.]
+* Mike Chu, [Advanced Micro Devices, Inc.]
 * Steve Deitz, [Cray Inc.]
 * Laura Delaney, [Whitworth University] / [Cray Inc.]
 * Joel Denny, [ETI]
@@ -63,30 +64,43 @@ Contributors to previous releases
 * Tom Hildebrandt, [Cray Inc.]
 * Shannon Hoffswell[*](#footnote), [Cray Inc.]
 * Mary Beth Hribar[*](#footnote), [Cray Inc.]
-* Andrea Francesco Iuorio, [Università degli Studi di Milano] / [GSoC]
+* Serghei Iakovlev, individual contributor
 * Mackale Joyner, [Cray Inc.] / [Rice University]
 * Jessica Jueckstock, [MITRE]
+* Engin Kayraklioglu, [George Washington University] / [Cray Inc.] / [GSoC 2017] mentor
+* Krishna Keshav, individual contributor
+* Sagar Khatri, individual contributor
 * John Koenig, [Cray Inc.]
 * Rafael Larrosa Jiminez, [Universidad de Málaga (University of Malaga)]
 * Matthew Lentz, [University of Maryland]
+* Przemysław Leśniak, individual contributor / [GSoC 2017]
 * John Lewis, [Cray Inc.]
 * Juan Lopez, [Universidad de Málaga (University of Malaga)]
 * Simon Lund, [Københavns Universitet (University of Copenhagen)]
+* Tom MacDonald, [Cray Inc.]
 * Deepak Majeti, individual contributor
+* Prabhanjan Mannari, individual contributor
 * Cory McCartan, [Cray Inc.]
 * Damian McGuckin, [Pacific Engineering Systems International]
+* Barry Moore, [University of Pittsburgh]
 * Maria Angeles Navarro, [Universidad de Málaga (University of Malaga)]
 * Jun Nakashima, [University of Tokyo]
 * Jacob Nelson, [Cray Inc.] / [University of Washington]
+* [Phil Nelson], [Western Washington University] / [Cray Inc.]
 * Joshua Olson, individual contributor
 * Konstantina Panagiotopoulou, individual contributor
+* Nicholas Park, [DOD]
+* Sam Partee, [Cray Inc.] / [Haverford College]
+* Sriraj Paul, [Rice University]
 * John Plevyak, [Cray Inc.]
+* Kumar Prasun, individual contributor
 * Lee Prokowich, [Cray Inc.]
 * Brandon Ross, [University at Buffalo]
 * Sara Salem, [Cairo University]
 * Alberto Sanz, [Universidad de Málaga (University of Malaga)]
 * Albert Sidelnik, [Cray Inc.] / [University of Illinois, Urbana-Champaign]
-* Kushal Singh, [Int'l Institute of Information Technology, Hyderabad] /[GSoC]
+* Marcos Cleison Silva Santana, individual contributor
+* Kushal Singh, [Int'l Institute of Information Technology, Hyderabad] /[GSoC 2016]
 * Darren Smith, [University of Maryland]
 * Rachel Sobel, [Cray Inc.] / [University of Washington]
 * Francisco Souza, individual contributor
@@ -94,18 +108,19 @@ Contributors to previous releases
 * George Stelle, [Sandia National Laboratories]
 * Andy Stone, [Cray Inc.] / [Colorado State University]
 * Chris Swenson, individual contributor
+* [Kenjiro Taura], [University of Tokyo]
 * Chris Taylor, [DOD]
 * Akash Thorat, individual contributor
 * Jonathan Turner, [Cray Inc.] / [CU Boulder]
-* Thomas Van Doren, [Cray Inc.]
+* Rob Upcraft, individual contributor
 * Chris Wailes, [Indiana University]
 * Wayne Wong, [Cray Inc.]
 * Joe Yan, [University of Maryland]
 * Tim Zakian, [Cray Inc.] / [Indiana University]
 * Hui Zhang, [University of Maryland]
 
-[Logo Design](http://chapel.cray.com/logo.html)
------------------------------------------------
+[Logo Design](https://chapel-lang.org/logo.html)
+------------------------------------------------
 * Jim Cissell
 * Kristina Davis
 * Oli Laurelle
@@ -142,6 +157,7 @@ implementation.
 
 ---
 
+[Advanced Micro Devices, Inc.]: http://www.amd.com/
 [Cairo University]: http://cu.edu.eg/Home
 [CalTech]: http://www.cms.caltech.edu/
 [Colorado State University]: http://www.cs.colostate.edu/cstop/index.php
@@ -151,7 +167,9 @@ implementation.
 [ETI]: http://www.etinternational.com/
 [George Washington University]: https://www.gwu.edu/
 [Georgia Tech]: http://www.cc.gatech.edu/
-[GSoC]: https://summerofcode.withgoogle.com/organizations/6608321708556288/
+[GSoC 2016]: https://summerofcode.withgoogle.com/organizations/6608321708556288/
+[GSoC 2017]: https://summerofcode.withgoogle.com/organizations/6472441615351808/
+[Haverford College]: https://www.haverford.edu/
 [Indiana University]: http://www.cs.indiana.edu/
 [Int'l Institute of Information Technology, Hyderabad]: https://www.iiit.ac.in/
 [Københavns Universitet (University of Copenhagen)]: http://diku.dk/english/
@@ -169,7 +187,9 @@ implementation.
 [University of Illinois, Urbana-Champaign]: https://cs.illinois.edu/
 [Universidad de Málaga (University of Malaga)]: http://www.ac.uma.es/index-e.html
 [University of Maryland]: https://www.cs.umd.edu/
+[University of Minnesota]: https://www.cs.umn.edu/
 [University of Notre Dame]: http://cse.nd.edu/
+[University of Pittsburgh]: http://www.pitt.edu/
 [Università degli Studi di Milano]: http://www.unimi.it/ENG/
 [University of Tokyo]: http://www.i.u-tokyo.ac.jp/index_e.shtml
 [University of Washington]: http://cs.washington.edu/

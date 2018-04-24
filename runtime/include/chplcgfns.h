@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -62,10 +62,12 @@ extern const char* CHPL_NETWORK_ATOMICS;
 extern const char* CHPL_GMP;
 extern const char* CHPL_HWLOC;
 extern const char* CHPL_REGEXP;
-extern const char* CHPL_WIDE_POINTERS;
 extern const char* CHPL_LLVM;
 extern const char* CHPL_AUX_FILESYS;
 extern const char* CHPL_UNWIND;
+extern const char* CHPL_RUNTIME_LIB;
+extern const char* CHPL_RUNTIME_INCL;
+extern const char* CHPL_THIRD_PARTY;
 extern const int CHPL_STACK_CHECKS;
 extern const int CHPL_CACHE_REMOTE;
 
@@ -98,11 +100,6 @@ extern int64_t chpl_gen_main(chpl_main_argument* const _arg);
 
 /* used for config vars: */
 extern void CreateConfigVarTable(void);
-
-/* used by copy collection: */
-
-//extern size_t cid2size(chpl__class_id cid);
-//extern size_t* cid2offsets(chpl__class_id cid);
 
 /* These are defined in _type_structure.c if
    --gen-communicated-structures is true and are used by a

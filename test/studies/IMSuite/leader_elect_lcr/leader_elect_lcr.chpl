@@ -8,7 +8,7 @@
 
     Ported By: Kushal Singh
 
-    The original program can be viewed here : http://www.cse.iitm.ac.in/~suyash/imsuite/
+    The original program can be viewed here : http://www.cse.iitm.ac.in/~krishna/imsuite/
  */
 
  /* This file was derived from the IMSuite Benchamark Suite.
@@ -21,7 +21,7 @@
    (C) Copyright IMSuite 2013-present.
  */
 
-
+ pragma "error mode fatal"
  module leader_elect_lcr {
 
      config const inputFile = "input/inputleader_elect_lcr_8.txt";

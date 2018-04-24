@@ -44,7 +44,9 @@ def get():
             launcher_val = 'marenostrum'
         elif comm_val == 'gasnet':
             substrate_val = chpl_comm_substrate.get()
-            if substrate_val == 'udp':
+            if substrate_val == 'smp':
+                launcher_val = 'smp'
+            elif substrate_val == 'udp':
                 launcher_val = 'amudprun'
             elif substrate_val == 'mpi':
                 launcher_val = 'gasnetrun_mpi'
@@ -58,6 +60,10 @@ def get():
                     launcher_val = 'gasnetrun_ibv'
             elif substrate_val == 'mxm':
                 launcher_val = 'gasnetrun_ibv'
+            elif substrate_val == 'ofi':
+                launcher_val = 'gasnetrun_ofi'
+            elif substrate_val == 'psm':
+                launcher_val = 'gasnetrun_psm'
             elif substrate_val == 'lapi':
                 # our loadleveler launcher is not yet portable/stable/flexible
                 # enough to serve as a good default

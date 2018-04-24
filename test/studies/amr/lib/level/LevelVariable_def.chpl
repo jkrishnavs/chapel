@@ -20,7 +20,7 @@ class LevelVariable {
 
 
   //|\''''''''''''''''''''''''''''|\
-  //| >    initialize() method    | >
+  //| >    postinit() method    | >
   //|/............................|/
   
   //-----------------------------------------------------------
@@ -30,18 +30,18 @@ class LevelVariable {
   //   LevelVariable(level: Level)
   //-----------------------------------------------------------
 
-  proc initialize() {
+  proc postinit() {
     for grid in level.grids do
       grid_variables(grid) = new GridVariable(grid = grid);                          
   }
   // /|''''''''''''''''''''''''''''/|
-  //< |    initialize() method    < |
+  //< |    postinit() method    < |
   // \|............................\|
 
 
 
   //|\'''''''''''''''''''|\
-  //| >    destructor    | >
+  //| >  deinitializer   | >
   //|/...................|/
 
   proc deinit ()
@@ -50,7 +50,7 @@ class LevelVariable {
   }
 
   // /|'''''''''''''''''''/|
-  //< |    destructor    < |
+  //< |  deinitializer   < |
   // \|...................\|
 
 

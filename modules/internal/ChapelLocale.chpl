@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -80,6 +80,14 @@ module ChapelLocale {
   extern const c_sublocid_none: chpl_sublocID_t;
   pragma "no doc"
   extern const c_sublocid_any: chpl_sublocID_t;
+  pragma "no doc"
+  extern const c_sublocid_all: chpl_sublocID_t;
+
+  pragma "no doc"
+  inline proc chpl_isActualSublocID(subloc: chpl_sublocID_t)
+    return (subloc != c_sublocid_none
+            && subloc != c_sublocid_any
+            && subloc != c_sublocid_all);
 
   /*
     ``locale`` is the abstract class from which the various
@@ -90,7 +98,12 @@ module ChapelLocale {
   class locale {
     //- Constructor
     pragma "no doc"
-    proc locale() { }
+    proc init() { }
+
+    pragma "no doc"
+    proc init(parent: locale) {
+      this.parent = parent;
+    }
 
     //------------------------------------------------------------------------{
     //- Fields and accessors defined for all locale types (not overridable)
@@ -319,6 +332,8 @@ module ChapelLocale {
    */
   pragma "no doc"
   class DummyLocale : locale {
+    proc init() { }
+
     proc chpl_id() : int {
       return -1;
     }
@@ -345,6 +360,11 @@ module ChapelLocale {
   class AbstractLocaleModel : locale {
     // This will be used for interfaces that will be common to all
     // (non-RootLocale) locale models
+    proc init(parent_loc : locale) {
+      super.init(parent_loc);
+    }
+
+    proc init() {  }
   }
 
   // rootLocale is declared to be of type locale rather than
@@ -359,6 +379,7 @@ module ChapelLocale {
   // replication, set replicateRootLocale to false.
   pragma "no doc"
   pragma "locale private" var rootLocale : locale = nil;
+  pragma "locale private" var rootLocaleInitialized = false;
 
   pragma "no doc"
   config param replicateRootLocale = true;
@@ -379,6 +400,12 @@ module ChapelLocale {
 
   pragma "no doc"
   class AbstractRootLocale : locale {
+    proc init() { }
+
+    proc init(parent_loc : locale) {
+      super.init(parent_loc);
+    }
+
     // These functions are used to establish values for Locales[] and
     // LocaleSpace -- an array of locales and its corresponding domain
     // which are used as the default set of targetLocales in many
@@ -408,6 +435,7 @@ module ChapelLocale {
       for locIdx in (origRootLocale:RootLocale).getDefaultLocaleSpace() {
         yield locIdx;
         rootLocale = origRootLocale;
+        rootLocaleInitialized = true;
       }
     }
 
@@ -450,10 +478,12 @@ module ChapelLocale {
   // too complicated this early on, so we are using a for loop to
   // broadcast that we are done.
   pragma "no doc"
+  pragma "use default init"
   class localesSignal {
     var s: atomic bool;
   }
   pragma "no doc"
+  pragma "use default init"
   record localesBarrier {
     proc wait(locIdx, flags) {
       if locIdx==0 {
@@ -521,10 +551,8 @@ module ChapelLocale {
       // so tell the compiler to not insert them.
       pragma "no copy" pragma "no auto destroy"
       const ref origLocales = (origRootLocale:RootLocale).getDefaultLocaleArray();
-      assert(origLocales._value.oneDData
-             && newRootLocale.getDefaultLocaleArray()._value.oneDData);
-      var origRL = origLocales._value.theDataChunk(0);
-      var newRL = newRootLocale.getDefaultLocaleArray()._value.theDataChunk(0);
+      var origRL = origLocales._value.theData;
+      var newRL = newRootLocale.getDefaultLocaleArray()._value.theData;
       // We must directly implement a bulk copy here, as the mechanisms
       // for doing so via a whole array assignment are not initialized
       // yet and copying element-by-element via a for loop is costly.
@@ -543,6 +571,7 @@ module ChapelLocale {
       const ref tmp = (rootLocale:RootLocale).getDefaultLocaleArray();
       __primitive("move", Locales, tmp);
     }
+    rootLocaleInitialized = true;
   }
 
   // We need a temporary value for "here" before the architecture is defined.
@@ -585,6 +614,7 @@ module ChapelLocale {
   
   // Returns a wide pointer to the locale with the given id.
   pragma "no doc"
+  pragma "fn returns infinite lifetime"
   proc chpl_localeID_to_locale(id : chpl_localeID_t) : locale {
     if rootLocale then
       return (rootLocale:AbstractRootLocale).localeIDtoLocale(id);
@@ -594,6 +624,8 @@ module ChapelLocale {
   }
 
   pragma "no doc"
+  pragma "unsafe"
+  pragma "fn returns infinite lifetime"
   proc chpl_getPrivatizedCopy(type objectType, objectPid:int): objectType
     return __primitive("chpl_getPrivatizedClass", nil:objectType, objectPid);
   
@@ -650,15 +682,39 @@ module ChapelLocale {
   //
   pragma "no doc"
   pragma "insert line file info"
+  pragma "inc running task"
   export
   proc chpl_taskRunningCntInc() {
-    here.runningTaskCntAdd(1);
+    if rootLocaleInitialized {
+      here.runningTaskCntAdd(1);
+    }
+  }
+
+  pragma "no doc"
+  pragma "insert line file info"
+  pragma "dec running task"
+  export
+  proc chpl_taskRunningCntDec() {
+    if rootLocaleInitialized {
+      here.runningTaskCntSub(1);
+    }
   }
 
   pragma "no doc"
   pragma "insert line file info"
   export
-  proc chpl_taskRunningCntDec() {
-    here.runningTaskCntSub(1);
+  proc chpl_taskRunningCntReset() {
+    here.runningTaskCntSet(0);
+  }
+
+  //
+  // Free the original root locale when the program is being torn down
+  //
+  // Be careful to free only origRootLocale, and never the copy in
+  // rootLocale, or the same locales will be torn down twice.
+  //
+  pragma "no doc"
+  proc deinit() {
+    delete origRootLocale;
   }
 }

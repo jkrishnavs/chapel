@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -27,21 +27,13 @@
 module List {
 
 pragma "no doc"
+pragma "use default init"
 class listNode {
   type eltType;
   var data: eltType;
   var next: listNode(eltType);
 }
 
-
-  pragma "no doc"
-  pragma "init copy fn"
-  proc chpl__initCopy(l: list(?t)) {
-    var newL: list(t);
-    for i in l do
-      newL.append(i);
-    return newL;
-  }
 
   pragma "no doc"
   proc =(ref l1: list(?t), const ref l2: list(?t2)) {
@@ -65,13 +57,30 @@ record list {
    */
   type eltType;
   pragma "no doc"
+  pragma "owned"
   var first: listNode(eltType);
   pragma "no doc"
+  pragma "owned"
   var last: listNode(eltType);
   /*
     The number of nodes in the list.
    */
   var length: int;
+
+  pragma "no doc"
+  proc init(type eltType, first : listNode(eltType) = nil, last : listNode(eltType) = nil) {
+    this.eltType = eltType;
+    this.first = first;
+    this.last = last;
+  }
+
+  pragma "no doc"
+  proc init(l : list(?t)) {
+    this.eltType = t;
+    this.complete();
+    for i in l do
+      this.append(i);
+  }
 
   /*
      Synonym for length.
@@ -324,13 +333,13 @@ record list {
 }
 
 /*
-  Construct a new :record:`list` containing all of the supplied arguments.
+  Initialize a new :record:`list` containing all of the supplied arguments.
 
   :arg x: Every argument must be of type `T`.
   :type x: `T`
   :rtype: list(T)
  */
-// TODO: could just be a constructor?
+// TODO: could just be an initializer?
 proc makeList(x ...?k) {
   var s: list(x(1).type);
   for param i in 1..k do

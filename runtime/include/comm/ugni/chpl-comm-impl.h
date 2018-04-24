@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -20,6 +20,41 @@
 #ifndef _chpl_comm_impl_h_
 #define _chpl_comm_impl_h_
 
+#include <stdint.h>
+
+#include "chpl-mem-desc.h"
+
+//
+// This is the comm layer sub-interface for dynamic allocation and
+// registration of memory.
+//
+#define CHPL_COMM_IMPL_REG_MEM_HEAP_INFO(start_p, size_p) \
+    chpl_comm_impl_regMemHeapInfo(start_p, size_p)
+void chpl_comm_impl_regMemHeapInfo(void** start_p, size_t* size_p);
+
+#define CHPL_COMM_IMPL_REG_MEM_HEAP_PAGE_SIZE() \
+        chpl_comm_impl_regMemHeapPageSize()
+size_t chpl_comm_impl_regMemHeapPageSize(void);
+
+#define CHPL_COMM_IMPL_REG_MEM_ALLOC_THRESHOLD() \
+        chpl_comm_impl_regMemAllocThreshold()
+size_t chpl_comm_impl_regMemAllocThreshold(void);
+
+#define CHPL_COMM_IMPL_REG_MEM_ALLOC(size, desc, ln, fn) \
+    chpl_comm_impl_regMemAlloc(size, desc, ln, fn)
+void* chpl_comm_impl_regMemAlloc(size_t size,
+                                 chpl_mem_descInt_t desc, int ln, int32_t fn);
+
+#define CHPL_COMM_IMPL_REG_MEM_POST_ALLOC(p, size) \
+  chpl_comm_impl_regMemPostAlloc(p, size)
+void chpl_comm_impl_regMemPostAlloc(void* p, size_t size);
+
+#define CHPL_COMM_IMPL_REG_MEM_FREE(p, size) \
+        chpl_comm_impl_regMemFree(p, size)
+chpl_bool chpl_comm_impl_regMemFree(void* p, size_t size);
+
+//
+// Network atomic operations.
 //
 // We support 32- and 64-bit signed integers and reals, although we
 // don't necessarily support all of these types for all operations.
@@ -165,6 +200,6 @@ DECL_CHPL_COMM_ATOMIC_BINARY(sub, real64)
 // Internal statistics gathering and reporting.
 //
 void chpl_comm_statsStartHere(void);
-void chpl_comm_statsReport(chpl_bool32);
+void chpl_comm_statsReport(chpl_bool);
 
 #endif // _chpl_comm_impl_h_

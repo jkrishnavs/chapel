@@ -125,6 +125,8 @@ psm
     PSM for Intel's OmniPath fabric
 shmem
     SHMEM for SGI Altix
+smp
+    Simulates multiple locales on a single shared-memory machine
 
 See the `GASNet website <http://gasnet.lbl.gov/>`_ for more
 information on each of these conduits.
@@ -138,7 +140,6 @@ cray-cs                ibv
 cray-xc                aries
 cray-xe                gemini
 cray-xk                gemini
-cray-xt                mpi
 pwr5                   lapi
 pwr6                   ibv
 other                  udp
@@ -182,6 +183,7 @@ aries                fast
 gemini               fast
 ibv                  large
 portals              fast
+smp                  fast
 other                everything
 ===================  ====================
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -26,6 +26,8 @@
 #include "expr.h"
 #include "stmt.h"
 #include "stlUtil.h"
+#include "TryStmt.h"
+#include "CatchStmt.h"
 
 #include "iterator.h"
 
@@ -59,8 +61,14 @@ checkResolved() {
     if (fn->retType->symbol->hasFlag(FLAG_ITERATOR_RECORD) &&
         !fn->isIterator()) {
       IteratorInfo* ii = toAggregateType(fn->retType)->iteratorInfo;
-      if (ii && ii->iterator && ii->iterator->defPoint->parentSymbol == fn)
+      if (ii && ii->iterator && ii->iterator->defPoint->parentSymbol == fn) {
+        // This error isn't really possible in regular code anymore,
+        // since you have to have FLAG_FN_RETURNS_ITERATOR / that pragma
+        // to generate it. (Otherwise the iterator expression is turned
+        // into an array in the process of being returned).
+        // If we remove FLAG_FN_RETURNS_ITERATOR, we should remove this error.
         USR_FATAL_CONT(fn, "functions cannot return nested iterators or loop expressions");
+      }
     }
     if (fn->hasFlag(FLAG_ASSIGNOP) && fn->retType != dtVoid)
       USR_FATAL(fn, "The return value of an assignment operator must be 'void'.");
@@ -103,8 +111,8 @@ isDefinedAllPaths(Expr* expr, Symbol* ret, RefSet& refs)
 
   if (CallExpr* call = toCallExpr(expr))
   {
-    // Maybe add a "no return" pragma and use that instead.
-    if (call->isNamed("halt"))
+    if (call->isResolved() &&
+        call->resolvedFunction()->hasFlag(FLAG_FUNCTION_TERMINATES_PROGRAM))
       return 1;
 
     if (call->isPrimitive(PRIM_MOVE) ||
@@ -171,6 +179,23 @@ isDefinedAllPaths(Expr* expr, Symbol* ret, RefSet& refs)
   if (isGotoStmt(expr))
     return 0;
 
+  // bodies of Defer statements will be moved, so treat them as
+  // not defining anything
+  if (isDeferStmt(expr))
+    return 0;
+
+  if (TryStmt* tryStmt = toTryStmt(expr))
+  {
+    int result = INT_MAX;
+    for_alist(c, tryStmt->_catches)
+      result = std::min(result, isDefinedAllPaths(c, ret, refs));
+
+    return std::min(result, isDefinedAllPaths(tryStmt->body(), ret, refs));
+  }
+
+  if (CatchStmt* catchStmt = toCatchStmt(expr))
+    return isDefinedAllPaths(catchStmt->body(), ret, refs);
+
   if (BlockStmt* block = toBlockStmt(expr))
   {
     // NOAKES 2014/11/25 Transitional.  Ensure we don't call blockInfoGet()
@@ -199,6 +224,9 @@ isDefinedAllPaths(Expr* expr, Symbol* ret, RefSet& refs)
       return 0;
     }
   }
+
+  if (isForallStmt(expr))
+    return 0;
 
   if (isExternBlockStmt(expr))
     return 0;
@@ -234,21 +262,22 @@ returnsRefArgumentByRef(CallExpr* returnedCall, FnSymbol* fn)
 // This function finds the original Symbol that a local array
 // refers to (through aliasing or slicing).
 // It returns the number of Exprs added to sources.
-static int
-findOriginalArrays(FnSymbol* fn, Symbol* sym, std::set<Expr*> & sources)
-{
+static int findOriginalArrays(FnSymbol*        fn,
+                              Symbol*          sym,
+                              std::set<Expr*>& sources) {
   int ret = 0;
 
   for_SymbolSymExprs(se, sym) {
     Expr* stmt = se->getStmtExpr();
 
     if (CallExpr* call = toCallExpr(stmt)) {
-      if (call->isPrimitive(PRIM_MOVE) ||
-          call->isPrimitive(PRIM_ASSIGN)) {
+      if (call->isPrimitive(PRIM_MOVE)   == true  ||
+          call->isPrimitive(PRIM_ASSIGN) == true) {
         Expr* lhs = call->get(1);
-        Expr* rhs = call->get(2);
 
         if (se == lhs) {
+          Expr* rhs = call->get(2);
+
           // Handle the following cases:
           //   rhs is a call_tmp -> recurse on the call_tmp
           //   rhs is a call to a function returning an aliasing array ->
@@ -258,9 +287,9 @@ findOriginalArrays(FnSymbol* fn, Symbol* sym, std::set<Expr*> & sources)
             // is RHS a local variable (user or temp)?
             // if so, find the definitions for that, and further
             // traverse if they are aliases.
-            if (rhsSym && rhsSym->defPoint->getFunction() == fn &&
-                (rhsSym->hasFlag(FLAG_TEMP) ||
-                 rhsSym->hasFlag(FLAG_ARRAY_ALIAS))) {
+            if (rhsSym                          != NULL &&
+                rhsSym->defPoint->getFunction() ==   fn &&
+                rhsSym->hasFlag(FLAG_TEMP)      == true) {
               ret += findOriginalArrays(fn, rhsSym, sources);
             }
 
@@ -406,31 +435,6 @@ checkReturnPaths(FnSymbol* fn) {
   }
 }
 
-
-// This test must be run after resolution, since it depends on the knowledge of
-// whether the type of delete's operand is a record type.
-// But it cannot be run after the compiler adds its own record deletes
-// TODO: This violates the "no magic" principle, so the check and associated
-// language in the spec should be considered for removal.
-// In addition, the ability for user code to explicitly call deletes on fields
-// of record type may be necessary for UMM, but this is yet to be demonstrated.
-static void
-checkNoRecordDeletes(CallExpr* call)
-{
-  FnSymbol* fn = call->resolvedFunction();
-
-  // Note that fn can (legally) be null if the call is primitive.
-  if (fn && fn->hasFlag(FLAG_DESTRUCTOR)) {
-    // Statements of the form 'delete x' (PRIM_DELETE) are replaced
-    //  during the normalize pass with a call to the destructor
-    //  followed by a call to chpl_mem_free(), so here we just check
-    //  if the type of the variable being passed to chpl_mem_free()
-    //  is a record.
-    if (isRecord(call->get(1)->typeInfo()->getValType()))
-      USR_FATAL_CONT(call, "delete not allowed on records");
-  }
-}
-
 static void
 checkBadAddrOf(CallExpr* call)
 {
@@ -451,14 +455,20 @@ checkBadAddrOf(CallExpr* call)
         bool lhsRef   = lhs && lhs->symbol()->hasFlag(FLAG_REF_VAR);
         bool lhsConst = lhs && lhs->symbol()->hasFlag(FLAG_CONST);
 
-        if (lhsRef && !lhsConst) {
+        bool rhsType = rhs->symbol()->hasFlag(FLAG_TYPE_VARIABLE);
+        bool rhsParam = rhs->symbol()->isParameter();
+        // Also detect runtime type variables
+        if (rhs->symbol()->type->symbol->hasFlag(FLAG_RUNTIME_TYPE_VALUE))
+          rhsType = true;
+
+        if (lhsRef && rhsType) {
+          USR_FATAL_CONT(call, "Cannot set a reference to a type variable.");
+        } else if (lhsRef && rhsParam) {
+          USR_FATAL_CONT(call, "Cannot set a reference to a param variable.");
+        } else if (lhsRef && !lhsConst) {
           if (rhs->symbol()->hasFlag(FLAG_EXPR_TEMP) ||
-              rhs->symbol()->isConstant() || rhs->symbol()->isParameter()) {
-            if (rhs->symbol()->isImmediate()) {
-              USR_FATAL_CONT(call, "Cannot set a non-const reference to a literal value.");
-            } else {
-              USR_FATAL_CONT(call, "Cannot set a non-const reference to a const variable.");
-            }
+              rhs->symbol()->isConstant()) {
+            USR_FATAL_CONT(call, "Cannot set a non-const reference to a const variable.");
           }
         }
       }
@@ -471,10 +481,7 @@ static void
 checkCalls()
 {
   forv_Vec(CallExpr, call, gCallExprs)
-  {
-    checkNoRecordDeletes(call);
     checkBadAddrOf(call);
-  }
 }
 
 

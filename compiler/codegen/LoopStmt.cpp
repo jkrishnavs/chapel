@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -18,7 +18,9 @@
  */
 
 #include "LoopStmt.h"
+
 #include "codegen.h"
+#include "driver.h"
 
 // If vectorization is enabled and this loop is order independent, codegen
 // CHPL_PRAGMA_IVDEP. This method is a no-op if vectorization is off, or the

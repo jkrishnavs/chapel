@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  * 
  * The entirety of this work is licensed under the Apache License,
@@ -129,13 +129,13 @@ When run on 6 locales, the output is:
     0 0 0 1 1 1 0 0
 
 
-**Constructor Arguments**
+**Initializer Arguments**
 
-The ``BlockCyclic`` class constructor is defined as follows:
+The ``BlockCyclic`` class initializer is defined as follows:
 
   .. code-block:: chapel
 
-    proc BlockCyclic(
+    proc BlockCyclic.init(
       startIdx,
       blocksize,
       targetLocales: [] locale = Locales, 
@@ -189,21 +189,25 @@ class BlockCyclic : BaseDist {
 
   var dataParTasksPerLocale: int; // tasks per locale for forall iteration
 
-  proc BlockCyclic(startIdx,  // ?nd*?idxType
-                   blocksize,     // nd*int
-                   targetLocales: [] locale = Locales, 
-                   dataParTasksPerLocale    = getDataParTasksPerLocale(),
-                   param rank: int          = _determineRankFromArg(startIdx),
-                   type idxType             = _determineIdxTypeFromArg(startIdx))
+  proc init(startIdx,  // ?nd*?idxType
+            blocksize,     // nd*int
+            targetLocales: [] locale = Locales,
+            dataParTasksPerLocale    = getDataParTasksPerLocale(),
+            param rank: int          = _determineRankFromArg(startIdx),
+            type idxType             = _determineIdxTypeFromArg(startIdx))
   {
     // argument sanity checks, with friendly error messages
-    if isTuple(startIdx) != isTuple(blocksize) then compilerError("when invoking BlockCyclic constructor, startIdx and blocksize must be either both tuples or both integers");
-    if isTuple(startIdx) && startIdx.size != blocksize.size then compilerError("when invoking BlockCyclic constructor and startIdx and blocksize are tuples, their sizes must match");
-    if !isIntegralType(idxType) then compilerError("when invoking BlockCyclic constructor, startIdx must be an integer or a tuple of integers");
-    if !isIntegralType(_determineIdxTypeFromArg(blocksize)) then compilerError("when invoking BlockCyclic constructor, blocksize must be an integer or a tuple of integers");
+    if isTuple(startIdx) != isTuple(blocksize) then compilerError("when invoking BlockCyclic initializer, startIdx and blocksize must be either both tuples or both integers");
+    if isTuple(startIdx) && startIdx.size != blocksize.size then compilerError("when invoking BlockCyclic initializer and startIdx and blocksize are tuples, their sizes must match");
+    if !isIntegralType(idxType) then compilerError("when invoking BlockCyclic initializer, startIdx must be an integer or a tuple of integers");
+    if !isIntegralType(_determineIdxTypeFromArg(blocksize)) then compilerError("when invoking BlockCyclic initializer, blocksize must be an integer or a tuple of integers");
+
+    this.rank = rank;
+    this.idxType = idxType;
 
     this.lowIdx = _ensureTuple(startIdx);
     this.blocksize = _ensureTuple(blocksize);
+
     if rank == 1 {
       targetLocDom = {0..#targetLocales.numElements}; // 0-based for simplicity
       this.targetLocales = targetLocales;
@@ -216,8 +220,7 @@ class BlockCyclic : BaseDist {
       for param i in 1..rank do
         ranges(i) = 0..factors(i)-1;
       targetLocDom = {(...ranges)};
-      for (loc1, loc2) in zip(this.targetLocales, targetLocales) do
-        loc1 = loc2;
+      this.targetLocales = reshape(targetLocales, targetLocDom);
       if debugBlockCyclicDist {
         writeln(targetLocDom);
         writeln(this.targetLocales);
@@ -239,6 +242,8 @@ class BlockCyclic : BaseDist {
       if debugBlockCyclicDist then writeln(this.targetLocales);
     }
 
+    this.complete();
+
     coforall locid in targetLocDom do
       on this.targetLocales(locid) do
         locDist(locid) = new LocBlockCyclic(rank, idxType, locid, this);
@@ -252,8 +257,10 @@ class BlockCyclic : BaseDist {
       for loc in locDist do writeln(loc);
   }
 
-  // copy constructor for privatization
-  proc BlockCyclic(param rank: int, type idxType, other: BlockCyclic(rank, idxType)) {
+  // copy initializer for privatization
+  proc init(param rank: int, type idxType, other: BlockCyclic(rank, idxType)) {
+    this.rank = rank;
+    this.idxType = idxType;
     lowIdx = other.lowIdx;
     blocksize = other.blocksize;
     targetLocDom = other.targetLocDom;
@@ -321,15 +328,15 @@ proc BlockCyclic.dsiNewRectangularDom(param rank: int, type idxType,
 // output distribution
 //
 proc BlockCyclic.writeThis(x) {
-  x.writeln("BlockCyclic");
-  x.writeln("-------");
-  x.writeln("distributes: ", lowIdx, "...");
-  x.writeln("in chunks of: ", blocksize);
-  x.writeln("across locales: ", targetLocales);
-  x.writeln("indexed via: ", targetLocDom);
-  x.writeln("resulting in: ");
+  x <~> "BlockCyclic\n";
+  x <~> "-------\n";
+  x <~> "distributes: " <~> lowIdx <~> "..." <~> "\n";
+  x <~> "in chunks of: " <~> blocksize <~> "\n";
+  x <~> "across locales: " <~> targetLocales <~> "\n";
+  x <~> "indexed via: " <~> targetLocDom <~> "\n";
+  x <~> "resulting in: " <~> "\n";
   for locid in targetLocDom do
-    x.writeln("  [", locid, "] ", locDist(locid));
+    x <~> "  [" <~> locid <~> "] " <~> locDist(locid) <~> "\n";
 }
 
 //
@@ -464,16 +471,14 @@ proc LocBlockCyclic.writeThis(x) {
   on this {
     localeid = here.id;
   }
-  x.write("locale ", localeid, " owns blocks: ", myStarts);
+  x <~> "locale " <~> localeid <~> " owns blocks: " <~> myStarts;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // BlockCyclic Domain Class
 //
+pragma "use default init"
 class BlockCyclicDom: BaseRectangularDom {
-  param rank: int;
-  type idxType;
-  param stridable: bool;
   //
   // LEFT LINK: a pointer to the parent distribution
   //
@@ -567,7 +572,7 @@ iter BlockCyclicDom.these(param tag: iterKind, followThis) where tag == iterKind
 // output domain
 //
 proc BlockCyclicDom.dsiSerialWrite(x) {
-  x.write(whole);
+  x <~> whole;
 }
 
 //
@@ -607,6 +612,10 @@ proc BlockCyclicDom.dsiSetIndices(x) {
   //
   whole.setIndices(x);
   setup();
+}
+
+proc BlockCyclicDom.dsiAssignDomain(rhs: domain, lhsPrivate:bool) {
+  chpl_assignDomainWithGetSetIndices(this, rhs);
 }
 
 proc BlockCyclicDom.dsiGetIndices() {
@@ -690,7 +699,11 @@ class LocBlockCyclicDom {
   // indices back to the local index type.
   //
   var myStarts: domain(rank, idxType, stridable=true);
-  var myFlatInds: domain(1) = {0..#computeFlatInds()};
+  var myFlatInds: domain(1);
+}
+
+proc LocBlockCyclicDom.postinit() {
+  myFlatInds = {0..#computeFlatInds()};
 }
 
 //
@@ -708,7 +721,7 @@ proc LocBlockCyclicDom.computeFlatInds() {
 // output local domain piece
 //
 proc LocBlockCyclicDom.writeThis(x) {
-  x.write(myStarts);
+  x <~> myStarts;
 }
 
 proc LocBlockCyclicDom.enumerateBlocks() {
@@ -774,11 +787,8 @@ proc LocBlockCyclicDom._sizes {
 ////////////////////////////////////////////////////////////////////////////////
 // BlockCyclic Array Class
 //
-class BlockCyclicArr: BaseArr {
-  type eltType;
-  param rank: int;
-  type idxType;
-  param stridable: bool;
+pragma "use default init"
+class BlockCyclicArr: BaseRectangularArr {
 
   //
   // LEFT LINK: the global domain descriptor for this array
@@ -808,7 +818,7 @@ proc BlockCyclicArr.setup() {
   }
 }
 
-proc BlockCyclicArr.dsiDestroyArr(isslice:bool) {
+proc BlockCyclicArr.dsiDestroyArr() {
   coforall localeIdx in dom.dist.targetLocDom {
     on dom.dist.targetLocales(localeIdx) {
       delete locArr(localeIdx);
@@ -911,16 +921,16 @@ proc BlockCyclicArr.dsiSerialWrite(f) {
   for dim in 1..rank do
     i(dim) = dom.dsiDim(dim).low;
   label next while true {
-    f.write(dsiAccess(i));
+    f <~> dsiAccess(i);
     if i(rank) <= (dom.dsiDim(rank).high - dom.dsiDim(rank).stride:idxType) {
-      f.write(" ");
+      f <~> " ";
       i(rank) += dom.dsiDim(rank).stride:idxType;
     } else {
       for dim in 1..rank-1 by -1 {
         if i(dim) <= (dom.dsiDim(dim).high - dom.dsiDim(dim).stride:idxType) {
           i(dim) += dom.dsiDim(dim).stride:idxType;
           for dim2 in dim+1..rank {
-            f.writeln();
+            f <~> "\n";
             i(dim2) = dom.dsiDim(dim2).low;
           }
           continue next;
@@ -1080,7 +1090,7 @@ proc LocBlockCyclicArr.this(i) ref {
 //
 proc LocBlockCyclicArr.writeThis(x) {
   // note on this fails; see writeThisUsingOn.chpl
-  x.write(myElems);
+  x <~> myElems;
 }
 
 // sungeun: This doesn't appear to be used yet, so I left it, but it

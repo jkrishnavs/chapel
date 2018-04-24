@@ -1,7 +1,14 @@
 class C {
   var x: int;
   var y: int;
-  proc C(b: bool) {
+
+  proc init(xVal, yVal) {
+    x = xVal;
+    y = yVal;
+  }
+
+  proc init(b: bool) {
+    this.complete();
     if b then
       x = 24;
     else

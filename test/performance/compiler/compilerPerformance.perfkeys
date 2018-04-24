@@ -24,7 +24,6 @@ resolve :
 resolveIntents :
 checkResolved :
 replaceArrayAccessesWithRefTemps :
-processIteratorYields :
 flattenFunctions :
 cullOverReferences :
 lowerErrorHandling :
@@ -39,7 +38,6 @@ scalarReplace :
 refPropagation :
 copyPropagation :
 deadCodeElimination :
-removeWrapRecords :
 removeEmptyRecords :
 localizeGlobals :
 loopInvariantCodeMotion :

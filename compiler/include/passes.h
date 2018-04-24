@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -26,6 +26,7 @@ extern bool parsed;
 extern bool normalized;
 extern bool resolved;
 extern bool intentsResolved;
+extern bool iteratorsLowered;
 
 
 //
@@ -61,14 +62,12 @@ void makeBinary();
 void normalize();
 void optimizeOnClauses();
 void parallel();
-void processIteratorYields();
 void prune();
 void prune2();
 void readExternC();
 void refPropagation();
 void removeEmptyRecords();
 void removeUnnecessaryAutoCopyCalls();
-void removeWrapRecords();
 void replaceArrayAccessesWithRefTemps();
 void resolve();
 void resolveIntents();
@@ -95,28 +94,43 @@ void checkReturnTypesHaveRefTypes();
 
 // buildDefaultFunctions.cpp
 void buildDefaultDestructor(AggregateType* ct);
+void buildNearScopeEnumFunctions(EnumType* et);
+void buildFarScopeEnumFunctions(EnumType* et);
+
+// callDestructors.cpp
+void insertReferenceTemps(CallExpr* call);
 
 // createTaskFunctions.cpp -> implementForallIntents.cpp
 extern Symbol* markPruned;
 extern Symbol* markUnspecified;
 void replaceVarUses(Expr* topAst, SymbolMap& vars);
-void pruneThisArg(Symbol* parent, SymbolMap& uses);
+void pruneOuterVars(Symbol* parent, SymbolMap& uses);
 
 // deadCodeElimination.cpp
 void deadBlockElimination();
 
 // flattenFunctions.cpp
 void flattenNestedFunction(FnSymbol* nestedFunction);
+void flattenNestedFunctions(Vec<FnSymbol*>& nestedFunctions);
 
-// callDestructors.cpp
-void insertReferenceTemps(CallExpr* call);
+// inlineFunctions.cpp
+BlockStmt* copyFnBodyForInlining(CallExpr* call, FnSymbol* fn, Expr* anchor);
+
+// lowerIterators.cpp, lowerForalls.cpp
+void lowerForallStmtsInline();
+void handleChplPropagateErrorCall(CallExpr* call);
+void fixupErrorHandlingExits(BlockStmt* body, bool& adjustCaller);
+void addDummyErrorArgumentToCall(CallExpr* call);
+bool isVirtualIterator(Symbol* iterator);
 
 // normalize.cpp
 void normalize(FnSymbol* fn);
+void normalize(Expr* expr);
 
 // parallel.cpp
 Type* getOrMakeRefTypeDuringCodegen(Type* type);
 Type* getOrMakeWideTypeDuringCodegen(Type* refType);
+CallExpr* findDownEndCount(FnSymbol* fn);
 
 // type.cpp
 void initForTaskIntents();

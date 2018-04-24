@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -205,7 +205,7 @@ ConstInfo::ConstInfo(Symbol* s) {
     fnUses = fn->firstSymExpr();
   }
 
-  finalizedRefToConst = sym->hasFlag(FLAG_REF_TO_CONST);
+  finalizedRefToConst = sym->hasFlag(FLAG_REF_TO_IMMUTABLE);
 
   curTodo = 0;
   alreadyCalled = false;
@@ -493,6 +493,46 @@ static bool onlyUsedForRetarg(Symbol* ref, CallExpr* defCall) {
   return isRetArgOnly;
 }
 
+//
+// Returns true if 'ref' is only used in the following two cases:
+//   1) Used in 'defCall', usually a PRIM_ADDR_OF or PRIM_SET_REFERENCE
+//
+//   2) Passed to an initializer in the 'this' slot.
+//
+// An initializer can thwart detection of a 'const' thing because it takes the
+// "this" argument by ref. Normally such a pattern would cause us to assume
+// the variable was not const, but in this case we know it is a single def.
+//
+static bool onlyUsedForInitializer(Symbol* ref, CallExpr* defCall) {
+  bool isInitOnly = true;
+
+  INT_ASSERT(ref->isRef());
+  INT_ASSERT(defCall != NULL);
+
+  for_SymbolSymExprs(use, ref) {
+    if (use->parentExpr == defCall) {
+      continue;
+    }
+
+    CallExpr* call = toCallExpr(use->parentExpr);
+    if (call->isResolved()) {
+      FnSymbol*  fn         = call->resolvedFunction();
+      ArgSymbol* form       = actual_to_formal(use);
+      bool       isInitFn   = strcmp(fn->cname, "init") == 0 &&
+                              fn->isMethod() &&
+                              form->hasFlag(FLAG_ARG_THIS);
+
+      if (isInitFn == false) {
+        isInitOnly = false;
+      }
+    } else {
+      isInitOnly = false;
+    }
+  }
+
+  return isInitOnly;
+}
+
 // Note: This function is currently not recursive
 static bool inferConst(Symbol* sym) {
   INT_ASSERT(!sym->isRef());
@@ -548,8 +588,9 @@ static bool inferConst(Symbol* sym) {
 
         if (onlyUsedForRetarg(LHS, parent)) {
           numDefs += 1;
-        }
-        else if (!inferConstRef(LHS)) {
+        } else if (onlyUsedForInitializer(LHS, parent)) {
+          numDefs += 1;
+        } else if (!inferConstRef(LHS)) {
           isConstVal = false;
         }
       }
@@ -589,7 +630,7 @@ static bool inferRefToConst(Symbol* sym) {
   INT_ASSERT(sym->isRef());
 
   bool isConstRef = sym->qualType().getQual() == QUAL_CONST_REF;
-  const bool wasRefToConst = sym->hasFlag(FLAG_REF_TO_CONST);
+  const bool wasRefToConst = sym->hasFlag(FLAG_REF_TO_IMMUTABLE);
 
   ConstInfo* info = infoMap[sym];
 
@@ -640,7 +681,9 @@ static bool inferRefToConst(Symbol* sym) {
         } else {
           // Passing a non-ref actual to a reference formal is currently
           // considered to be the same as an addr-of
-          if (actual->qualType().getQual() != QUAL_CONST_VAL) {
+          // BHARSH TODO: we shouldn't be seeing QUAL_CONST here.
+          Qualifier q = actual->qualType().getQual();
+          if (q != QUAL_CONST_VAL && q != QUAL_CONST) {
             isRefToConst = false;
           }
         }
@@ -693,7 +736,7 @@ static bool inferRefToConst(Symbol* sym) {
   if (isFirstCall) {
     if (isRefToConst) {
       INT_ASSERT(info->finalizedRefToConst == false);
-      sym->addFlag(FLAG_REF_TO_CONST);
+      sym->addFlag(FLAG_REF_TO_IMMUTABLE);
     }
 
     info->reset();
@@ -710,7 +753,7 @@ static bool inferRefToConst(Symbol* sym) {
 // properties can be applied:
 // 1) QUAL_CONST_VAL
 // 2) QUAL_CONST_REF / INTENT_CONST_REF
-// 3) FLAG_REF_TO_CONST
+// 3) FLAG_REF_TO_IMMUTABLE
 //
 void inferConstRefs() {
   // Build a map from Symbols to ConstInfo. This is somewhat like

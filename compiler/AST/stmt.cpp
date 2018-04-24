@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -39,10 +39,11 @@ Map<GotoStmt*,GotoStmt*> copiedIterResumeGotos;
 // remember these so we can remove their iterResumeGoto
 Vec<LabelSymbol*> removedIterResumeLabels;
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 Stmt::Stmt(AstTag astTag) : Expr(astTag) {
 
@@ -55,244 +56,24 @@ bool Stmt::isStmt() const {
   return true;
 }
 
-
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
-
-UseStmt::UseStmt(BaseAST* source):
-  Stmt(E_UseStmt),
-  src(NULL),
-  named(),
-  renamed(),
-  except(false),
-  relatedNames()
-{
-  if (Symbol* b = toSymbol(source)) {
-    src = new SymExpr(b);
-  } else if (Expr* b = toExpr(source)) {
-    src = b;
-  } else {
-    INT_FATAL(this, "Bad mod in UseStmt constructor");
-  }
-
-  gUseStmts.add(this);
-}
-
-//
-UseStmt::UseStmt(BaseAST*                            source,
-                 std::vector<const char*>*           args,
-                 bool                                exclude,
-                 std::map<const char*, const char*>* renames) :
-  Stmt(E_UseStmt),
-  src(NULL),
-  named(),
-  renamed(),
-  except(exclude),
-  relatedNames()
-{
-  if (Symbol* b = toSymbol(source)) {
-    src = new SymExpr(b);
-  } else if (Expr* b = toExpr(source)) {
-    src = b;
-  } else {
-    INT_FATAL(this, "Bad mod in UseStmt constructor");
-  }
-
-  if (args->size() > 0) {
-    // Symbols to search when going through this module's scope from an outside
-    // scope
-    for_vector(const char, str, *args) {
-      named.push_back(str);
-    }
-  }
-
-  if (renames->size() > 0) {
-    // The new names of symbols in the module being used, to avoid conflicts
-    // for instance.
-    for (std::map<const char*, const char*>::iterator it = renames->begin();
-         it != renames->end(); ++it) {
-      renamed[it->first] = it->second;
-    }
-  }
-
-  gUseStmts.add(this);
-}
-
-
-UseStmt* UseStmt::copyInner(SymbolMap* map) {
-  UseStmt *_this = 0;
-  if (named.size() > 0) { // MPF: should this have || renamed.size() > 0?
-    _this = new UseStmt(COPY_INT(src), &named, except, &renamed);
-  } else {
-    _this = new UseStmt(COPY_INT(src));
-  }
-  for_vector(const char, sym, relatedNames) {
-    _this->relatedNames.push_back(sym);
-  }
-  return _this;
-}
-
-void UseStmt::verify() {
-  Expr::verify();
-  if (astTag != E_UseStmt) {
-    INT_FATAL(this, "Bad NamedExpr::astTag");
-  }
-  if (src == NULL) {
-    INT_FATAL(this, "Bad UseStmt::src");
-  }
-  if (relatedNames.size() != 0 && named.size() == 0 && renamed.size() == 0) {
-    INT_FATAL(this, "Have names to avoid, but nothing was listed in the use to begin with");
-  }
-  verifyNotOnList(src);
-}
-
-void UseStmt::replaceChild(Expr* old_ast, Expr* new_ast) {
-  if (old_ast == src) {
-    src = new_ast;
-  } else {
-    INT_FATAL(this, "Unexpected case in UseStmt::replaceChild");
-  }
-}
-
-Expr* UseStmt::getFirstExpr() {
-  return this;
-}
-
-Expr* UseStmt::getFirstChild() {
-  return NULL;
-}
-
-void UseStmt::accept(AstVisitor* visitor) {
-  visitor->visitUseStmt(this);
-}
-
-void UseStmt::writeListPredicate(FILE* mFP) {
-  if (hasOnlyList()) {
-    fprintf(mFP, " 'only' ");
-  } else if (hasExceptList()) {
-    fprintf(mFP, " 'except' ");
-  }
-}
-
-bool UseStmt::hasOnlyList() {
-  return !isPlainUse() && !except;
-}
-
-bool UseStmt::hasExceptList() {
-  return !isPlainUse() && except;
-}
-
-bool UseStmt::isPlainUse() {
-  // This is an unmodified use statement if no 'only' or 'except' list was
-  // provided.
-  return named.size() == 0 && renamed.size() == 0;
-}
-
-// Return whether the use permits us to search for a symbol with the given
-// name.  Returns true ("should skip") if the name is related to our 'except'
-// list, or not present when we've been given an 'only' list.
-bool UseStmt::skipSymbolSearch(const char* name) {
-  if (isPlainUse()) {
-    // The use is unmodified by an 'except' or 'only' list, so it is safe to
-    // search for this name
-    return false;
-  }
-
-  if (except) {
-    // If the name is present in our 'except' list, or is a (type) constructor
-    // on a type that is in that list, or is a method or field on a type that
-    // is in that list, then we shouldn't look in this use for that name.
-    // Otherwise, it is safe to look.
-    if (matchedNameOrConstructor(name)) {
-      return true;
-    } else if (inRelatedNames(name)) {
-      return true;
-    } else {
-      return false;
-    }
-  } else {
-    // If the name is present in our 'only' list, or is a (type) constructor
-    // on a type that is in that list, or is a method or field on a type that
-    // is in that list, then we should look in this use for that name.
-    // Otherwise, we shouldn't look for that name here.
-    if (matchedNameOrConstructor(name)) {
-      return false;
-    } else if (inRelatedNames(name)) {
-      return false;
-    } else {
-      return true;
-    }
-  }
-}
-
-bool UseStmt::matchedNameOrConstructor(const char* name) {
-  for_vector(const char, toCheck, named) {
-    if (!strcmp(name, toCheck)) {
-      return true;
-    }
-  }
-  for(std::map<const char*, const char*>::iterator it = renamed.begin();
-      it != renamed.end(); ++it) {
-    if (!strcmp(name, it->first)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Returns true if the name was in the relatedNames field, false otherwise.
-bool UseStmt::inRelatedNames(const char* name) {
-  for_vector(const char, toCheck, relatedNames) {
-    if (!strcmp(name, toCheck))
-      return true;
-  }
-  return false;
-}
-
-bool UseStmt::isARename(const char* name) {
-  return renamed.count(name) == 1;
-}
-
-const char* UseStmt::getRename(const char* name) {
-  return renamed[name];
-}
-
-// Should only be called when the mod field has been resolved
-BaseAST* UseStmt::getSearchScope() {
-  if (SymExpr* se = toSymExpr(src)) {
-    if (ModuleSymbol* module = toModuleSymbol(se->symbol())) {
-      return module->block;
-    } else if (TypeSymbol* enumTypeSym = toTypeSymbol(se->symbol())) {
-      // Assumes we have correctly verified that the type was an enum.
-      return enumTypeSym;
-    } else {
-      // Internal failure because resolving the mod field should have raised
-      // an error if it wasn't an enum or module
-      INT_FATAL(this, "Use invalid, not applied to module or enum");
-    }
-  } else {
-    INT_FATAL(this, "getSearchScope called before this use was processed");
-  }
-  return NULL;
-}
-
-
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 BlockStmt::BlockStmt(Expr* initBody, BlockTag initBlockTag) :
-  Stmt(E_BlockStmt),
-  blockTag(initBlockTag),
-  modUses(NULL),
-  userLabel(NULL),
-  byrefVars(NULL),
-  forallIntents(NULL),
-  blockInfo(NULL) {
-  body.parent = this;
+  Stmt(E_BlockStmt) {
+
+
+  blockTag      = initBlockTag;
+  useList       = NULL;
+  userLabel     = NULL;
+  byrefVars     = NULL;
+  forallIntents = NULL;
+  blockInfo     = NULL;
+
+  body.parent   = this;
 
   if (initBody)
     body.insertAtTail(initBody);
@@ -321,32 +102,39 @@ void BlockStmt::verify() {
       INT_FATAL(this, "BlockStmt::verify. Bad body.expr->parentExpr");
   }
 
-  if (blockInfo && blockInfo->parentExpr != this)
+  if (blockInfo != NULL && blockInfo->parentExpr != this) {
     INT_FATAL(this, "BlockStmt::verify. Bad blockInfo->parentExpr");
+  }
 
-  if (modUses   && modUses->parentExpr   != this)
-    INT_FATAL(this, "BlockStmt::verify. Bad modUses->parentExpr");
+  if (useList   != NULL && useList->parentExpr   != this) {
+    INT_FATAL(this, "BlockStmt::verify. Bad useList->parentExpr");
+  }
 
   if (byrefVars) {
-    if (byrefVars->parentExpr != this)
+    if (byrefVars->parentExpr != this) {
       INT_FATAL(this, "BlockStmt::verify. Bad byrefVars->parentExpr");
+    }
 
-    if (!byrefVars->isPrimitive(PRIM_ACTUALS_LIST))
+    if (!byrefVars->isPrimitive(PRIM_ACTUALS_LIST)) {
       INT_FATAL(this, "BlockStmt::byrefVars not PRIM_ACTUALS_LIST");
+    }
 
     for_actuals(varExp, byrefVars) {
-      if (!isSymExpr(varExp) && !isUnresolvedSymExpr(varExp))
+      if (!isSymExpr(varExp) && !isUnresolvedSymExpr(varExp)) {
         INT_FATAL(this, "BlockStmt::verify. Bad expression kind in byrefVars");
+      }
     }
   }
 
-  if (forallIntents)
+  if (forallIntents) {
     forallIntents->verifyFI(this);
+  }
 
-  if (byrefVars && forallIntents)
+  if (byrefVars && forallIntents) {
     INT_FATAL(this,"BlockStmt: byrefVars and forallIntents are both non-NULL");
+  }
 
-  verifyNotOnList(modUses);
+  verifyNotOnList(useList);
   verifyNotOnList(byrefVars);
   verifyNotOnList(blockInfo);
 }
@@ -358,12 +146,32 @@ BlockStmt::copyInner(SymbolMap* map) {
 
   _this->blockTag  = blockTag;
   _this->blockInfo = COPY_INT(blockInfo);
-  _this->modUses   = COPY_INT(modUses);
+  _this->useList   = COPY_INT(useList);
   _this->byrefVars = COPY_INT(byrefVars);
   _this->forallIntents = COPY_INT(forallIntents);
 
-  for_alist(expr, body)
-    _this->insertAtTail(COPY_INT(expr));
+  for_alist(expr, body) {
+    Expr* copy = COPY_INT(expr);
+    _this->insertAtTail(copy);
+
+    if (DefExpr* def = toDefExpr(copy)) {
+      if (TypeSymbol* ts = toTypeSymbol(def->sym)) {
+        if (EnumType* et = toEnumType(ts->type)) {
+          // ensure we have the size, cast functions, etc.
+          // Lydia NOTE: This relies on making no copies of enum types prior to
+          // buildDefaultFunctions().  The creation must happen here because
+          // otherwise the EnumType will not have the correct symbol, and the
+          // symbol will not be in the tree.
+
+          // Also, NOTE: This does not generate new assignment and enumerate
+          // functions for the enum, as those are already local to the function
+          // being instantiated and so will get copied independently and
+          // updated when we replace the old type reference with the new one.
+          buildFarScopeEnumFunctions(et);
+        }
+      }
+    }
+  }
 
   return _this;
 }
@@ -381,8 +189,8 @@ void BlockStmt::replaceChild(Expr* oldAst, Expr* newAst) {
   else if (oldExpr == blockInfo)
     blockInfo = newExpr;
 
-  else if (oldExpr == modUses)
-    modUses   = newExpr;
+  else if (oldExpr == useList)
+    useList   = newExpr;
 
   else if (oldExpr == byrefVars)
     byrefVars = newExpr;
@@ -472,17 +280,15 @@ BlockStmt::canFlattenChapelStmt(const BlockStmt* stmt) const {
   return retval;
 }
 
-Expr*
-BlockStmt::getFirstChild() {
-  Expr* retval = NULL;
-
-  if (blockInfo)
-    retval = blockInfo;
-
-  else if (body.head)
-    retval = body.head;
-
-  return retval;
+//
+// "Remove the curly braces":
+// move all contents out of this BlockStmt and remove it.
+//
+void BlockStmt::flattenAndRemove() {
+  for_alist(stmt, this->body)
+    this->insertBefore(stmt->remove());
+  INT_ASSERT(this->body.length == 0);
+  this->remove();
 }
 
 Expr*
@@ -670,31 +476,31 @@ BlockStmt::length() const {
 
 
 void
-BlockStmt::moduleUseAdd(ModuleSymbol* mod) {
-  moduleUseAdd(new UseStmt(mod));
+BlockStmt::useListAdd(ModuleSymbol* mod) {
+  useListAdd(new UseStmt(mod));
 }
 
 void
-BlockStmt::moduleUseAdd(UseStmt* use) {
-  if (modUses == NULL) {
-    modUses = new CallExpr(PRIM_USED_MODULES_LIST);
+BlockStmt::useListAdd(UseStmt* use) {
+  if (useList == NULL) {
+    useList = new CallExpr(PRIM_USED_MODULES_LIST);
 
     if (parentSymbol)
-      insert_help(modUses, this, parentSymbol);
+      insert_help(useList, this, parentSymbol);
   }
 
-  modUses->insertAtTail(use);
+  useList->insertAtTail(use);
 }
 
 
 // Remove a module from the list of modules used by the module this block
-// statement belongs to. The list of used modules is stored in modUses
+// statement belongs to. The list of used modules is stored in useList
 bool
-BlockStmt::moduleUseRemove(ModuleSymbol* mod) {
+BlockStmt::useListRemove(ModuleSymbol* mod) {
   bool retval = false;
 
-  if (modUses != NULL) {
-    for_alist(expr, modUses->argList) {
+  if (useList != NULL) {
+    for_alist(expr, useList->argList) {
       if (SymExpr* symExpr = toSymExpr(expr)) {
         if (ModuleSymbol* curMod = toModuleSymbol(symExpr->symbol())) {
           if (curMod == mod) {
@@ -712,73 +518,84 @@ BlockStmt::moduleUseRemove(ModuleSymbol* mod) {
 }
 
 void
-BlockStmt::moduleUseClear() {
-  if (modUses != 0) {
+BlockStmt::useListClear() {
+  if (useList != NULL) {
 
-    for_alist(expr, modUses->argList) {
+    for_alist(expr, useList->argList) {
       expr->remove();
     }
 
     // It's possible that this use definition is not alive
-    if (isAlive(modUses))
-      modUses->remove();
+    if (isAlive(useList)) {
+      useList->remove();
+    }
 
-    modUses = 0;
+    useList = NULL;
   }
 }
 
 void
 BlockStmt::accept(AstVisitor* visitor) {
   if (visitor->enterBlockStmt(this) == true) {
-    for_alist(next_ast, body)
+    for_alist(next_ast, body) {
       next_ast->accept(visitor);
+    }
 
-    if (blockInfo)
+    if (blockInfo) {
       blockInfo->accept(visitor);
+    }
 
-    if (modUses)
-      modUses->accept(visitor);
+    if (useList) {
+      useList->accept(visitor);
+    }
 
-    if (byrefVars)
+    if (byrefVars) {
       byrefVars->accept(visitor);
+    }
 
-    if (forallIntents)
+    if (forallIntents) {
       forallIntents->acceptFI(visitor);
+    }
 
     visitor->exitBlockStmt(this);
   }
 }
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 CondStmt::CondStmt(Expr* iCondExpr, BaseAST* iThenStmt, BaseAST* iElseStmt) :
-  Stmt(E_CondStmt),
-  condExpr(iCondExpr),
-  thenStmt(NULL),
-  elseStmt(NULL) {
+  Stmt(E_CondStmt) {
+
+  condExpr = iCondExpr;
+  thenStmt = NULL;
+  elseStmt = NULL;
 
   if (Expr* s = toExpr(iThenStmt)) {
     BlockStmt* bs = toBlockStmt(s);
 
-    if (bs && bs->blockTag == BLOCK_NORMAL && bs->isRealBlockStmt())
+    if (bs && bs->blockTag == BLOCK_NORMAL && bs->isRealBlockStmt()) {
       thenStmt = bs;
-    else
+    } else {
       thenStmt = new BlockStmt(s);
+    }
+
   } else {
     INT_FATAL(iThenStmt, "Bad then-stmt passed to CondStmt constructor");
   }
 
-  if (iElseStmt) {
+  if (iElseStmt != NULL) {
     if (Expr* s = toExpr(iElseStmt)) {
       BlockStmt* bs = toBlockStmt(s);
 
-      if (bs && bs->blockTag == BLOCK_NORMAL && bs->isRealBlockStmt())
+      if (bs && bs->blockTag == BLOCK_NORMAL && bs->isRealBlockStmt()) {
         elseStmt = bs;
-      else
+      } else {
         elseStmt = new BlockStmt(s);
+      }
 
     } else {
       INT_FATAL(iElseStmt, "Bad else-stmt passed to CondStmt constructor");
@@ -788,9 +605,8 @@ CondStmt::CondStmt(Expr* iCondExpr, BaseAST* iThenStmt, BaseAST* iElseStmt) :
   gCondStmts.add(this);
 }
 
-Expr*
-CondStmt::foldConstantCondition() {
-  Expr* result = NULL;
+CallExpr* CondStmt::foldConstantCondition() {
+  CallExpr* result = NULL;
 
   if (SymExpr* cond = toSymExpr(condExpr)) {
     if (VarSymbol* var = toVarSymbol(cond->symbol())) {
@@ -806,13 +622,15 @@ CondStmt::foldConstantCondition() {
           Expr* then_stmt = thenStmt;
 
           then_stmt->remove();
+
           replace(then_stmt);
 
         } else {
           Expr* else_stmt = elseStmt;
 
-          if (else_stmt) {
+          if (else_stmt != NULL) {
             else_stmt->remove();
+
             replace(else_stmt);
           } else {
             remove();
@@ -825,8 +643,7 @@ CondStmt::foldConstantCondition() {
   return result;
 }
 
-void
-CondStmt::verify() {
+void CondStmt::verify() {
   Expr::verify();
 
   if (astTag != E_CondStmt) {
@@ -853,88 +670,91 @@ CondStmt::verify() {
     INT_FATAL(this, "CondStmt::elseStmt is a list");
   }
 
-  if (condExpr->parentExpr != this)
+  if (condExpr->parentExpr != this) {
     INT_FATAL(this, "Bad CondStmt::condExpr::parentExpr");
+  }
 
-  if (thenStmt->parentExpr != this)
+  if (thenStmt->parentExpr != this) {
     INT_FATAL(this, "Bad CondStmt::thenStmt::parentExpr");
+  }
 
-  if (elseStmt && elseStmt->parentExpr != this)
+  if (elseStmt && elseStmt->parentExpr != this) {
     INT_FATAL(this, "Bad CondStmt::elseStmt::parentExpr");
+  }
 
   verifyNotOnList(condExpr);
+
   verifyNotOnList(thenStmt);
+
   verifyNotOnList(elseStmt);
 }
 
-CondStmt*
-CondStmt::copyInner(SymbolMap* map) {
+CondStmt* CondStmt::copyInner(SymbolMap* map) {
   return new CondStmt(COPY_INT(condExpr),
                       COPY_INT(thenStmt),
                       COPY_INT(elseStmt));
 }
 
 
-void
-CondStmt::replaceChild(Expr* old_ast, Expr* new_ast) {
-  if (old_ast == condExpr) {
-    condExpr = new_ast;
+void CondStmt::replaceChild(Expr* oldAst, Expr* newAst) {
+  if (oldAst == condExpr) {
+    condExpr = newAst;
 
-  } else if (old_ast == thenStmt) {
-    thenStmt = toBlockStmt(new_ast);
+  } else if (oldAst == thenStmt) {
+    thenStmt = toBlockStmt(newAst);
 
-  } else if (old_ast == elseStmt) {
-    elseStmt = toBlockStmt(new_ast);
+  } else if (oldAst == elseStmt) {
+    elseStmt = toBlockStmt(newAst);
 
   } else {
     INT_FATAL(this, "Unexpected case in CondStmt::replaceChild");
   }
 }
 
-void
-CondStmt::accept(AstVisitor* visitor) {
+void CondStmt::accept(AstVisitor* visitor) {
   if (visitor->enterCondStmt(this) == true) {
 
-    if (condExpr)
+    if (condExpr != NULL) {
       condExpr->accept(visitor);
+    }
 
-    if (thenStmt)
+    if (thenStmt != NULL) {
       thenStmt->accept(visitor);
+    }
 
-    if (elseStmt)
+    if (elseStmt != NULL) {
       elseStmt->accept(visitor);
+    }
 
     visitor->exitCondStmt(this);
   }
 }
 
-Expr*
-CondStmt::getFirstChild() {
-  return (condExpr != 0) ? condExpr : NULL ;
-}
-
-Expr*
-CondStmt::getFirstExpr() {
+Expr* CondStmt::getFirstExpr() {
   return (condExpr != 0) ? condExpr->getFirstExpr() : this;
 }
 
-Expr*
-CondStmt::getNextExpr(Expr* expr) {
-  Expr* retval = this;
+Expr* CondStmt::getNextExpr(Expr* expr) {
+  Expr* retval = NULL;
 
-  if (expr == condExpr && thenStmt != NULL)
+  if        (expr == condExpr && thenStmt != NULL) {
     retval = thenStmt->getFirstExpr();
 
-  else if (expr == thenStmt && elseStmt != NULL)
+  } else if (expr == thenStmt && elseStmt != NULL) {
     retval = elseStmt->getFirstExpr();
+
+  } else {
+    retval = this;
+  }
 
   return retval;
 }
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 GotoStmt::GotoStmt(GotoTag init_gotoTag, const char* init_label) :
   Stmt(E_GotoStmt),
@@ -1098,10 +918,6 @@ void GotoStmt::accept(AstVisitor* visitor) {
   }
 }
 
-Expr* GotoStmt::getFirstChild() {
-  return (label != 0) ? label : NULL;
-}
-
 Expr* GotoStmt::getFirstExpr() {
   return (label != 0) ? label->getFirstExpr() : this;
 }
@@ -1127,10 +943,11 @@ LabelSymbol* GotoStmt::gotoTarget() const {
   return retval;
 }
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 ExternBlockStmt::ExternBlockStmt(const char* init_c_code) :
   Stmt(E_ExternBlockStmt),
@@ -1163,26 +980,24 @@ void ExternBlockStmt::accept(AstVisitor* visitor) {
   visitor->visitEblockStmt(this);
 }
 
-Expr* ExternBlockStmt::getFirstChild() {
-  return NULL;
-}
-
 Expr* ExternBlockStmt::getFirstExpr() {
   INT_FATAL(this, "unexpected ExternBlockStmt in getFirstExpr");
   return NULL;
 }
 
 
-/******************************** | *********************************
-*                                                                   *
-*                                                                   *
-********************************* | ********************************/
+/************************************* | **************************************
+*                                                                             *
+*                                                                             *
+*                                                                             *
+************************************** | *************************************/
 
 ForwardingStmt::ForwardingStmt(DefExpr* toFnDef) :
   Stmt(E_ForwardingStmt),
   toFnDef(toFnDef),
   fnReturningForwarding(NULL),
   type(NULL),
+  scratchFn(NULL),
   named(),
   renamed(),
   except(false)
@@ -1199,6 +1014,7 @@ ForwardingStmt::ForwardingStmt(DefExpr* toFnDef, std::set<const char*>* args, bo
   toFnDef(toFnDef),
   fnReturningForwarding(NULL),
   type(NULL),
+  scratchFn(NULL),
   named(),
   renamed(),
   except(exclude)
@@ -1267,10 +1083,6 @@ void ForwardingStmt::accept(AstVisitor* visitor) {
 
     visitor->exitForwardingStmt(this);
   }
-}
-
-Expr* ForwardingStmt::getFirstChild() {
-  return toFnDef;
 }
 
 Expr* ForwardingStmt::getFirstExpr() {

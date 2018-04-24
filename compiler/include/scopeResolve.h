@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2017 Cray Inc.
+ * Copyright 2004-2018 Cray Inc.
  * Other additional copyright holders may be indicated within.
  *
  * The entirety of this work is licensed under the Apache License,
@@ -24,9 +24,16 @@ class BaseAST;
 class FnSymbol;
 class Symbol;
 
+#include <vector>
+
 void     addToSymbolTable(FnSymbol* fn);
 
-Symbol*  lookup(BaseAST* scope, const char* name);
+Symbol*  lookup(const char*           name,
+                BaseAST*              context);
+
+void     lookup(const char*           name,
+                BaseAST*              context,
+                std::vector<Symbol*>& symbols);
 
 BaseAST* getScope(BaseAST* ast);
 

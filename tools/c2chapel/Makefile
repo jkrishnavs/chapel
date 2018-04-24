@@ -1,5 +1,5 @@
 #
-# Copyright 2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -27,8 +27,10 @@ export CHPL_MAKE_HOME=$(realpath $(shell pwd)/../..)
 endif
 
 include $(CHPL_MAKE_HOME)/make/Makefile.base
+include $(CHPL_MAKE_HOME)/third-party/chpl-venv/Makefile.include
 
-link=$(CHPL_BIN_DIR)/c2chapel
+bdir=$(CHPL_BIN_DIR)
+link=$(bdir)/c2chapel
 
 VERSION=2.17
 TAR=release_v$(VERSION).tar.gz
@@ -36,15 +38,32 @@ TAR=release_v$(VERSION).tar.gz
 RELEASE=https://github.com/eliben/pycparser/archive/$(TAR)
 
 INSTALL=$(realpath .)/install
-VENV=$(INSTALL)/venv
+
+# Update wrapper script if this changes
+VENV_DIR=$(INSTALL)/venv
+
 FAKES=$(INSTALL)/fakeHeaders
 
-.PHONY: clean clobber c2chapel install
+VIRTUAL_ENV=$(shell which virtualenv)
+THIRD_PARTY_VENV=$(CHPL_VENV_DIR)/$(CHPL_VENV_VIRTUALENV)
+
+.PHONY: clean clobber c2chapel install venv
 
 all: c2chapel
 
-c2chapel:
-	mkdir -p $(VENV)
+venv:
+ifneq ($(wildcard $(VIRTUAL_ENV)),)
+	$(info Using system virtualenv)
+else ifneq ($(wildcard $(THIRD_PARTY_VENV)),)
+	$(eval VIRTUAL_ENV=$(THIRD_PARTY_VENV))
+	$(info Using chpl-venv virtualenv ($(VIRTUAL_ENV)))
+else
+	$(error Unable to find virtualenv. Either install virtualenv yourself \
+  or 'make test-venv' from $$CHPL_HOME)
+endif
+
+c2chapel: venv
+	mkdir -p $(VENV_DIR)
 	mkdir -p $(FAKES)
 	cd $(INSTALL) && \
 	echo "Fetching release $(VERSION) tarball..." && \
@@ -53,10 +72,10 @@ c2chapel:
 
 	./utils/fixFakes.sh $(FAKES) $(PWD)/utils/custom.h
 
-	virtualenv $(VENV)
-	. $(VENV)/bin/activate && \
-	  pip install $(INSTALL)/$(TAR) && \
-	  pip install argparse
+	$(VIRTUAL_ENV) $(VENV_DIR)
+	. $(VENV_DIR)/bin/activate && \
+	  python $(VENV_DIR)/bin/pip install $(INSTALL)/$(TAR) && \
+	  python $(VENV_DIR)/bin/pip install $(CHPL_PIP_INSTALL_PARAMS) argparse
 
 check:
 	cd test && ./tester.sh
@@ -81,4 +100,5 @@ ifneq ($(wildcard $(link)),)
 	@echo
 endif
 	@echo "Installing symbolic link..."
+	mkdir -p $(bdir)
 	ln -s $(shell pwd)/c2chapel $(link)

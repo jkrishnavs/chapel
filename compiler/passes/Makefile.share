@@ -1,4 +1,4 @@
-# Copyright 2004-2017 Cray Inc.
+# Copyright 2004-2018 Cray Inc.
 # Other additional copyright holders may be indicated within.
 #
 # The entirety of this work is licensed under the Apache License,
@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-GEN_HEADERS = \
+GEN_HEADERS =                                              \
         reservedSymbolNames.h
 
 PASSES_SRCS =                                              \
@@ -35,17 +35,19 @@ PASSES_SRCS =                                              \
         flattenClasses.cpp                                 \
         flattenFunctions.cpp                               \
         initializerRules.cpp                               \
+        InitNormalize.cpp                                  \
         insertLineNumbers.cpp                              \
         insertWideReferences.cpp                           \
         normalize.cpp                                      \
+        normalizeErrors.cpp                                \
         parallel.cpp                                       \
         resolveIntents.cpp                                 \
         ResolveScope.cpp                                   \
         returnStarTuplesByRefArgs.cpp                      \
         scopeResolve.cpp
 
-SVN_SRCS = $(PASSES_SRCS)
-SRCS = $(SVN_SRCS)
+SVN_SRCS    = $(PASSES_SRCS)
+SRCS        = $(SVN_SRCS)
 
 PASSES_OBJS = \
         $(PASSES_SRCS:%.cpp=$(PASSES_OBJDIR)/%.$(OBJ_SUFFIX))

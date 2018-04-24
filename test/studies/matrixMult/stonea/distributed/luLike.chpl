@@ -27,9 +27,9 @@ const localesAcross = sqrt(numLocales) : int;
 const blkSize = n / localesAcross : int;
 
 class WrappedArray {
-    proc WrappedArray() { }
+    proc init() { }
 
-    proc WrappedArray(row, col, numRows, numCols) {
+    proc init(row, col, numRows, numCols) {
         dom = {row..row+numRows-1, col..col+numCols-1};
     }
 
@@ -94,6 +94,8 @@ proc luLikeMultiply(
             }
         }
     }
+    for r in rowCopies do delete r;
+    for c in colCopies do delete c;
 }
 
 
@@ -181,5 +183,7 @@ proc main() {
     }
 
     if passed then writeln("PASSED"); else writeln("FAILED");
+
+    for a in A do delete a;
 }
 

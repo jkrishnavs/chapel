@@ -8,5 +8,7 @@ for i in D {
 }
 
 writeln(A);
-writeln(A._value.dataChunk(0)(0));
-writeln(A._value.dataChunk(0)(1));
+const ptr = c_ptrTo(A);
+for i in 0..#A.size {
+  writeln(ptr[i]);
+}

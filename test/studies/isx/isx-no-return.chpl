@@ -12,9 +12,9 @@
 
 //
 // We want to use block-distributed arrays (BlockDist), barrier
-// synchronization (Barrier), and timers (Time).
+// synchronization (Barriers), and timers (Time).
 //
-use BlockDist, Barrier, Time;
+use BlockDist, Barriers, Time;
 
 //
 // The type of key to use when sorting.
@@ -348,7 +348,7 @@ proc makeInput(myKeys, bucketID) {
   // Fill local array
   //
 
-  for key in myKeys do key = pcg.bounded_random(inc, maxKeyVal:uint(32)):int(32);
+  for key in myKeys do key = pcg.bounded_random(inc, maxKeyVal:uint(32)):keyType;
 
   if (debug) then
     writeln(bucketID, ": myKeys: ", myKeys);
@@ -422,24 +422,23 @@ proc printTimeTable(timeTable, units, timerName) {
 }
 
 //
-// print timing statistics (avg/min/max across buckets of min across
-// trials)
+// print timing statistics (avg/min/max across tasks and trials)
 //
 proc printTimingStats(timeTable, timerName) {
-  var minMinTime, maxMinTime, totMinTime: real;
+  var minTime = max(real),
+      maxTime = min(real),
+      totTime: real;
 
   //
-  // iterate over the buckets, computing the min/max/total of the
-  // min times across trials.
+  // iterate over the buckets, computing the min/max/total
   //
-  forall timings in timeTable with (min reduce minMinTime,
-                                    max reduce maxMinTime,
-                                    + reduce totMinTime) {
-    const minTime = min reduce timings;
-    totMinTime += minTime;
-    minMinTime = min(minMinTime, minTime);
-    maxMinTime = max(maxMinTime, minTime);
+  forall timings in timeTable with (min reduce minTime,
+                                    max reduce maxTime,
+                                    + reduce totTime) {
+    totTime += + reduce timings;
+    minTime = min(minTime, min reduce timings);
+    maxTime = max(maxTime, max reduce timings);
   }
-  var avgTime = totMinTime / numLocales;
-  writeln(timerName, " = ", avgTime, " (", minMinTime, "..", maxMinTime, ")");
+  var avgTime = totTime / (numBuckets * numTrials) ;
+  writeln(timerName, " = ", avgTime, " (", minTime, "..", maxTime, ")");
 }
